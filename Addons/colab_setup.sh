@@ -69,7 +69,9 @@ python3 -c "import pytorch3d" 2>/dev/null && echo "  pytorch3d already installed
 echo ""
 echo "[2/5] Building marching cubes extension..."
 cd "$REPO_ROOT/external/NumpyMarchingCubes"
-python3 setup.py install 2>&1 | tail -3
+# Delete stale Cython-generated .cpp so it gets regenerated for current NumPy
+rm -f marching_cubes/src/_mcubes.cpp
+python3 setup.py install 2>&1 | tail -5
 cd "$REPO_ROOT"
 echo "  Done."
 
