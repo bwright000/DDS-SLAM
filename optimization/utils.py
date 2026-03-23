@@ -13,9 +13,9 @@ def axis_angle_to_matrix(data):
     omega3 = omega[...,2:3]
     zeros = torch.zeros_like(omega1)
 
-    K = torch.cat([torch.cat([zeros, -omega3, omega2], dim=-1)[...,None,:],
-                      torch.cat([omega3, zeros, -omega1], dim=-1)[...,None,:],
-                      torch.cat([-omega2, omega1, zeros], dim=-1)[...,None,:]], dim=-2)
+    K = torch.concat([torch.concat([zeros, -omega3, omega2], dim=-1)[...,None,:],
+                      torch.concat([omega3, zeros, -omega1], dim=-1)[...,None,:],
+                      torch.concat([-omega2, omega1, zeros], dim=-1)[...,None,:]], dim=-2)
     I = torch.eye(3).expand(*batch_dims,3,3).to(data)
 
     return I + torch.sin(theta).unsqueeze(-1) * K + (1. - torch.cos(theta).unsqueeze(-1)) * (K @ K)

@@ -565,19 +565,16 @@ class DDSSLAM():
         for i, batch in tqdm(enumerate(data_loader)):
             # Visualisation
             if self.config['mesh']['visualisation']:
-                try:
-                    rgb = cv2.cvtColor(batch["rgb"].squeeze().cpu().numpy(), cv2.COLOR_BGR2RGB)
-                    raw_depth = batch["depth"]
-                    mask = (raw_depth >= self.config["cam"]["depth_trunc"]).squeeze(0)
-                    depth_colormap = colormap_image(batch["depth"])
-                    depth_colormap[:, mask] = 255.
-                    depth_colormap = depth_colormap.permute(1, 2, 0).cpu().numpy()
-                    image = np.hstack((rgb, depth_colormap))
-                    cv2.namedWindow('RGB-D'.format(i), cv2.WINDOW_AUTOSIZE)
-                    cv2.imshow('RGB-D'.format(i), image)
-                    key = cv2.waitKey(1)
-                except cv2.error:
-                    pass  # headless environment, skip display
+                rgb = cv2.cvtColor(batch["rgb"].squeeze().cpu().numpy(), cv2.COLOR_BGR2RGB)
+                raw_depth = batch["depth"]
+                mask = (raw_depth >= self.config["cam"]["depth_trunc"]).squeeze(0)
+                depth_colormap = colormap_image(batch["depth"])
+                depth_colormap[:, mask] = 255.
+                depth_colormap = depth_colormap.permute(1, 2, 0).cpu().numpy()
+                image = np.hstack((rgb, depth_colormap))
+                cv2.namedWindow('RGB-D'.format(i), cv2.WINDOW_AUTOSIZE)
+                cv2.imshow('RGB-D'.format(i), image)
+                key = cv2.waitKey(1)
 
             # First frame mapping
             if i == 0:
