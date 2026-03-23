@@ -35,8 +35,8 @@ PyObject* marching_cubes(PyArrayObject* arr, double isovalue, double truncation)
     // Copy the result to two Python ndarrays.
     npy_intp size_vertices = vertices.size();
     npy_intp size_polygons = polygons.size();
-    PyArrayObject* verticesarr = reinterpret_cast<PyArrayObject*>(PyArray_SimpleNew(1, &size_vertices, PyArray_DOUBLE));
-    PyArrayObject* polygonsarr = reinterpret_cast<PyArrayObject*>(PyArray_SimpleNew(1, &size_polygons, PyArray_ULONG));
+    PyArrayObject* verticesarr = reinterpret_cast<PyArrayObject*>(PyArray_SimpleNew(1, &size_vertices, NPY_DOUBLE));
+    PyArrayObject* polygonsarr = reinterpret_cast<PyArrayObject*>(PyArray_SimpleNew(1, &size_polygons, NPY_ULONG));
     
     std::vector<double>::const_iterator it = vertices.begin();
     for(int i=0; it!=vertices.end(); ++i, ++it)
