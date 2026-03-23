@@ -95,10 +95,15 @@ def setup_monodepth2():
 def run_monodepth2(datadir, depth_scale, target_h=480, target_w=640):
     """Generate depth using Monodepth2 mono+stereo pretrained model."""
     repo_dir = setup_monodepth2()
+
+    # Save cwd and change to repo dir (monodepth2 expects to run from its root)
+    original_cwd = os.getcwd()
+    os.chdir(repo_dir)
     sys.path.insert(0, repo_dir)
 
     import networks
-    from utils_monodepth2 import download_model_if_doesnt_exist
+    # monodepth2's utils.py has download_model_if_doesnt_exist
+    from utils import download_model_if_doesnt_exist
 
     model_name = "mono+stereo_640x192"
     download_model_if_doesnt_exist(model_name)
@@ -109,7 +114,7 @@ def run_monodepth2(datadir, depth_scale, target_h=480, target_w=640):
     depth_decoder = networks.DepthDecoder(num_ch_enc=encoder.num_ch_enc, scales=range(4))
 
     loaded_dict_enc = torch.load(
-        os.path.join(model_path, "encoder.pth"), map_location="cpu"
+        os.path.join(model_path, "encoder.pth"), map_location="cpu", weights_only=False
     )
     filtered_dict_enc = {
         k: v for k, v in loaded_dict_enc.items() if k in encoder.state_dict()
@@ -117,7 +122,7 @@ def run_monodepth2(datadir, depth_scale, target_h=480, target_w=640):
     encoder.load_state_dict(filtered_dict_enc)
 
     loaded_dict = torch.load(
-        os.path.join(model_path, "depth.pth"), map_location="cpu"
+        os.path.join(model_path, "depth.pth"), map_location="cpu", weights_only=False
     )
     depth_decoder.load_state_dict(loaded_dict)
 
@@ -131,6 +136,9 @@ def run_monodepth2(datadir, depth_scale, target_h=480, target_w=640):
     # Model input size
     feed_height = loaded_dict_enc.get("height", 192)
     feed_width = loaded_dict_enc.get("width", 640)
+
+    # Switch back to original dir for file paths
+    os.chdir(original_cwd)
 
     left_images = get_left_images(datadir)
     with torch.no_grad():
@@ -154,9 +162,6 @@ def run_monodepth2(datadir, depth_scale, target_h=480, target_w=640):
             disp_resized = cv2.resize(disp_np, (w_orig, h_orig), interpolation=cv2.INTER_LINEAR)
 
             # Convert disparity to depth
-            # For stereo-trained model: metric depth ≈ 1 / (disp * scale)
-            # The stereo model was trained with known baseline, so we use
-            # the scale factor embedded in the model
             min_disp = 1e-3
             disp_resized = np.maximum(disp_resized, min_disp)
             depth = 1.0 / disp_resized
@@ -168,7 +173,6 @@ def run_monodepth2(datadir, depth_scale, target_h=480, target_w=640):
             save_depth(img_path, depth, depth_scale)
 
     print(f"Done. Generated {len(left_images)} depth maps.")
-    # Clean up sys.path
     sys.path.remove(repo_dir)
 
 
