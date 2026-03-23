@@ -71,9 +71,9 @@ class PoseArray(nn.Module):
                 gpu_id = RT.get_device()
             RT = RT.numpy()
         R, T = RT[:3, :3], RT[:3, 3]
-        from mathutils import Matrix
-        rot = Matrix(R)
-        quad = rot.to_quaternion()
+        from scipy.spatial.transform import Rotation as ScipyRotation
+        quad = ScipyRotation.from_matrix(R).as_quat()  # [x, y, z, w]
+        quad = np.array([quad[3], quad[0], quad[1], quad[2]])  # -> [w, x, y, z]
         if Tquad:
             tensor = np.concatenate([T, quad], 0)
         else:

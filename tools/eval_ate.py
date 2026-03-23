@@ -19,10 +19,10 @@ def get_tensor_from_camera(RT, Tquad=False):
             gpu_id = RT.get_device()
         RT = RT.numpy()
 
-    from mathutils import Matrix
+    from scipy.spatial.transform import Rotation as ScipyRotation
     R, T = RT[:3, :3], RT[:3, 3]
-    rot = Matrix(R)
-    quad = rot.to_quaternion()
+    quad = ScipyRotation.from_matrix(R).as_quat()  # [x, y, z, w]
+    quad = np.array([quad[3], quad[0], quad[1], quad[2]])  # -> [w, x, y, z]
     if Tquad:
         tensor = np.concatenate([T, quad], 0)
     else:
