@@ -41,7 +41,7 @@ print(f'  CUDA: {torch.version.cuda}')
 # --- 1. Install Python dependencies ---
 echo ""
 echo "[1/5] Installing Python dependencies..."
-pip install -q PyYAML scipy trimesh matplotlib opencv-contrib-python tqdm yacs Cython ninja gdown
+pip install -q PyYAML scipy trimesh matplotlib opencv-contrib-python tqdm yacs Cython ninja gdown transformers Pillow
 
 # Install tinycudann
 python3 -c "import tinycudann" 2>/dev/null && echo "  tinycudann already installed" || {
