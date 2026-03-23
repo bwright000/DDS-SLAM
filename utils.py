@@ -188,7 +188,7 @@ def colormap_image(
         vmax = valid_vals.max()
 
     cmap = torch.Tensor(
-        plt.cm.get_cmap(colormap)(
+        plt.colormaps[colormap](
             torch.linspace(0, 1, 256)
         )[:, :3]
     ).to(image_1hw.device)
