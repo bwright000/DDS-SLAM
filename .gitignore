@@ -1,0 +1,27 @@
+# Dataset files
+data/
+
+# Output results
+output/
+Output/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+build/
+dist/
+
+# Compiled extensions
+*.so
+*.o
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
