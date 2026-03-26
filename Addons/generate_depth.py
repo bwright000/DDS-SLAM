@@ -282,6 +282,45 @@ def run_raft_stereo(datadir, depth_scale, baseline=0.0055, fx=768.99,
     sys.path.remove(repo_dir)
     sys.path.remove(os.path.join(repo_dir, 'core'))
 
+# =============================================================================
+# Method 4: MoGe
+# =============================================================================
+def run_moge(datadir, depth_scale, target_h=480, target_w=640):
+    """Generate depth using MoGe-2 (Monocular Geometry Estimation v2, metric)."""
+    from moge.model.v2 import MoGeModel
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print("Loading MoGe-2 metric depth model...")
+    model = MoGeModel.from_pretrained("Ruicheng/moge-2-vitl").to(device)
+    model.eval()
+
+    left_images = get_left_images(datadir)
+    with torch.no_grad():
+        for img_path in tqdm(left_images, desc="MoGe-2"):
+            image = cv2.imread(img_path)
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+            input_tensor = torch.tensor(
+                image / 255.0, dtype=torch.float32, device=device
+            ).permute(2, 0, 1)  # (3, H, W)
+
+            output = model.infer(input_tensor, resolution_level=9)
+            depth = output["depth"].cpu().numpy().astype(np.float32)
+
+            # Replace invalid pixels (inf) with zero
+            depth = np.where(np.isfinite(depth), depth, 0.0)
+
+            # Clamp to valid range
+            depth = np.clip(depth, 0.0, 5.0)
+
+            # Resize to target resolution
+            if depth.shape != (target_h, target_w):
+                depth = cv2.resize(depth, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+            save_depth(img_path, depth, depth_scale)
+
+    print(f"Done. Generated {len(left_images)} depth maps.")
+
 
 # =============================================================================
 # Main
@@ -291,7 +330,7 @@ def main():
     parser.add_argument('--datadir', type=str, required=True,
                         help='Path to dataset (e.g., data/Super)')
     parser.add_argument('--method', type=str, required=True,
-                        choices=['depth_anything', 'monodepth2', 'raft_stereo'],
+                        choices=['depth_anything', 'monodepth2', 'raft_stereo', 'moge'],
                         help='Depth estimation method')
     parser.add_argument('--depth_scale', type=float, default=8.0,
                         help='Depth scale factor (default: 8.0, matches png_depth_scale in config)')
@@ -313,6 +352,8 @@ def main():
         print(f"Baseline: {args.baseline}m, fx: {args.fx}px")
         run_raft_stereo(args.datadir, args.depth_scale,
                         baseline=args.baseline, fx=args.fx)
+    elif args.method == 'moge':
+        run_moge(args.datadir, args.depth_scale)
 
 
 if __name__ == '__main__':

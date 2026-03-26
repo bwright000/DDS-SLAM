@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import csv
 import glob
 import os
 
@@ -50,6 +51,8 @@ def main():
     parser.add_argument('--render_dir', type=str, required=True,
                         help='Rendered output directory (e.g., output/trail3_depth_anything)')
     parser.add_argument('--name', type=str, default='', help='Method name for display')
+    parser.add_argument('--output_csv', type=str, default='',
+                        help='Save per-frame metrics to CSV for use with visualize_run.py')
     args = parser.parse_args()
 
     # Find rendered images
@@ -128,6 +131,21 @@ def main():
     if lpips_list:
         print(f"LPIPS: {np.mean(lpips_list):.3f} (std: {np.std(lpips_list):.3f})")
     print(f"{'='*50}")
+
+    # Save per-frame metrics to CSV
+    if args.output_csv:
+        with open(args.output_csv, 'w', newline='') as f:
+            writer = csv.writer(f)
+            header = ['frame', 'psnr', 'ssim']
+            if lpips_list:
+                header.append('lpips')
+            writer.writerow(header)
+            for i in range(n_eval):
+                row = [i, f"{psnr_list[i]:.4f}", f"{ssim_list[i]:.4f}"]
+                if lpips_list:
+                    row.append(f"{lpips_list[i]:.4f}")
+                writer.writerow(row)
+        print(f"\nPer-frame metrics saved to {args.output_csv}")
 
     # Paper reference (DDS-SLAM Table I, Lab1 = trail3)
     print(f"\nPaper reference (DDS-SLAM, Lab1):")
