@@ -68,10 +68,10 @@ decoder:
 cam:
   H: 512
   W: 640
-  fx: 516.9471435
-  fy: 516.8573608
-  cx: 302.289287
-  cy: 257.488098
+  fx: 560.02
+  fy: 560.02
+  cx: 329.74
+  cy: 257.43
   png_depth_scale: 100 #for depth image in png format
   crop_edge: 0
   near: 0
