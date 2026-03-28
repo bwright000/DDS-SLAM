@@ -235,9 +235,65 @@ def log_mesh(mesh_path, prefix=""):
     print(f"Logged mesh: {len(verts)} vertices, {len(faces)} faces")
 
 
+def backproject_depth_to_pointcloud(depth, rgb, c2w, fx, fy, cx, cy,
+                                     depth_trunc, max_points=50000):
+    """Back-project depth map to 3D coloured point cloud in world frame.
+
+    Args:
+        depth: (H, W) depth in meters
+        rgb: (H, W, 3) uint8 RGB image
+        c2w: (4, 4) camera-to-world matrix (OpenGL convention)
+        fx, fy, cx, cy: camera intrinsics
+        depth_trunc: max valid depth
+        max_points: subsample if more valid points than this
+
+    Returns:
+        points: (N, 3) world coordinates
+        colors: (N, 3) uint8 RGB
+    """
+    H, W = depth.shape
+    u, v = np.meshgrid(np.arange(W), np.arange(H))
+
+    valid = (depth > 0) & (depth < depth_trunc)
+    u_v = u[valid].astype(np.float64)
+    v_v = v[valid].astype(np.float64)
+    d_v = depth[valid].astype(np.float64)
+
+    if len(u_v) == 0:
+        return np.zeros((0, 3)), np.zeros((0, 3), dtype=np.uint8)
+
+    # Subsample
+    if len(u_v) > max_points:
+        idx = np.random.choice(len(u_v), max_points, replace=False)
+        u_v, v_v, d_v = u_v[idx], v_v[idx], d_v[idx]
+    else:
+        idx = None
+
+    # OpenGL camera rays (matching DDS-SLAM convention)
+    ray_x = (u_v - cx) / fx
+    ray_y = -(v_v - cy) / fy
+    ray_z = -np.ones_like(u_v)
+
+    pts_cam = np.stack([d_v * ray_x, d_v * ray_y, d_v * ray_z], axis=-1)
+    ones = np.ones((len(pts_cam), 1), dtype=np.float64)
+    pts_homo = np.concatenate([pts_cam, ones], axis=1)
+
+    pts_world = (c2w @ pts_homo.T).T[:, :3]
+
+    # Get colors
+    if idx is not None:
+        valid_indices = np.where(valid)
+        colors = rgb[valid_indices[0][idx], valid_indices[1][idx]]
+    else:
+        colors = rgb[valid]
+
+    return pts_world.astype(np.float32), colors.astype(np.uint8)
+
+
 def log_frame(frame_idx, est_pose, gt_rgb_path, rendered_path,
               depth_path, metrics_row, fx, fy, cx, cy, W, H,
-              depth_scale, depth_trunc, prefix=""):
+              depth_scale, depth_trunc, prefix="",
+              log_pointcloud=True, pc_max_points=50000):
     """Log all per-frame data for a single timestep."""
     rr.set_time("frame", sequence=frame_idx)
 
@@ -257,16 +313,29 @@ def log_frame(frame_idx, est_pose, gt_rgb_path, rendered_path,
         image_plane_distance=0.01,
     ))
 
-    # --- GT RGB ---
-    if gt_rgb_path and os.path.exists(gt_rgb_path):
-        gt_rgb = load_rgb(gt_rgb_path)
-        rr.log(entity(prefix, "images/gt_rgb"), rr.Image(gt_rgb))
-
-    # --- Depth colormap ---
+    # Load depth (used for colormap and point cloud)
+    depth = None
     if depth_path and os.path.exists(depth_path):
         depth = load_depth(depth_path, depth_scale)
         depth_colored = colormap_depth(depth, depth_trunc)
         rr.log(entity(prefix, "images/depth_colormap"), rr.Image(depth_colored))
+
+    # --- GT RGB ---
+    gt_rgb = None
+    if gt_rgb_path and os.path.exists(gt_rgb_path):
+        gt_rgb = load_rgb(gt_rgb_path)
+        rr.log(entity(prefix, "images/gt_rgb"), rr.Image(gt_rgb))
+
+    # --- Per-frame 3D point cloud ---
+    if log_pointcloud and depth is not None and gt_rgb is not None:
+        points, colors = backproject_depth_to_pointcloud(
+            depth, gt_rgb, est_pose, fx, fy, cx, cy,
+            depth_trunc, max_points=pc_max_points
+        )
+        if len(points) > 0:
+            rr.log(entity(prefix, "world/pointcloud"), rr.Points3D(
+                points, colors=colors, radii=0.001
+            ))
 
     # --- Rendered RGB ---
     if rendered_path and os.path.exists(rendered_path):
@@ -351,19 +420,21 @@ def main():
                         help='Method name prefix for entity paths (for comparison mode)')
     parser.add_argument('--every', type=int, default=1,
                         help='Log every N-th frame (default: 1)')
+    parser.add_argument('--no_pointcloud', action='store_true',
+                        help='Disable per-frame 3D point cloud logging')
+    parser.add_argument('--pc_max_points', type=int, default=50000,
+                        help='Max points per frame for point cloud (default: 50000)')
     args = parser.parse_args()
 
     prefix = args.method_name
 
     # --- Init Rerun ---
-    if args.append and args.save:
-        rr.init(args.name)
-        rr.save(args.save)
+    blueprint = build_blueprint(prefix)
+    rr.init(args.name, default_blueprint=blueprint)
+    if args.save:
+        rr.save(args.save, default_blueprint=blueprint)
     else:
-        blueprint = build_blueprint(prefix) if not args.append else None
-        rr.init(args.name, spawn=not args.save, default_blueprint=blueprint)
-        if args.save:
-            rr.save(args.save)
+        rr.spawn(default_blueprint=blueprint)
 
     # --- Load data ---
     est_poses = load_poses_from_txt(args.posefile)
@@ -419,6 +490,8 @@ def main():
             depth_scale=args.depth_scale,
             depth_trunc=args.depth_trunc,
             prefix=prefix,
+            log_pointcloud=not args.no_pointcloud,
+            pc_max_points=args.pc_max_points,
         )
 
     print(f"Logged {len(range(0, n_frames, args.every))} frames to Rerun.")
