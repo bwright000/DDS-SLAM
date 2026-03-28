@@ -256,12 +256,22 @@ def reconstruct_from_neural(config_path, checkpoint_path, output_path,
 
     print(f"Extracting neural SDF mesh (voxel_size={voxel_size})...")
 
+    # Wrap query_color_sdf to return only color (it returns a tuple)
+    color_func = None
+    if hasattr(model, 'query_color_sdf'):
+        def _color_only(pts):
+            out = model.query_color_sdf(pts)
+            if isinstance(out, tuple):
+                return out[0]  # (color_sdf, edge_semantic) -> color_sdf
+            return out
+        color_func = _color_only
+
     mesh = extract_mesh(
         query_fn=model.query_sdf,
         config=cfg,
         bounding_box=bounding_box,
         marching_cube_bound=marching_cube_bound,
-        color_func=model.query_color_sdf if hasattr(model, 'query_color_sdf') else None,
+        color_func=color_func,
         voxel_size=voxel_size,
         mesh_savepath=output_path
     )
