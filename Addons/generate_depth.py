@@ -1,19 +1,23 @@
 """
-Depth map generation for DDS-SLAM Semantic-Super dataset.
+Depth map generation for DDS-SLAM datasets (Semantic-Super and StereoMIS).
 
-Supports 3 methods:
+Supports 4 methods:
   - depth_anything : Depth Anything V2 Metric Indoor (monocular, HuggingFace)
   - monodepth2     : Monodepth2 mono+stereo (monocular, auto-download weights)
   - raft_stereo    : RAFT-Stereo (stereo pairs, Dropbox weights)
+  - moge           : MoGe-2 (monocular, metric depth, CVPR'25)
 
-Output: {datadir}/rgb/{frame}-left_depth.npy (480x640 float32)
-Values are pre-multiplied by depth_scale (default 8.0) so DDS-SLAM loader
-divides by png_depth_scale to get meters.
+Output formats:
+  npy (default): {datadir}/rgb/{frame}-left_depth.npy (float32, values = meters * depth_scale)
+  png:           {output_dir}/{frame}.png (uint16, values = meters * depth_scale)
 
 Usage:
-  python Addons/generate_depth.py --datadir data/Super --method depth_anything
-  python Addons/generate_depth.py --datadir data/Super --method monodepth2
-  python Addons/generate_depth.py --datadir data/Super --method raft_stereo --baseline 0.0055
+  # Semantic-Super (npy output, depth_scale=8)
+  python Addons/generate_depth.py --datadir data/Super --method moge
+
+  # StereoMIS (png output, depth_scale=100)
+  python Addons/generate_depth.py --datadir data/P2_1 --method moge \
+    --output_format png --depth_scale 100 --output_dir data/P2_1/depth
 """
 
 import argparse
@@ -28,29 +32,65 @@ from tqdm import tqdm
 
 
 def get_left_images(datadir):
-    """Find all left RGB images sorted by name."""
+    """Find all left RGB images sorted by name.
+
+    Supports both dataset conventions:
+      Semantic-Super: {datadir}/rgb/*-left.png  or  *_left.png
+      StereoMIS:      {datadir}/video_frames/*l.png
+    """
+    # Semantic-Super patterns
     files = sorted(glob.glob(os.path.join(datadir, 'rgb', '*-left.png')))
     if not files:
-        # Try underscore variant
         files = sorted(glob.glob(os.path.join(datadir, 'rgb', '*_left.png')))
+    # StereoMIS pattern
     if not files:
-        raise FileNotFoundError(f"No left images found in {datadir}/rgb/")
+        files = sorted(glob.glob(os.path.join(datadir, 'video_frames', '*l.png')))
+    if not files:
+        raise FileNotFoundError(
+            f"No left images found in {datadir}/rgb/ or {datadir}/video_frames/")
     print(f"Found {len(files)} left images")
     return files
 
 
-def save_depth(left_path, depth, depth_scale):
-    """Save depth map as .npy alongside the RGB image."""
-    base = left_path.replace('-left.png', '-left_depth.npy').replace('_left.png', '_left_depth.npy')
-    depth_scaled = (depth * depth_scale).astype(np.float32)
-    np.save(base, depth_scaled)
-    return base
+def save_depth(left_path, depth, depth_scale, output_format='npy', output_dir=None):
+    """Save depth map in the specified format.
+
+    Args:
+        left_path: path to the source left RGB image
+        depth: depth in meters, shape (H, W) float32
+        depth_scale: multiplier (8.0 for Super, 100 for StereoMIS)
+        output_format: 'npy' (Semantic-Super) or 'png' (StereoMIS)
+        output_dir: override output directory (default: alongside RGB for npy,
+                    or {datadir}/depth/ for png)
+    """
+    if output_format == 'png':
+        # 16-bit PNG: values = depth_meters * depth_scale
+        depth_scaled = np.clip(depth * depth_scale, 0, 65535).astype(np.uint16)
+        # Derive output filename from input frame name
+        frame_name = os.path.splitext(os.path.basename(left_path))[0]
+        # Strip 'l' suffix for StereoMIS (e.g., '000001l' -> '000001')
+        if frame_name.endswith('l'):
+            frame_name = frame_name[:-1]
+        if output_dir is None:
+            output_dir = os.path.join(os.path.dirname(os.path.dirname(left_path)), 'depth')
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, f'{frame_name}.png')
+        cv2.imwrite(out_path, depth_scaled)
+        return out_path
+    else:
+        # NPY format (Semantic-Super default)
+        base = left_path.replace('-left.png', '-left_depth.npy').replace(
+            '_left.png', '_left_depth.npy')
+        depth_scaled = (depth * depth_scale).astype(np.float32)
+        np.save(base, depth_scaled)
+        return base
 
 
 # =============================================================================
 # Method 1: Depth Anything V2 (Metric Indoor)
 # =============================================================================
-def run_depth_anything(datadir, depth_scale, target_h=480, target_w=640):
+def run_depth_anything(datadir, depth_scale, target_h=480, target_w=640,
+                       output_format='npy', output_dir=None):
     """Generate depth using Depth Anything V2 Metric Indoor model."""
     from transformers import pipeline
 
@@ -75,7 +115,7 @@ def run_depth_anything(datadir, depth_scale, target_h=480, target_w=640):
         if depth.shape != (target_h, target_w):
             depth = cv2.resize(depth, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-        save_depth(img_path, depth, depth_scale)
+        save_depth(img_path, depth, depth_scale, output_format, output_dir)
 
     print(f"Done. Generated {len(left_images)} depth maps.")
 
@@ -92,7 +132,8 @@ def setup_monodepth2():
     return repo_dir
 
 
-def run_monodepth2(datadir, depth_scale, target_h=480, target_w=640):
+def run_monodepth2(datadir, depth_scale, target_h=480, target_w=640,
+                   output_format='npy', output_dir=None):
     """Generate depth using Monodepth2 mono+stereo pretrained model."""
     repo_dir = setup_monodepth2()
 
@@ -170,7 +211,7 @@ def run_monodepth2(datadir, depth_scale, target_h=480, target_w=640):
             if depth.shape != (target_h, target_w):
                 depth = cv2.resize(depth, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-            save_depth(img_path, depth, depth_scale)
+            save_depth(img_path, depth, depth_scale, output_format, output_dir)
 
     print(f"Done. Generated {len(left_images)} depth maps.")
     sys.path.remove(repo_dir)
@@ -199,6 +240,7 @@ def setup_raft_stereo():
 
 
 def run_raft_stereo(datadir, depth_scale, baseline=0.0055, fx=768.99,
+                    output_format='npy', output_dir=None,
                     target_h=480, target_w=640):
     """Generate depth using RAFT-Stereo with stereo image pairs."""
     repo_dir = setup_raft_stereo()
@@ -276,7 +318,7 @@ def run_raft_stereo(datadir, depth_scale, baseline=0.0055, fx=768.99,
             # Clamp to valid range (0, depth_trunc=5m)
             depth = np.clip(depth, 0.0, 5.0)
 
-            save_depth(left_path, depth, depth_scale)
+            save_depth(left_path, depth, depth_scale, output_format, output_dir)
 
     print(f"Done. Generated {len(left_images)} depth maps.")
     sys.path.remove(repo_dir)
@@ -285,7 +327,8 @@ def run_raft_stereo(datadir, depth_scale, baseline=0.0055, fx=768.99,
 # =============================================================================
 # Method 4: MoGe
 # =============================================================================
-def run_moge(datadir, depth_scale, target_h=480, target_w=640):
+def run_moge(datadir, depth_scale, target_h=480, target_w=640,
+             output_format='npy', output_dir=None):
     """Generate depth using MoGe-2 (Monocular Geometry Estimation v2, metric)."""
     from moge.model.v2 import MoGeModel
 
@@ -310,14 +353,15 @@ def run_moge(datadir, depth_scale, target_h=480, target_w=640):
             # Replace invalid pixels (inf) with zero
             depth = np.where(np.isfinite(depth), depth, 0.0)
 
-            # Clamp to valid range
-            depth = np.clip(depth, 0.0, 5.0)
+            # Clamp to valid range (use depth_trunc from config via depth_scale heuristic)
+            max_depth = 10.0 if depth_scale >= 100 else 5.0
+            depth = np.clip(depth, 0.0, max_depth)
 
             # Resize to target resolution
             if depth.shape != (target_h, target_w):
                 depth = cv2.resize(depth, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
-            save_depth(img_path, depth, depth_scale)
+            save_depth(img_path, depth, depth_scale, output_format, output_dir)
 
     print(f"Done. Generated {len(left_images)} depth maps.")
 
@@ -338,22 +382,35 @@ def main():
                         help='Stereo baseline in meters (default: 0.0055m for da Vinci)')
     parser.add_argument('--fx', type=float, default=768.99,
                         help='Focal length in pixels (default: 768.99 from Super config)')
+    parser.add_argument('--output_format', type=str, default='npy',
+                        choices=['npy', 'png'],
+                        help='Output format: npy (Semantic-Super) or png (StereoMIS)')
+    parser.add_argument('--output_dir', type=str, default=None,
+                        help='Override output directory (default: auto from dataset structure)')
     args = parser.parse_args()
 
     print(f"Method: {args.method}")
     print(f"Data dir: {args.datadir}")
     print(f"Depth scale: {args.depth_scale}")
+    print(f"Output format: {args.output_format}")
+
+    fmt = args.output_format
+    odir = args.output_dir
 
     if args.method == 'depth_anything':
-        run_depth_anything(args.datadir, args.depth_scale)
+        run_depth_anything(args.datadir, args.depth_scale,
+                           output_format=fmt, output_dir=odir)
     elif args.method == 'monodepth2':
-        run_monodepth2(args.datadir, args.depth_scale)
+        run_monodepth2(args.datadir, args.depth_scale,
+                       output_format=fmt, output_dir=odir)
     elif args.method == 'raft_stereo':
         print(f"Baseline: {args.baseline}m, fx: {args.fx}px")
         run_raft_stereo(args.datadir, args.depth_scale,
-                        baseline=args.baseline, fx=args.fx)
+                        baseline=args.baseline, fx=args.fx,
+                        output_format=fmt, output_dir=odir)
     elif args.method == 'moge':
-        run_moge(args.datadir, args.depth_scale)
+        run_moge(args.datadir, args.depth_scale,
+                 output_format=fmt, output_dir=odir)
 
 
 if __name__ == '__main__':

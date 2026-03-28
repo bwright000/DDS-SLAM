@@ -1,0 +1,3 @@
+method,sequence,n_frames,psnr_mean,psnr_std,ssim_mean,ssim_std
+Depth Anything V2,Lab1 (trail3),151,27.618,1.811,0.755,0.054
+Monodepth2,Lab1 (trail3),151,26.894,1.912,0.730,0.053

@@ -44,6 +44,15 @@ def compute_ssim(img1, img2):
     return float(np.mean(ssim_map))
 
 
+PAPER_REFERENCES = {
+    'Lab1 (trail3)':    {'PSNR': 28.649, 'SSIM': 0.797, 'LPIPS': 0.231},
+    'Lab2 (trail4)':    {'PSNR': 29.678, 'SSIM': 0.828, 'LPIPS': 0.175},
+    'Lab3 (trail8)':    {'PSNR': 27.230, 'SSIM': 0.782, 'LPIPS': 0.195},
+    'Lab4 (trail9)':    {'PSNR': 27.340, 'SSIM': 0.734, 'LPIPS': 0.210},
+    'StereoMIS (P2_1)': {'PSNR': 22.513, 'SSIM': 0.592, 'LPIPS': 0.496},
+}
+
+
 def main():
     parser = argparse.ArgumentParser(description='Evaluate rendering quality')
     parser.add_argument('--gt_dir', type=str, required=True,
@@ -53,6 +62,11 @@ def main():
     parser.add_argument('--name', type=str, default='', help='Method name for display')
     parser.add_argument('--output_csv', type=str, default='',
                         help='Save per-frame metrics to CSV for use with visualize_run.py')
+    parser.add_argument('--summary_csv', type=str, default='',
+                        help='Append summary row to CSV for cross-method comparison (Table I format)')
+    parser.add_argument('--sequence', type=str, default='Lab1 (trail3)',
+                        choices=list(PAPER_REFERENCES.keys()),
+                        help='Sequence name for paper reference values')
     args = parser.parse_args()
 
     # Find rendered images
@@ -147,11 +161,31 @@ def main():
                 writer.writerow(row)
         print(f"\nPer-frame metrics saved to {args.output_csv}")
 
-    # Paper reference (DDS-SLAM Table I, Lab1 = trail3)
-    print(f"\nPaper reference (DDS-SLAM, Lab1):")
-    print(f"  PSNR:  28.649")
-    print(f"  SSIM:  0.797")
-    print(f"  LPIPS: 0.231")
+    # Paper reference (DDS-SLAM Table I/II)
+    ref = PAPER_REFERENCES[args.sequence]
+    print(f"\nPaper reference (DDS-SLAM, {args.sequence}):")
+    print(f"  PSNR:  {ref['PSNR']}")
+    print(f"  SSIM:  {ref['SSIM']}")
+    print(f"  LPIPS: {ref['LPIPS']}")
+
+    # Append summary row to cross-method comparison CSV
+    if args.summary_csv:
+        write_header = not os.path.exists(args.summary_csv)
+        with open(args.summary_csv, 'a', newline='') as f:
+            writer = csv.writer(f)
+            if write_header:
+                header = ['method', 'sequence', 'n_frames',
+                          'psnr_mean', 'psnr_std', 'ssim_mean', 'ssim_std']
+                if lpips_list:
+                    header += ['lpips_mean', 'lpips_std']
+                writer.writerow(header)
+            row = [args.name, args.sequence, n_eval,
+                   f"{np.mean(psnr_list):.3f}", f"{np.std(psnr_list):.3f}",
+                   f"{np.mean(ssim_list):.3f}", f"{np.std(ssim_list):.3f}"]
+            if lpips_list:
+                row += [f"{np.mean(lpips_list):.3f}", f"{np.std(lpips_list):.3f}"]
+            writer.writerow(row)
+        print(f"\nSummary appended to {args.summary_csv}")
 
 
 if __name__ == '__main__':

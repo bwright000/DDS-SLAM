@@ -283,12 +283,12 @@ def evaluate_frame_pair(idx_i, idx_j, poses, rgb_paths, depth_paths,
     v_src_valid = v_src[mask]
     d_src_valid = d_src[mask]
 
-    # --- Geometric reprojection error ---
-    # For cross-frame reprojection, we backproject frame i's pixels to 3D,
-    # then project to frame j. The "ideal" target pixel is unknown without
-    # feature correspondences. Instead we do a round-trip: project the same
-    # 3D point back into frame i and measure the displacement. This isolates
-    # the pose+depth consistency.
+    # --- Round-trip consistency error ---
+    # NOTE: This is NOT the paper's Rep.Err metric. The paper uses green pin
+    # tracking annotations from the Semantic-SuPer dataset (ref [11]) which
+    # are not available to us. This round-trip metric measures pose+depth
+    # consistency by backprojecting frame i's pixels to 3D, then projecting
+    # back into frame i via the world coordinate transform.
     w2c_i = np.linalg.inv(c2w_i)
     u_roundtrip, v_roundtrip, _ = project_to_image(pts_world[mask], w2c_i, K)
     reproj_error = np.sqrt((u_roundtrip - u_src_valid) ** 2 +
@@ -459,7 +459,7 @@ def main():
         print(f"Step k={step} ({len(all_results)} frame pairs)")
         print(f"{'=' * 55}")
         print(f"  Visible correspondences: {visibility:.1%}")
-        print(f"  Round-trip reprojection error:")
+        print(f"  Round-trip consistency error:")
         print(f"    Mean:   {np.mean(roundtrip_means):.3f} px "
               f"(std: {np.std(roundtrip_means):.3f})")
         print(f"    RMSE:   {np.mean(roundtrip_rmses):.3f} px")
@@ -480,6 +480,10 @@ def main():
             'depth_mean_m': f"{np.mean(depth_means):.4f}" if depth_means else 'nan',
             'photo_mean_l1': f"{np.mean(photo_means):.4f}",
         })
+
+    print(f"\nNote: The paper's Rep.Err (Table I) uses green pin tracking annotations")
+    print(f"from Semantic-SuPer [11], which are not available. The round-trip")
+    print(f"consistency metric above is a pose+depth consistency proxy.")
 
     # Optional CSV output
     if args.output_csv and csv_rows:
