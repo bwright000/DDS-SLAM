@@ -124,10 +124,7 @@ def reconstruct_depth_open3d(rgb_files, depth_files, poses, intrinsics,
         c2w_cv = c2w @ gl_to_cv
         w2c = np.linalg.inv(c2w_cv)
 
-        volume.integrate(
-            rgbd, intrinsic,
-            o3d.core.Tensor(w2c, dtype=o3d.core.Dtype.Float64)
-        )
+        volume.integrate(rgbd, intrinsic, w2c)
 
     print("Extracting mesh from TSDF volume...")
     mesh = volume.extract_triangle_mesh()
