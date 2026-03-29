@@ -49,7 +49,8 @@ def load_model(repo_dir, checkpoint_path, device):
     import importlib
     import types
 
-    # Create a dummy lietorch module so imports don't fail
+    # Create a comprehensive dummy lietorch module so imports don't fail
+    # We only need RAFT's flow2depth — lietorch is for pose estimation which we skip
     lietorch_mock = types.ModuleType('lietorch')
 
     class DummySE3:
@@ -62,7 +63,15 @@ def load_model(repo_dir, checkpoint_path, device):
         def vec(self):
             return torch.zeros(1, 7)
 
+    class DummyLieGroupParameter(torch.nn.Parameter):
+        """Dummy LieGroupParameter to satisfy imports."""
+        def __new__(cls, data=None, *args, **kwargs):
+            if data is None:
+                data = torch.zeros(1, 7)
+            return super().__new__(cls, data)
+
     lietorch_mock.SE3 = DummySE3
+    lietorch_mock.LieGroupParameter = DummyLieGroupParameter
     sys.modules['lietorch'] = lietorch_mock
 
     from core.pose.pose_net import PoseNet
@@ -116,10 +125,17 @@ def load_calibration(datadir):
         config = configparser.ConfigParser()
         config.read(ini_file)
         tvec = np.array([float(config['StereoRight'][f'T_{i}']) for i in range(3)])
-        baseline = np.linalg.norm(tvec)
+        baseline_raw = np.linalg.norm(tvec)
+        # StereoCalibration.ini uses millimeters for translation
+        # da Vinci baseline is ~4-6mm, so if value > 1.0 it's in mm
+        if baseline_raw > 1.0:
+            baseline = baseline_raw / 1000.0  # convert mm to meters
+            print(f"Baseline {baseline_raw:.3f}mm detected (converting to {baseline:.6f}m)")
+        else:
+            baseline = baseline_raw
         fx = float(config['StereoLeft']['fc_x'])
         bf = baseline * fx
-        print(f"Calibration from StereoCalibration.ini: bf={bf:.2f}, baseline={baseline:.6f}m")
+        print(f"Calibration from StereoCalibration.ini: bf={bf:.4f}, baseline={baseline:.6f}m, fx={fx:.2f}")
         return bf, baseline
 
     else:
