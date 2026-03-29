@@ -2,18 +2,29 @@
 3D Reconstruction from DDS-SLAM results.
 
 Two reconstruction paths:
-  Path A (gt):     Depth-based TSDF fusion using estimated poses + depth maps
-  Path B (neural): Neural SDF mesh extraction from trained checkpoint
+  Path A (gt):     Depth-based windowed TSDF fusion per frame
+  Path B (neural): Time-aware neural SDF mesh extraction per frame
+
+Both paths produce per-frame meshes that can be visualized as a
+timeline in Rerun to observe tissue deformation over time.
 
 Usage:
+  # All frames, both paths:
   python Addons/reconstruct_3d.py \
     --config configs/Super/trail3.yaml \
-    --checkpoint output/trail3_depth_anything/demo/checkpoint150.pt \
+    --checkpoint output/.../checkpoint150.pt \
     --datadir data/Super \
-    --depth_dir output/DDS-SLAM-Results/depth_maps_depth_anything \
-    --posefile output/trail3_depth_anything/demo/est_c2w_data.txt \
-    --output_dir output/trail3_depth_anything/demo \
+    --depth_dir output/.../depth_maps_depth_anything \
+    --posefile output/.../est_c2w_data.txt \
+    --output_dir output/.../meshes \
     --mode both
+
+  # Single frame, neural only:
+  python Addons/reconstruct_3d.py \
+    --config configs/Super/trail3.yaml \
+    --checkpoint output/.../checkpoint150.pt \
+    --output_dir output/.../meshes \
+    --mode neural --frames 0,75,150
 """
 
 import argparse
@@ -25,6 +36,7 @@ import cv2
 import numpy as np
 import torch
 import trimesh
+from tqdm import tqdm
 
 # Add project root to path
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -74,166 +86,132 @@ def get_depth_files(depth_dir):
     return files
 
 
+def parse_frame_list(frames_str, n_frames):
+    """Parse --frames argument into a list of frame indices."""
+    if frames_str is None:
+        return list(range(n_frames))
+    indices = []
+    for part in frames_str.split(','):
+        part = part.strip()
+        if '-' in part:
+            start, end = part.split('-')
+            indices.extend(range(int(start), int(end) + 1))
+        else:
+            indices.append(int(part))
+    return sorted(set(i for i in indices if 0 <= i < n_frames))
+
+
+def clean_mesh(mesh, min_component_faces=100, smooth_iterations=3,
+               smooth_lambda=0.5):
+    """Clean a mesh by removing small components and optionally smoothing."""
+    if not isinstance(mesh, trimesh.Trimesh):
+        try:
+            import open3d as o3d
+            if isinstance(mesh, o3d.geometry.TriangleMesh):
+                verts = np.asarray(mesh.vertices)
+                faces = np.asarray(mesh.triangles)
+                colors = np.asarray(mesh.vertex_colors) if mesh.has_vertex_colors() else None
+                mesh = trimesh.Trimesh(vertices=verts, faces=faces,
+                                       vertex_colors=colors, process=False)
+        except ImportError:
+            pass
+
+    if len(mesh.faces) == 0:
+        return mesh
+
+    components = trimesh.graph.connected_components(mesh.face_adjacency)
+    if len(components) > 1:
+        keep_faces = set()
+        for component in components:
+            if len(component) >= min_component_faces:
+                keep_faces.update(component)
+        if keep_faces:
+            face_mask = np.zeros(len(mesh.faces), dtype=bool)
+            face_mask[list(keep_faces)] = True
+            mesh.update_faces(face_mask)
+            mesh.remove_unreferenced_vertices()
+
+    if smooth_iterations > 0:
+        try:
+            trimesh.smoothing.filter_laplacian(
+                mesh, lamb=smooth_lambda, iterations=smooth_iterations)
+        except Exception:
+            pass
+
+    return mesh
+
+
 # ============================================================================
-# Path A: Depth-Based TSDF Fusion
+# Path A: Depth-Based Windowed TSDF Fusion
 # ============================================================================
 
-def reconstruct_depth_open3d(rgb_files, depth_files, poses, intrinsics,
-                              depth_scale, depth_trunc, tsdf_voxel,
-                              output_path, skip=1):
-    """TSDF fusion using Open3D — produces a watertight mesh."""
+def reconstruct_depth_at_frame(rgb_files, depth_files, poses, intrinsics,
+                               center_frame, window_size,
+                               depth_scale, depth_trunc, tsdf_voxel,
+                               sdf_trunc_factor=5.0):
+    """TSDF fusion over a window of frames centered on center_frame."""
     import open3d as o3d
 
     fx, fy, cx, cy = intrinsics
     H, W = cv2.imread(rgb_files[0]).shape[:2]
-
     intrinsic = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fy, cx, cy)
+    n_frames = min(len(rgb_files), len(depth_files), len(poses))
 
+    half = window_size // 2
+    start = max(0, center_frame - half)
+    end = min(n_frames, center_frame + half + 1)
+
+    sdf_trunc = tsdf_voxel * sdf_trunc_factor
     volume = o3d.pipelines.integration.ScalableTSDFVolume(
         voxel_length=tsdf_voxel,
-        sdf_trunc=tsdf_voxel * 5,
+        sdf_trunc=sdf_trunc,
         color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8
     )
 
-    n_frames = min(len(rgb_files), len(depth_files), len(poses))
-    print(f"Integrating {n_frames // skip} frames into TSDF volume (voxel={tsdf_voxel})...")
-
-    for i in range(0, n_frames, skip):
+    for i in range(start, end):
         color_img = o3d.io.read_image(rgb_files[i])
 
         depth_np = np.load(depth_files[i]).astype(np.float32)
         depth_meters = depth_np / depth_scale
-        # Clamp to valid range
         depth_meters[depth_meters > depth_trunc] = 0.0
         depth_meters[depth_meters < 0] = 0.0
-        # Open3D expects depth in mm-scale float or uint16; use meters with create_from_color_and_depth
+        # Filter noisy depth edges
+        grad_x = cv2.Sobel(depth_meters, cv2.CV_32F, 1, 0, ksize=3)
+        grad_y = cv2.Sobel(depth_meters, cv2.CV_32F, 0, 1, ksize=3)
+        grad_mag = np.sqrt(grad_x**2 + grad_y**2)
+        depth_meters[grad_mag > 0.5] = 0.0
         depth_o3d = o3d.geometry.Image(depth_meters)
 
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
             color_img, depth_o3d,
-            depth_scale=1.0,  # already in meters
+            depth_scale=1.0,
             depth_trunc=depth_trunc,
             convert_rgb_to_intensity=False
         )
 
-        # c2w pose from DDS-SLAM (OpenGL convention: Y-up, -Z forward)
-        # Open3D expects w2c in OpenCV convention
         c2w = poses[i].copy()
-        # OpenGL to OpenCV: flip Y and Z axes
         gl_to_cv = np.diag([1, -1, -1, 1]).astype(np.float64)
-        c2w_cv = c2w @ gl_to_cv
-        w2c = np.linalg.inv(c2w_cv)
+        w2c = np.linalg.inv(c2w @ gl_to_cv)
 
         volume.integrate(rgbd, intrinsic, w2c)
 
-    print("Extracting mesh from TSDF volume...")
     mesh = volume.extract_triangle_mesh()
     mesh.compute_vertex_normals()
-
-    o3d.io.write_triangle_mesh(output_path, mesh)
-    n_verts = np.asarray(mesh.vertices).shape[0]
-    n_faces = np.asarray(mesh.triangles).shape[0]
-    print(f"Depth-based mesh saved: {output_path} ({n_verts} vertices, {n_faces} faces)")
     return mesh
 
 
-def reconstruct_depth_pointcloud(rgb_files, depth_files, poses, intrinsics,
-                                  depth_scale, depth_trunc, output_path,
-                                  skip=1, max_points_per_frame=50000):
-    """Fallback: simple coloured point cloud without Open3D."""
-    fx, fy, cx, cy = intrinsics
-
-    all_points = []
-    all_colors = []
-
-    n_frames = min(len(rgb_files), len(depth_files), len(poses))
-    print(f"Back-projecting {n_frames // skip} frames into point cloud...")
-
-    for i in range(0, n_frames, skip):
-        rgb = cv2.imread(rgb_files[i])
-        rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
-        H, W = rgb.shape[:2]
-
-        depth_np = np.load(depth_files[i]).astype(np.float32)
-        depth_meters = depth_np / depth_scale
-
-        # Create pixel grid
-        u, v = np.meshgrid(np.arange(W), np.arange(H))
-        valid = (depth_meters > 0) & (depth_meters < depth_trunc)
-
-        u_valid = u[valid].astype(np.float64)
-        v_valid = v[valid].astype(np.float64)
-        d_valid = depth_meters[valid].astype(np.float64)
-
-        # Subsample if too many points
-        if len(u_valid) > max_points_per_frame:
-            idx = np.random.choice(len(u_valid), max_points_per_frame, replace=False)
-            u_valid, v_valid, d_valid = u_valid[idx], v_valid[idx], d_valid[idx]
-
-        # Back-project to camera coordinates
-        x = (u_valid - cx) * d_valid / fx
-        y = (v_valid - cy) * d_valid / fy
-        z = d_valid
-
-        pts_cam = np.stack([x, y, z, np.ones_like(x)], axis=-1)  # (N, 4)
-
-        # Transform to world coordinates
-        c2w = poses[i]
-        pts_world = (c2w @ pts_cam.T).T[:, :3]
-
-        # Get colours
-        colors = rgb[valid]
-        if len(u_valid) < len(colors):
-            colors = colors[idx] if 'idx' in dir() else colors[:len(u_valid)]
-
-        all_points.append(pts_world)
-        all_colors.append(colors[:len(pts_world)] / 255.0)
-
-    points = np.concatenate(all_points, axis=0)
-    colors = np.concatenate(all_colors, axis=0)
-
-    cloud = trimesh.PointCloud(points, colors=colors)
-    cloud.export(output_path)
-    print(f"Point cloud saved: {output_path} ({len(points)} points)")
-    return cloud
-
-
-def reconstruct_from_depth(rgb_files, depth_files, poses, intrinsics,
-                           depth_scale, depth_trunc, output_path,
-                           tsdf_voxel=0.004, skip=1):
-    """Depth-based reconstruction with Open3D fallback."""
-    try:
-        import open3d
-        return reconstruct_depth_open3d(
-            rgb_files, depth_files, poses, intrinsics,
-            depth_scale, depth_trunc, tsdf_voxel, output_path, skip
-        )
-    except ImportError:
-        print("Open3D not available, falling back to point cloud...")
-        pc_path = output_path.replace('.ply', '_pointcloud.ply')
-        return reconstruct_depth_pointcloud(
-            rgb_files, depth_files, poses, intrinsics,
-            depth_scale, depth_trunc, pc_path, skip
-        )
-
-
 # ============================================================================
-# Path B: Neural SDF Mesh Extraction
+# Path B: Time-Aware Neural SDF Mesh Extraction
 # ============================================================================
 
-def reconstruct_from_neural(config_path, checkpoint_path, output_path,
-                            voxel_size=None):
-    """Extract mesh from trained DDS-SLAM neural SDF checkpoint."""
+def load_model(config_path, checkpoint_path):
+    """Load DDS-SLAM model from config + checkpoint."""
     import config as cfg_module
     from model.scene_rep import JointEncoding
-    from utils import extract_mesh
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-    # Load config
     cfg = cfg_module.load_config(config_path)
 
-    # Build model
     bounding_box = torch.from_numpy(
         np.array(cfg['mapping']['bound'])
     ).float().to(device)
@@ -244,41 +222,38 @@ def reconstruct_from_neural(config_path, checkpoint_path, output_path,
 
     model = JointEncoding(cfg, bounding_box).to(device)
 
-    # Load checkpoint
     print(f"Loading checkpoint: {checkpoint_path}")
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model.load_state_dict(ckpt['model'])
     model.eval()
 
-    # Determine voxel size
-    if voxel_size is None:
-        voxel_size = cfg['mesh'].get('voxel_final', 0.02)
+    return model, cfg, bounding_box, marching_cube_bound, device
 
-    print(f"Extracting neural SDF mesh (voxel_size={voxel_size})...")
 
-    # Wrap query_color_sdf to return only color (it returns a tuple)
-    color_func = None
-    if hasattr(model, 'query_color_sdf'):
-        def _color_only(pts):
-            out = model.query_color_sdf(pts)
-            if isinstance(out, tuple):
-                return out[0]  # (color_sdf, edge_semantic) -> color_sdf
-            return out
-        color_func = _color_only
+def reconstruct_neural_at_frame(model, cfg, bounding_box, marching_cube_bound,
+                                device, timestamp, voxel_size,
+                                isolevel=0.0, mc_truncation=1.0):
+    """Extract mesh from neural SDF at a specific timestamp."""
+    from utils import extract_mesh
+    from functools import partial
+
+    # Create time-aware query functions that bind the timestamp
+    sdf_fn = partial(model.query_sdf_at_time, timestamp=timestamp)
+    color_fn = partial(model.query_color_at_time, timestamp=timestamp)
 
     mesh = extract_mesh(
-        query_fn=model.query_sdf,
+        query_fn=sdf_fn,
         config=cfg,
         bounding_box=bounding_box,
         marching_cube_bound=marching_cube_bound,
-        color_func=color_func,
+        color_func=color_fn,
         voxel_size=voxel_size,
-        mesh_savepath=output_path
+        isolevel=isolevel,
+        truncation=mc_truncation,
+        mesh_savepath='',  # We'll save manually after cleaning
+        skip_normalize=True  # query_sdf_at_time handles normalization
     )
 
-    n_verts = len(mesh.vertices)
-    n_faces = len(mesh.faces)
-    print(f"Neural SDF mesh saved: {output_path} ({n_verts} vertices, {n_faces} faces)")
     return mesh
 
 
@@ -293,84 +268,133 @@ def main():
     parser.add_argument('--config', type=str, required=True,
                         help='Path to DDS-SLAM config YAML')
     parser.add_argument('--checkpoint', type=str, default=None,
-                        help='Path to checkpoint .pt file (required for neural mode)')
+                        help='Path to checkpoint .pt (required for neural mode)')
     parser.add_argument('--datadir', type=str, default=None,
                         help='Path to dataset with rgb/ folder (required for gt mode)')
     parser.add_argument('--depth_dir', type=str, default=None,
-                        help='Path to depth .npy files (if different from datadir/rgb/)')
+                        help='Path to depth .npy files')
     parser.add_argument('--posefile', type=str, default=None,
                         help='Path to est_c2w_data.txt (required for gt mode)')
     parser.add_argument('--output_dir', type=str, required=True,
-                        help='Directory to save output .ply files')
+                        help='Directory to save output meshes')
     parser.add_argument('--mode', type=str, default='both',
                         choices=['gt', 'neural', 'both'],
                         help='Reconstruction mode')
+    parser.add_argument('--frames', type=str, default=None,
+                        help='Frame indices to reconstruct (e.g., "0,75,150" or "0-150"). Default: all')
     parser.add_argument('--voxel_size', type=float, default=None,
                         help='Marching cubes voxel size for neural SDF (default from config)')
     parser.add_argument('--tsdf_voxel', type=float, default=0.004,
-                        help='TSDF voxel size for depth fusion (default: 0.004)')
-    parser.add_argument('--skip', type=int, default=1,
-                        help='Use every N-th frame for GT reconstruction')
+                        help='TSDF voxel size (default: 0.004)')
+    parser.add_argument('--tsdf_window', type=int, default=10,
+                        help='Number of frames in TSDF window (default: 10)')
+    parser.add_argument('--isolevel', type=float, default=0.0,
+                        help='Isolevel for marching cubes (default: 0.0)')
+    parser.add_argument('--mc_truncation', type=float, default=1.0,
+                        help='Marching cubes truncation (default: 1.0)')
+    parser.add_argument('--no_clean', action='store_true',
+                        help='Skip mesh post-processing')
+    parser.add_argument('--min_component_faces', type=int, default=100,
+                        help='Remove components with fewer faces (default: 100)')
+    parser.add_argument('--smooth_iterations', type=int, default=3,
+                        help='Laplacian smoothing iterations (default: 3)')
+    parser.add_argument('--sdf_trunc_factor', type=float, default=5.0,
+                        help='TSDF sdf_trunc = tsdf_voxel * factor (default: 5.0)')
 
     args = parser.parse_args()
-    os.makedirs(args.output_dir, exist_ok=True)
 
-    # Load config for camera params
     sys.path.insert(0, PROJECT_ROOT)
     import config as cfg_module
     cfg = cfg_module.load_config(args.config)
 
     depth_scale = cfg['cam']['png_depth_scale']
     depth_trunc = cfg['cam']['depth_trunc']
-    fx = cfg['cam']['fx']
-    fy = cfg['cam']['fy']
-    cx = cfg['cam']['cx']
-    cy = cfg['cam']['cy']
-    intrinsics = (fx, fy, cx, cy)
+    intrinsics = (cfg['cam']['fx'], cfg['cam']['fy'],
+                  cfg['cam']['cx'], cfg['cam']['cy'])
+    n_total_frames = cfg.get('timesteps', 151)
 
-    print(f"Camera: fx={fx}, fy={fy}, cx={cx}, cy={cy}")
-    print(f"Depth scale={depth_scale}, trunc={depth_trunc}m")
+    frame_list = parse_frame_list(args.frames, n_total_frames)
+    print(f"Reconstructing {len(frame_list)} frames: {frame_list[:5]}{'...' if len(frame_list) > 5 else ''}")
 
-    # --- Path A: Depth-based reconstruction ---
+    # --- Path A: Windowed depth-based TSDF per frame ---
     if args.mode in ('gt', 'both'):
         if not args.datadir:
             raise ValueError("--datadir required for gt mode")
         if not args.posefile:
             raise ValueError("--posefile required for gt mode")
 
+        import open3d  # fail fast if missing
+
         rgb_files = get_left_images(args.datadir)
         depth_dir = args.depth_dir or os.path.join(args.datadir, 'rgb')
         depth_files = get_depth_files(depth_dir)
         poses = load_poses_from_txt(args.posefile)
 
+        gt_dir = os.path.join(args.output_dir, 'gt')
+        os.makedirs(gt_dir, exist_ok=True)
+
         print(f"\n{'='*60}")
-        print("Path A: Depth-based TSDF reconstruction")
+        print(f"Path A: Windowed TSDF (window={args.tsdf_window} frames)")
         print(f"{'='*60}")
-        print(f"RGB frames: {len(rgb_files)}")
-        print(f"Depth maps: {len(depth_files)}")
-        print(f"Poses: {len(poses)}")
 
-        gt_path = os.path.join(args.output_dir, 'mesh_gt_depth.ply')
-        reconstruct_from_depth(
-            rgb_files, depth_files, poses, intrinsics,
-            depth_scale, depth_trunc, gt_path,
-            tsdf_voxel=args.tsdf_voxel, skip=args.skip
-        )
+        for frame_id in tqdm(frame_list, desc="TSDF frames"):
+            mesh = reconstruct_depth_at_frame(
+                rgb_files, depth_files, poses, intrinsics,
+                center_frame=frame_id, window_size=args.tsdf_window,
+                depth_scale=depth_scale, depth_trunc=depth_trunc,
+                tsdf_voxel=args.tsdf_voxel,
+                sdf_trunc_factor=args.sdf_trunc_factor
+            )
+            if not args.no_clean:
+                mesh = clean_mesh(mesh,
+                                  min_component_faces=args.min_component_faces,
+                                  smooth_iterations=args.smooth_iterations)
+            if isinstance(mesh, trimesh.Trimesh):
+                mesh.export(os.path.join(gt_dir, f'frame_{frame_id:04d}.ply'))
+            else:
+                # Open3D mesh — convert and save
+                verts = np.asarray(mesh.vertices)
+                faces = np.asarray(mesh.triangles)
+                colors = np.asarray(mesh.vertex_colors) if mesh.has_vertex_colors() else None
+                tri_mesh = trimesh.Trimesh(vertices=verts, faces=faces,
+                                           vertex_colors=colors, process=False)
+                tri_mesh.export(os.path.join(gt_dir, f'frame_{frame_id:04d}.ply'))
 
-    # --- Path B: Neural SDF mesh extraction ---
+        print(f"Saved {len(frame_list)} TSDF meshes to {gt_dir}/")
+
+    # --- Path B: Time-aware neural SDF per frame ---
     if args.mode in ('neural', 'both'):
         if not args.checkpoint:
             raise ValueError("--checkpoint required for neural mode")
 
+        model, model_cfg, bbox, mc_bound, device = load_model(
+            args.config, args.checkpoint
+        )
+
+        voxel_size = args.voxel_size
+        if voxel_size is None:
+            voxel_size = model_cfg['mesh'].get('voxel_final', 0.005)
+
+        neural_dir = os.path.join(args.output_dir, 'neural')
+        os.makedirs(neural_dir, exist_ok=True)
+
         print(f"\n{'='*60}")
-        print("Path B: Neural SDF mesh extraction")
+        print(f"Path B: Time-aware neural SDF (voxel_size={voxel_size})")
         print(f"{'='*60}")
 
-        neural_path = os.path.join(args.output_dir, 'mesh_ddsslam.ply')
-        reconstruct_from_neural(
-            args.config, args.checkpoint, neural_path,
-            voxel_size=args.voxel_size
-        )
+        for frame_id in tqdm(frame_list, desc="Neural frames"):
+            mesh = reconstruct_neural_at_frame(
+                model, model_cfg, bbox, mc_bound, device,
+                timestamp=frame_id, voxel_size=voxel_size,
+                isolevel=args.isolevel, mc_truncation=args.mc_truncation
+            )
+            if not args.no_clean:
+                mesh = clean_mesh(mesh,
+                                  min_component_faces=args.min_component_faces,
+                                  smooth_iterations=args.smooth_iterations)
+            mesh.export(os.path.join(neural_dir, f'frame_{frame_id:04d}.ply'))
+
+        print(f"Saved {len(frame_list)} neural meshes to {neural_dir}/")
 
     print(f"\nDone. Output in {args.output_dir}")
 

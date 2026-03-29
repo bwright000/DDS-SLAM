@@ -61,7 +61,7 @@ def get_batch_query_fn(query_fn, num_args=1, device=None):
 
 #### NeuralRGBD ####
 @torch.no_grad()
-def extract_mesh(query_fn, config, bounding_box, marching_cube_bound=None, color_func = None, voxel_size=None, resolution=None, isolevel=0.0, scene_name='', mesh_savepath=''):
+def extract_mesh(query_fn, config, bounding_box, marching_cube_bound=None, color_func = None, voxel_size=None, resolution=None, isolevel=0.0, truncation=1.0, scene_name='', mesh_savepath='', skip_normalize=False):
     '''
     Extracts mesh from the scene model using marching cubes (Adapted from NeuralRGBD)
     '''
@@ -80,7 +80,7 @@ def extract_mesh(query_fn, config, bounding_box, marching_cube_bound=None, color
     flat = query_pts.reshape([-1, 3])
     bounding_box_cpu = bounding_box.cpu()
 
-    if config['grid']['tcnn_encoding']:
+    if config['grid']['tcnn_encoding'] and not skip_normalize:
         flat = (flat - bounding_box_cpu[:, 0]) / (bounding_box_cpu[:, 1] - bounding_box_cpu[:, 0])
 
     fn = get_batch_query_fn(query_fn, device=bounding_box.device)
@@ -93,7 +93,7 @@ def extract_mesh(query_fn, config, bounding_box, marching_cube_bound=None, color
     
 
     print('Running Marching Cubes')
-    vertices, triangles = mcubes.marching_cubes(raw.squeeze(), isolevel, truncation=3.0)
+    vertices, triangles = mcubes.marching_cubes(raw.squeeze(), isolevel, truncation=truncation)
     print('done', vertices.shape, triangles.shape)
 
     # normalize vertex positions
@@ -113,8 +113,10 @@ def extract_mesh(query_fn, config, bounding_box, marching_cube_bound=None, color
 
 
     if color_func is not None and not config['mesh']['render_color']:
-        if config['grid']['tcnn_encoding']:
+        if config['grid']['tcnn_encoding'] and not skip_normalize:
             vert_flat = (torch.from_numpy(vertices).to(bounding_box) - bounding_box[:, 0]) / (bounding_box[:, 1] - bounding_box[:, 0])
+        else:
+            vert_flat = torch.from_numpy(vertices).to(bounding_box)
 
 
         fn_color = get_batch_query_fn(color_func, 1)
@@ -145,11 +147,11 @@ def extract_mesh(query_fn, config, bounding_box, marching_cube_bound=None, color
         # Create mesh
         mesh = trimesh.Trimesh(vertices, triangles, process=False)
 
-    
-    os.makedirs(os.path.split(mesh_savepath)[0], exist_ok=True)
-    mesh.export(mesh_savepath)
+    if mesh_savepath:
+        os.makedirs(os.path.split(mesh_savepath)[0], exist_ok=True)
+        mesh.export(mesh_savepath)
+        print('Mesh saved')
 
-    print('Mesh saved')
     return mesh
 #### #### 
 

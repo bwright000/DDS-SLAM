@@ -235,6 +235,47 @@ def log_mesh(mesh_path, prefix=""):
     print(f"Logged mesh: {len(verts)} vertices, {len(faces)} faces")
 
 
+def log_mesh_sequence(mesh_dir, prefix=""):
+    """Load per-frame meshes from a directory and log them on Rerun's timeline.
+
+    Expects files named frame_XXXX.ply (e.g., frame_0000.ply, frame_0075.ply).
+    Each mesh is logged at its corresponding frame index so the Rerun timeline
+    scrubber shows the deforming surface over time.
+    """
+    try:
+        import trimesh
+    except ImportError:
+        print("Warning: trimesh not installed, skipping mesh sequence")
+        return
+
+    mesh_files = sorted(glob.glob(os.path.join(mesh_dir, 'frame_*.ply')))
+    if not mesh_files:
+        print(f"No frame_*.ply files found in {mesh_dir}")
+        return
+
+    print(f"Loading {len(mesh_files)} meshes from {mesh_dir}...")
+    entity_path = entity(prefix, "world/mesh")
+
+    for mesh_path in mesh_files:
+        # Extract frame index from filename (frame_0075.ply -> 75)
+        basename = os.path.splitext(os.path.basename(mesh_path))[0]
+        frame_idx = int(basename.split('_')[-1])
+
+        mesh = trimesh.load(mesh_path)
+        verts = np.array(mesh.vertices, dtype=np.float32)
+        faces = np.array(mesh.faces, dtype=np.uint32)
+
+        kwargs = dict(vertex_positions=verts, indices=faces)
+        if mesh.visual and hasattr(mesh.visual, 'vertex_colors'):
+            colors = np.array(mesh.visual.vertex_colors[:, :3], dtype=np.uint8)
+            kwargs['vertex_colors'] = colors
+
+        rr.set_time_sequence("frame", frame_idx)
+        rr.log(entity_path, rr.Mesh3D(**kwargs))
+
+    print(f"Logged {len(mesh_files)} meshes on timeline")
+
+
 def backproject_depth_to_pointcloud(depth, rgb, c2w, fx, fy, cx, cy,
                                      depth_trunc, max_points=50000):
     """Back-project depth map to 3D coloured point cloud in world frame.
@@ -396,7 +437,9 @@ def main():
     parser.add_argument('--metrics_csv', type=str, default='',
                         help='Per-frame metrics CSV (from eval_rendering.py --output_csv)')
     parser.add_argument('--mesh', type=str, default='',
-                        help='Path to reconstructed mesh (.ply or .obj)')
+                        help='Path to static reconstructed mesh (.ply or .obj)')
+    parser.add_argument('--mesh_dir', type=str, default='',
+                        help='Directory of per-frame meshes (frame_XXXX.ply) for timeline scrubbing')
     # Camera intrinsics
     parser.add_argument('--fx', type=float, default=768.98551924)
     parser.add_argument('--fy', type=float, default=768.98551924)
@@ -473,6 +516,8 @@ def main():
     # --- Log mesh ---
     if args.mesh and os.path.exists(args.mesh):
         log_mesh(args.mesh, prefix=prefix)
+    if args.mesh_dir and os.path.isdir(args.mesh_dir):
+        log_mesh_sequence(args.mesh_dir, prefix=prefix)
 
     # --- Log per-frame data ---
     for i in range(0, n_frames, args.every):

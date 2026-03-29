@@ -199,6 +199,78 @@ class JointEncoding(nn.Module):
 
         return sdf, geo_feat
 
+    def query_sdf_at_time(self, query_points, timestamp):
+        '''
+        Query SDF with deformation applied for a specific timestamp.
+        Used for time-aware mesh extraction.
+
+        Params:
+            query_points: [N, 3] points in world space
+            timestamp: scalar frame index (0, 1, ..., N-1)
+        Returns:
+            sdf: [N] signed distance values at the deformed positions
+        '''
+        inputs_flat = torch.reshape(query_points, [-1, query_points.shape[-1]])
+
+        if self.config['dynamic']:
+            pts = inputs_flat[:, :3]
+            frame_time = torch.full((pts.shape[0], 1), timestamp,
+                                    device=pts.device, dtype=pts.dtype)
+            embed_time = self.embed_time(frame_time)
+            embed_pos = self.embed_fre_pos(pts)
+            h = torch.cat([embed_time, embed_pos], dim=-1)
+            vox_motion = self.time_net(h)
+            # Zero out motion at frame 0 (canonical frame)
+            if timestamp == 0:
+                vox_motion = torch.zeros_like(vox_motion)
+            inputs_flat = pts + vox_motion
+
+        # Normalize for TCNN
+        if self.config['grid']['tcnn_encoding']:
+            inputs_flat = (inputs_flat - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
+
+        embedded = self.embed_fn(inputs_flat)
+        embedded_pos = self.embedpos_fn(inputs_flat)
+        out = self.sdf_net(torch.cat([embedded, embedded_pos], dim=-1))
+        sdf = out[..., :1]
+
+        return torch.reshape(sdf, list(query_points.shape[:-1]))
+
+    def query_color_at_time(self, query_points, timestamp):
+        '''
+        Query color with deformation applied for a specific timestamp.
+
+        Params:
+            query_points: [N, 3] points in world space (already in TCNN [0,1] space)
+            timestamp: scalar frame index
+        Returns:
+            color: [N, 3] RGB values (after sigmoid)
+        '''
+        inputs_flat = torch.reshape(query_points, [-1, query_points.shape[-1]])
+
+        if self.config['dynamic']:
+            pts = inputs_flat[:, :3]
+            frame_time = torch.full((pts.shape[0], 1), timestamp,
+                                    device=pts.device, dtype=pts.dtype)
+            embed_time = self.embed_time(frame_time)
+            embed_pos = self.embed_fre_pos(pts)
+            h = torch.cat([embed_time, embed_pos], dim=-1)
+            vox_motion = self.time_net(h)
+            if timestamp == 0:
+                vox_motion = torch.zeros_like(vox_motion)
+            inputs_flat = pts + vox_motion
+
+        if self.config['grid']['tcnn_encoding']:
+            inputs_flat = (inputs_flat - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
+
+        out = self.query_color_sdf(inputs_flat)
+        if isinstance(out, tuple):
+            raw_color = out[0][..., :3]
+        else:
+            raw_color = out[..., :3]
+
+        return torch.sigmoid(raw_color)
+
     def render_rays(self, rays_o, rays_d, target_d=None):
         '''
         Params:
