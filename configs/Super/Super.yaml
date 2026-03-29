@@ -86,7 +86,7 @@ training:
   rgb_weight: 5
   semantic_weight: 0.5
   angle_loss_weight: 0
-  depth_weight: 0.1  #0.1
+  depth_weight: 5.0  #0.1  # Increased from 0.1 to counteract SDF gradient mismatch
   sdf_weight: 1000 #1000
   fs_weight: 10  #10
   eikonal_weight: 0
