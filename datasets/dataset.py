@@ -117,14 +117,14 @@ class StereoMISDataset(BaseDataset):
         self.translation = translation
         self.sc_factor = sc_factor
         self.crop = crop
-        self.img_files = sorted(glob.glob(f'{self.basedir}/video_frames/*l.png'))[-4000:]
-        self.depth_paths = sorted(glob.glob(f'{self.basedir}/depth/*.png'))[-4000:]
+        self.img_files = sorted(glob.glob(f'{self.basedir}/video_frames/*l.png'))
+        self.depth_paths = sorted(glob.glob(f'{self.basedir}/depth/*.png'))
 
         self.semantic_paths = sorted(
            glob.glob(os.path.join(
-           self.basedir, 'masks', '*.png')))[-2000:]#, key=lambda x: int(os.path.basename(x)[:-4]))
+           self.basedir, 'masks', '*.png')))
 
-        self.load_poses(os.path.join(self.basedir, 'pose'))
+        self.load_poses(self.basedir)
         
         self.rays_d = None
         self.frame_ids = range(0, len(self.img_files))
@@ -201,15 +201,41 @@ class StereoMISDataset(BaseDataset):
 
         return ret
 
-    def load_poses(self, path):
+    def load_poses(self, basedir):
+        """Load poses from groundtruth.txt (TUM format: timestamp tx ty tz qx qy qz qw).
+        Falls back to identity poses if groundtruth.txt not found."""
+        gt_file = os.path.join(basedir, 'groundtruth.txt')
         self.poses = []
-        for i in range(len(self.img_files)):
-            c2w=np.eye(4)
-            c2w[:3, 1] *= -1
-            c2w[:3, 2] *= -1
-            c2w[:3, 3] *= self.sc_factor
-            c2w = torch.from_numpy(c2w).float()
-            self.poses.append(c2w)
+
+        if os.path.isfile(gt_file):
+            data = np.loadtxt(gt_file)
+            print(f"Loaded {len(data)} GT poses from {gt_file}")
+            for i in range(len(self.img_files)):
+                if i < len(data):
+                    tx, ty, tz = data[i, 1:4]
+                    qx, qy, qz, qw = data[i, 4:8]
+                    # Quaternion to rotation matrix
+                    r = Rotation.from_quat([qx, qy, qz, qw])
+                    c2w = np.eye(4, dtype=np.float32)
+                    c2w[:3, :3] = r.as_matrix()
+                    c2w[:3, 3] = [tx, ty, tz]
+                    c2w[:3, 3] *= self.sc_factor
+                else:
+                    # More frames than poses — use identity
+                    c2w = np.eye(4, dtype=np.float32)
+                    c2w[:3, 1] *= -1
+                    c2w[:3, 2] *= -1
+                c2w = torch.from_numpy(c2w).float()
+                self.poses.append(c2w)
+        else:
+            print(f"No groundtruth.txt found at {gt_file}, using identity poses")
+            for i in range(len(self.img_files)):
+                c2w = np.eye(4)
+                c2w[:3, 1] *= -1
+                c2w[:3, 2] *= -1
+                c2w[:3, 3] *= self.sc_factor
+                c2w = torch.from_numpy(c2w).float()
+                self.poses.append(c2w)
 
 class SuperDataset(BaseDataset):
     def __init__(self, cfg, basedir, trainskip=1, 
