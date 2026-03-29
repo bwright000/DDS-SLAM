@@ -20,7 +20,7 @@ mapping:
   keyframe_every: 1
   map_every: 1
   n_pixels: 0.05
-  first_iters: 1000
+  first_iters: 5000
   optim_cur: True
   min_pixels_cur: 100
   map_accum_step: 1
