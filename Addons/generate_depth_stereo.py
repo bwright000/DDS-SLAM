@@ -129,17 +129,58 @@ def load_calibration(datadir):
         config = configparser.ConfigParser()
         config.read(ini_file)
         tvec = np.array([float(config['StereoRight'][f'T_{i}']) for i in range(3)])
-        baseline_raw = np.linalg.norm(tvec)
-        # StereoCalibration.ini uses millimeters for translation
-        # da Vinci baseline is ~4-6mm, so if value > 1.0 it's in mm
-        if baseline_raw > 1.0:
-            baseline = baseline_raw / 1000.0  # convert mm to meters
-            print(f"Baseline {baseline_raw:.3f}mm detected (converting to {baseline:.6f}m)")
-        else:
-            baseline = baseline_raw
-        fx = float(config['StereoLeft']['fc_x'])
-        bf = baseline * fx
-        print(f"Calibration from StereoCalibration.ini: bf={bf:.4f}, baseline={baseline:.6f}m, fx={fx:.2f}")
+        baseline_mm = np.linalg.norm(tvec)  # T is in mm
+
+        # We need the rectified bf, not raw. The original robust-pose-estimator
+        # computes bf = |Tx_rectified| * fx_rectified via OpenCV stereo rectification.
+        # We replicate this by running stereoRectify with the same calibration.
+        lkmat = np.eye(3, dtype=np.float64)
+        lkmat[0, 0] = float(config['StereoLeft']['fc_x'])
+        lkmat[1, 1] = float(config['StereoLeft']['fc_y'])
+        lkmat[0, 2] = float(config['StereoLeft']['cc_x'])
+        lkmat[1, 2] = float(config['StereoLeft']['cc_y'])
+
+        rkmat = np.eye(3, dtype=np.float64)
+        rkmat[0, 0] = float(config['StereoRight']['fc_x'])
+        rkmat[1, 1] = float(config['StereoRight']['fc_y'])
+        rkmat[0, 2] = float(config['StereoRight']['cc_x'])
+        rkmat[1, 2] = float(config['StereoRight']['cc_y'])
+
+        ld = np.array([float(config['StereoLeft'][f'kc_{i}']) for i in range(8)], dtype=np.float64)
+        rd = np.array([float(config['StereoRight'][f'kc_{i}']) for i in range(8)], dtype=np.float64)
+
+        rmat = np.array([float(config['StereoRight'][f'R_{i}']) for i in range(9)],
+                        dtype=np.float64).reshape(3, 3)
+
+        # Scale intrinsics to target resolution (640x512)
+        orig_w = float(config['StereoLeft']['res_x'])
+        target_w, target_h = 640, 512
+        scale_factor = target_w / orig_w
+        h_crop = int(float(config['StereoLeft']['res_y']) * scale_factor - target_h) // 2
+
+        lkmat[:2] *= scale_factor
+        rkmat[:2] *= scale_factor
+        lkmat[1, 2] -= h_crop
+        rkmat[1, 2] -= h_crop
+
+        # Run stereoRectify to get rectified projection matrices
+        r1, r2, p1, p2, q, _, _ = cv2.stereoRectify(
+            cameraMatrix1=lkmat, distCoeffs1=ld,
+            cameraMatrix2=rkmat, distCoeffs2=ld,  # Note: original uses ld for both (bug)
+            imageSize=(target_w, target_h),
+            R=rmat, T=tvec.reshape(3, 1),
+            alpha=0
+        )
+
+        # Compute bf the same way as robust-pose-estimator's get_rectified_calib()
+        # p2[0,3] = Tx * fx (in mm*px), so Tx = p2[0,3]/p2[0,0] (in mm)
+        Tx_rect = p2[0, 3] / p2[0, 0]  # mm
+        fx_rect = p1[0, 0]  # px
+        bf = abs(Tx_rect) * fx_rect  # mm*px (same units as original)
+        baseline = abs(Tx_rect) / 1000.0  # meters
+
+        print(f"Rectified calibration: fx={fx_rect:.2f}px, Tx={Tx_rect:.4f}mm")
+        print(f"bf={bf:.2f} (mm·px), baseline={baseline:.6f}m")
         return bf, baseline
 
     else:
@@ -200,17 +241,20 @@ def main():
             right_t = torch.from_numpy(right_img).permute(2, 0, 1).unsqueeze(0).float().to(device)
 
             # Compute depth via RAFT stereo matching
-            # The model expects baseline scaled by 1/depth_clipping_max
-            # depth_clipping = [1, 250] mm in the config
-            # So scale = 1/250, and we pass bf * scale as baseline
-            # Output depth is normalized to [0, 1] where 1.0 = 250mm = 0.25m
+            # PoseEstimator passes: self.baseline * self.scale to flow2depth
+            # where self.baseline = bf (in mm·px) and self.scale = 1/depth_clip_max
+            # depth_clipping = [1, 250] mm → scale = 1/250
+            # Output depth is normalized: 1.0 = depth_clip_max mm
             depth_clip_max_mm = 250.0
             scale = 1.0 / depth_clip_max_mm
-            baseline_scaled = torch.tensor([bf * scale]).to(device)
-            depth, flow, valid = model.flow2depth(left_t, right_t, baseline_scaled)
+            # bf is in mm·px units (matching robust-pose-estimator's calib['bf'])
+            baseline_for_model = torch.tensor([bf * scale]).to(device)
+            depth, flow, valid = model.flow2depth(left_t, right_t, baseline_for_model)
 
             # Convert normalized depth [0,1] to meters
-            # normalized_depth * depth_clip_max_mm / 1000 = meters
+            # depth_normalized represents depth/depth_clip_max
+            # So real_depth_mm = depth_normalized * depth_clip_max_mm
+            # And real_depth_m = real_depth_mm / 1000
             depth_np = depth.squeeze().cpu().numpy().astype(np.float32)
             depth_np = depth_np * depth_clip_max_mm / 1000.0  # to meters
 
