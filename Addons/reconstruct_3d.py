@@ -72,17 +72,24 @@ def get_left_images(datadir):
     if not files:
         files = sorted(glob.glob(os.path.join(datadir, 'rgb', '*_left.png')))
     if not files:
-        raise FileNotFoundError(f"No left images found in {datadir}/rgb/")
+        # StereoMIS pattern
+        files = sorted([f for f in glob.glob(os.path.join(datadir, 'video_frames', '*l.png'))
+                        if not f.endswith('r.png')])
+    if not files:
+        raise FileNotFoundError(f"No left images found in {datadir}/rgb/ or {datadir}/video_frames/")
     return files
 
 
 def get_depth_files(depth_dir):
-    """Find depth .npy files in a directory."""
+    """Find depth files (.npy or .png) in a directory."""
     files = sorted(glob.glob(os.path.join(depth_dir, '*_depth.npy')))
     if not files:
         files = sorted(glob.glob(os.path.join(depth_dir, '*.npy')))
     if not files:
-        raise FileNotFoundError(f"No depth .npy files found in {depth_dir}")
+        # StereoMIS uses 16-bit PNG depth
+        files = sorted(glob.glob(os.path.join(depth_dir, '*.png')))
+    if not files:
+        raise FileNotFoundError(f"No depth files found in {depth_dir}")
     return files
 
 
@@ -171,7 +178,10 @@ def reconstruct_depth_at_frame(rgb_files, depth_files, poses, intrinsics,
     for i in range(start, end):
         color_img = o3d.io.read_image(rgb_files[i])
 
-        depth_np = np.load(depth_files[i]).astype(np.float32)
+        if depth_files[i].endswith('.npy'):
+            depth_np = np.load(depth_files[i]).astype(np.float32)
+        else:
+            depth_np = cv2.imread(depth_files[i], cv2.IMREAD_UNCHANGED).astype(np.float32)
         depth_meters = depth_np / depth_scale
         depth_meters[depth_meters > depth_trunc] = 0.0
         depth_meters[depth_meters < 0] = 0.0

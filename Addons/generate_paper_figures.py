@@ -59,17 +59,26 @@ def load_poses_from_txt(filepath):
 
 def find_gt_image(gt_dir, frame_idx):
     """Find ground truth left image for a given frame index."""
+    # Semantic-SuPer patterns (0-indexed filenames)
     patterns = [
         os.path.join(gt_dir, f'{frame_idx:06d}-left.png'),
         os.path.join(gt_dir, f'{frame_idx:06d}_left.png'),
     ]
+    # StereoMIS patterns (1-indexed filenames: frame 0 → 000001l.png)
+    patterns += [
+        os.path.join(gt_dir, f'{frame_idx + 1:06d}l.png'),
+        os.path.join(gt_dir, f'{frame_idx:06d}l.png'),
+    ]
     for p in patterns:
         if os.path.exists(p):
             return p
-    # Fallback: try listing
+    # Fallback: try listing all left images and index
     all_left = sorted(glob.glob(os.path.join(gt_dir, '*-left.png')))
     if not all_left:
         all_left = sorted(glob.glob(os.path.join(gt_dir, '*_left.png')))
+    if not all_left:
+        all_left = sorted([f for f in glob.glob(os.path.join(gt_dir, '*l.png'))
+                          if not f.endswith('r.png')])
     if frame_idx < len(all_left):
         return all_left[frame_idx]
     return None
