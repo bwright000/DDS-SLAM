@@ -3,6 +3,9 @@ import os
 #import wandb
 # Package imports
 import torch
+# Match PyTorch 1.10 defaults for TF32 precision
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
 import torch.optim as optim
 import numpy as np
 import random
@@ -293,7 +296,8 @@ class DDSSLAM():
         cur_trans = torch.nn.parameter.Parameter(poses[:, :3, 3])
         cur_rot = torch.nn.parameter.Parameter(self.matrix_to_tensor(poses[:, :3, :3]))
         pose_optimizer = torch.optim.Adam([{"params": cur_rot, "lr": self.config[task]['lr_rot']},
-                                               {"params": cur_trans, "lr": self.config[task]['lr_trans']}])
+                                               {"params": cur_trans, "lr": self.config[task]['lr_trans']}],
+                                              foreach=False)
         
         return cur_rot, cur_trans, pose_optimizer
     
@@ -547,7 +551,7 @@ class DDSSLAM():
         if not self.config['grid']['oneGrid']:
             trainable_parameters.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
         
-        self.map_optimizer = optim.Adam(trainable_parameters, betas=(0.9, 0.99))
+        self.map_optimizer = optim.Adam(trainable_parameters, betas=(0.9, 0.99), foreach=False)
         
         # Optimizer for current frame mapping
         if self.config['mapping']['cur_frame_iters'] > 0:
@@ -556,9 +560,10 @@ class DDSSLAM():
             if not self.config['grid']['oneGrid']:
                 params_cur_mapping.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
                  
-            self.cur_map_optimizer = optim.Adam(params_cur_mapping, betas=(0.9, 0.99))
+            self.cur_map_optimizer = optim.Adam(params_cur_mapping, betas=(0.9, 0.99), foreach=False)
         
     def run(self):
+        self.seed_everything(0)
         self.create_optimizer()
         data_loader = DataLoader(self.dataset, num_workers=self.config['data']['num_workers'])
 
