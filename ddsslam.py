@@ -496,8 +496,23 @@ class DDSSLAM():
             if frame_id <= 5:
                 with torch.no_grad():
                     c2w_diag = self.matrix_from_tensor(cur_rot, cur_trans)
-                    trans_dist = torch.norm(c2w_diag[0, :3, 3] - batch['c2w'][0, :3, 3].to(self.device)).item() * 1000
-                print(f'  F{frame_id} iter{i}: loss={loss.item():.6f} dist={trans_dist:.3f}mm')
+                    trans_diag = c2w_diag[0, :3, 3]
+                    trans_gt = batch['c2w'][0, :3, 3].to(self.device)
+                    trans_dist = torch.norm(trans_diag - trans_gt).item() * 1000
+
+                    # Individual weighted loss components
+                    rgb_l = self.config['training']['rgb_weight'] * ret['rgb_loss'].item()
+                    depth_l = self.config['training']['depth_weight'] * ret['depth_loss'].item()
+                    sdf_l = self.config['training']['sdf_weight'] * ret['sdf_loss'].item()
+                    fs_l = self.config['training']['fs_weight'] * ret['fs_loss'].item()
+                    edge_l = self.config['training'].get('edge_semantic_weight', 0.5) * ret['edge_semantic_loss'].item()
+
+                print(f'  F{frame_id} iter{i}: loss={loss.item():.6f} dist={trans_dist:.3f}mm | '
+                      f'rgb={rgb_l:.4f} depth={depth_l:.4f} sdf={sdf_l:.4f} fs={fs_l:.4f} edge={edge_l:.4f}')
+
+                # After backward, log gradient info
+                if i < self.config['tracking']['iter'] - 1:  # not last iter (backward already called)
+                    pass  # gradients logged after backward below
 
             if best_sdf_loss is None:
                 best_sdf_loss = loss.cpu().item()
@@ -517,6 +532,26 @@ class DDSSLAM():
                 break
 
             loss.backward()
+
+            # Log gradient info for first 5 frames
+            if frame_id <= 5:
+                with torch.no_grad():
+                    rot_grad_norm = cur_rot.grad.norm().item() if cur_rot.grad is not None else 0
+                    trans_grad_norm = cur_trans.grad.norm().item() if cur_trans.grad is not None else 0
+                    trans_grad_dir = -cur_trans.grad[0].cpu().numpy() * 1000 if cur_trans.grad is not None else [0,0,0]
+                    # Check if gradient points toward or away from correct pose
+                    if cur_trans.grad is not None:
+                        correct_dir = (batch['c2w'][0, :3, 3].to(self.device) - cur_trans[0]).detach()
+                        grad_dir = -cur_trans.grad[0]
+                        if correct_dir.norm() > 1e-8:
+                            cos_sim = F.cosine_similarity(grad_dir.unsqueeze(0), correct_dir.unsqueeze(0)).item()
+                        else:
+                            cos_sim = 0.0
+                    else:
+                        cos_sim = 0.0
+                    print(f'    grad: rot={rot_grad_norm:.6f} trans={trans_grad_norm:.6f} '
+                          f'cos_to_correct={cos_sim:.4f} trans_grad_mm={trans_grad_dir}')
+
             pose_optimizer.step()
         
         if self.config['tracking']['best']:
