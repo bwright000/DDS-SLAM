@@ -109,10 +109,13 @@ def build_rectification_maps(cal, target_size=(640, 512)):
     )
 
     # Undistortion + rectification maps
+    # NOTE: Original robust-pose-estimator uses ldist_coeffs for BOTH cameras
+    # (line 28 of stereo_rectify.py). This appears to be a bug but we replicate
+    # it to match their output exactly.
     lmap1, lmap2 = cv2.initUndistortRectifyMap(
         lkmat, cal['ld'], r1, p1, target_size, cv2.CV_32FC1)
     rmap1, rmap2 = cv2.initUndistortRectifyMap(
-        rkmat, cal['rd'], r2, p2, target_size, cv2.CV_32FC1)
+        rkmat, cal['ld'], r2, p2, target_size, cv2.CV_32FC1)
 
     maps = {'lmap1': lmap1, 'lmap2': lmap2, 'rmap1': rmap1, 'rmap2': rmap2}
 
@@ -185,17 +188,26 @@ def process_sequence(seq_path, target_size=(640, 512)):
         left_raw = frame[:H, :, :]
         right_raw = frame[H:, :, :]
 
-        # Resize to match calibration's original resolution if needed
-        orig_size = cal['img_size']  # (width, height)
-        if left_raw.shape[1] != orig_size[0] or left_raw.shape[0] != orig_size[1]:
-            left_raw = cv2.resize(left_raw, orig_size)
-            right_raw = cv2.resize(right_raw, orig_size)
+        # Resize FIRST to match original pipeline order
+        # (original uses torchvision resize + center crop before rectification)
+        if left_raw.shape[1] != target_size[0] or left_raw.shape[0] != target_size[1]:
+            # Scale to match width, then center crop height
+            scale = target_size[0] / left_raw.shape[1]
+            scaled_h = int(left_raw.shape[0] * scale)
+            scaled_w = int(left_raw.shape[1] * scale)
+            left_raw = cv2.resize(left_raw, (scaled_w, scaled_h), interpolation=cv2.INTER_LINEAR)
+            right_raw = cv2.resize(right_raw, (scaled_w, scaled_h), interpolation=cv2.INTER_LINEAR)
+            # Center crop vertically if needed
+            if scaled_h > target_size[1]:
+                crop = (scaled_h - target_size[1]) // 2
+                left_raw = left_raw[crop:crop + target_size[1], :, :]
+                right_raw = right_raw[crop:crop + target_size[1], :, :]
 
-        # Apply rectification + undistortion
+        # Apply rectification + undistortion (INTER_NEAREST matches original)
         left_rect = cv2.remap(left_raw, maps['lmap1'], maps['lmap2'],
-                              interpolation=cv2.INTER_LINEAR)
+                              interpolation=cv2.INTER_NEAREST)
         right_rect = cv2.remap(right_raw, maps['rmap1'], maps['rmap2'],
-                               interpolation=cv2.INTER_LINEAR)
+                               interpolation=cv2.INTER_NEAREST)
 
         # Save
         cv2.imwrite(os.path.join(output_dir, f'{frame_idx:06d}l.png'), left_rect)

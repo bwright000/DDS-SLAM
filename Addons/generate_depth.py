@@ -387,6 +387,10 @@ def main():
                         help='Output format: npy (Semantic-Super) or png (StereoMIS)')
     parser.add_argument('--output_dir', type=str, default=None,
                         help='Override output directory (default: auto from dataset structure)')
+    parser.add_argument('--target_h', type=int, default=None,
+                        help='Target height (default: auto from first image)')
+    parser.add_argument('--target_w', type=int, default=None,
+                        help='Target width (default: auto from first image)')
     args = parser.parse_args()
 
     print(f"Method: {args.method}")
@@ -397,19 +401,31 @@ def main():
     fmt = args.output_format
     odir = args.output_dir
 
+    # Auto-detect target resolution from first image if not specified
+    if args.target_h is None or args.target_w is None:
+        left_imgs = get_left_images(args.datadir)
+        first_img = cv2.imread(left_imgs[0])
+        th = args.target_h or first_img.shape[0]
+        tw = args.target_w or first_img.shape[1]
+        print(f"Target resolution: {tw}x{th} (from {'args' if args.target_h else 'first image'})")
+    else:
+        th, tw = args.target_h, args.target_w
+        print(f"Target resolution: {tw}x{th}")
+
     if args.method == 'depth_anything':
-        run_depth_anything(args.datadir, args.depth_scale,
+        run_depth_anything(args.datadir, args.depth_scale, target_h=th, target_w=tw,
                            output_format=fmt, output_dir=odir)
     elif args.method == 'monodepth2':
-        run_monodepth2(args.datadir, args.depth_scale,
+        run_monodepth2(args.datadir, args.depth_scale, target_h=th, target_w=tw,
                        output_format=fmt, output_dir=odir)
     elif args.method == 'raft_stereo':
         print(f"Baseline: {args.baseline}m, fx: {args.fx}px")
         run_raft_stereo(args.datadir, args.depth_scale,
                         baseline=args.baseline, fx=args.fx,
-                        output_format=fmt, output_dir=odir)
+                        output_format=fmt, output_dir=odir,
+                        target_h=th, target_w=tw)
     elif args.method == 'moge':
-        run_moge(args.datadir, args.depth_scale,
+        run_moge(args.datadir, args.depth_scale, target_h=th, target_w=tw,
                  output_format=fmt, output_dir=odir)
 
 
