@@ -104,6 +104,7 @@ training:
   trunc: 0.1
   rot_rep: 'axis_angle'
   rgb_missing: 0.05
+  edge_semantic_weight: 0.5
 
 mesh:
   resolution: 512

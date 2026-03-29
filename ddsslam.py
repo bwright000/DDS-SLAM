@@ -139,7 +139,6 @@ class DDSSLAM():
             sdf=True,
             depth=True,
             fs=True,
-            edge=False,
             edge_semantic=True,
             smooth=False,
     ):
@@ -155,10 +154,8 @@ class DDSSLAM():
             loss += self.config['training']['sdf_weight'] * ret["sdf_loss"]
         if fs:
             loss +=  self.config['training']['fs_weight'] * ret["fs_loss"]
-        if edge:
-            loss += self.config['training']['rgb_weight'] * 0.5 * ret["edge_loss"]  
         if edge_semantic:
-            loss += self.config['training']['rgb_weight'] * 0.1 * ret["edge_semantic_loss"]
+            loss += self.config['training']['edge_semantic_weight'] * ret["edge_semantic_loss"]
         
         if smooth and self.config['training']['smooth_weight']>0:
             loss += self.config['training']['smooth_weight'] * self.smoothness(self.config['training']['smooth_pts'], 

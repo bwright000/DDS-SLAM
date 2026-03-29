@@ -1,5 +1,5 @@
 inherit_from: configs/StereoMIS/stereomis.yaml
-timesteps:  8465
+timesteps:  4000
 mapping:
   bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
   marching_cubes_bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]

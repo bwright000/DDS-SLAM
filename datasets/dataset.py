@@ -117,12 +117,12 @@ class StereoMISDataset(BaseDataset):
         self.translation = translation
         self.sc_factor = sc_factor
         self.crop = crop
-        self.img_files = sorted(glob.glob(f'{self.basedir}/video_frames/*l.png'))
-        self.depth_paths = sorted(glob.glob(f'{self.basedir}/depth/*.png'))
+        self.img_files = sorted(glob.glob(f'{self.basedir}/video_frames/*l.png'))[-4000:]
+        self.depth_paths = sorted(glob.glob(f'{self.basedir}/depth/*.png'))[-4000:]
 
         self.semantic_paths = sorted(
            glob.glob(os.path.join(
-           self.basedir, 'masks', '*.png')))
+           self.basedir, 'masks', '*.png')))[-2000:]
 
         self.load_poses(self.basedir)
         
@@ -203,30 +203,46 @@ class StereoMISDataset(BaseDataset):
 
     def load_poses(self, basedir):
         """Load poses from groundtruth.txt (TUM format: timestamp tx ty tz qx qy qz qw).
-        Falls back to identity poses if groundtruth.txt not found."""
+        Falls back to identity poses if groundtruth.txt not found.
+
+        When img_files has been sliced (e.g., [-4000:]), we extract the
+        frame index from the filename to align with the correct GT pose row.
+        """
         gt_file = os.path.join(basedir, 'groundtruth.txt')
         self.poses = []
 
         if os.path.isfile(gt_file):
             data = np.loadtxt(gt_file)
             print(f"Loaded {len(data)} GT poses from {gt_file}")
-            for i in range(len(self.img_files)):
-                if i < len(data):
-                    tx, ty, tz = data[i, 1:4]
-                    qx, qy, qz, qw = data[i, 4:8]
-                    # Quaternion to rotation matrix
+
+            for img_path in self.img_files:
+                # Extract frame number from filename (e.g., '004466l.png' -> 4466)
+                import re
+                basename = os.path.splitext(os.path.basename(img_path))[0]
+                frame_num = int(re.sub(r'[^0-9]', '', basename))
+                # groundtruth.txt is 0-indexed: line 0 = frame 0, line 1 = frame 1, etc.
+                # But filenames are 1-indexed (000001l.png = first frame)
+                gt_idx = frame_num - 1
+
+                if 0 <= gt_idx < len(data):
+                    tx, ty, tz = data[gt_idx, 1:4]
+                    qx, qy, qz, qw = data[gt_idx, 4:8]
                     r = Rotation.from_quat([qx, qy, qz, qw])
                     c2w = np.eye(4, dtype=np.float32)
                     c2w[:3, :3] = r.as_matrix()
                     c2w[:3, 3] = [tx, ty, tz]
                     c2w[:3, 3] *= self.sc_factor
                 else:
-                    # More frames than poses — use identity
                     c2w = np.eye(4, dtype=np.float32)
                     c2w[:3, 1] *= -1
                     c2w[:3, 2] *= -1
                 c2w = torch.from_numpy(c2w).float()
                 self.poses.append(c2w)
+
+            # Log which GT frames we're using
+            first_frame = int(re.sub(r'[^0-9]', '', os.path.basename(self.img_files[0])))
+            last_frame = int(re.sub(r'[^0-9]', '', os.path.basename(self.img_files[-1])))
+            print(f"Using GT poses for frames {first_frame}-{last_frame} ({len(self.poses)} poses)")
         else:
             print(f"No groundtruth.txt found at {gt_file}, using identity poses")
             for i in range(len(self.img_files)):
