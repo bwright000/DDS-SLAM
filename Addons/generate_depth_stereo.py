@@ -200,11 +200,19 @@ def main():
             right_t = torch.from_numpy(right_img).permute(2, 0, 1).unsqueeze(0).float().to(device)
 
             # Compute depth via RAFT stereo matching
-            baseline_t = torch.tensor([baseline]).to(device)
-            depth, flow, valid = model.flow2depth(left_t, right_t, baseline_t)
+            # The model expects baseline scaled by 1/depth_clipping_max
+            # depth_clipping = [1, 250] mm in the config
+            # So scale = 1/250, and we pass bf * scale as baseline
+            # Output depth is normalized to [0, 1] where 1.0 = 250mm = 0.25m
+            depth_clip_max_mm = 250.0
+            scale = 1.0 / depth_clip_max_mm
+            baseline_scaled = torch.tensor([bf * scale]).to(device)
+            depth, flow, valid = model.flow2depth(left_t, right_t, baseline_scaled)
 
-            # depth shape: [1, 1, H, W] or [1, H, W]
+            # Convert normalized depth [0,1] to meters
+            # normalized_depth * depth_clip_max_mm / 1000 = meters
             depth_np = depth.squeeze().cpu().numpy().astype(np.float32)
+            depth_np = depth_np * depth_clip_max_mm / 1000.0  # to meters
 
             # Clamp to valid range
             depth_np = np.clip(depth_np, 0.0, 10.0)
