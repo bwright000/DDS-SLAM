@@ -1,7 +1,7 @@
 inherit_from: configs/Super/Super.yaml
 timesteps:  151
 mapping:
-  bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+  bound: [[-2.0,2.5],[-2.0,2.0],[0.0,5.5]]
   marching_cubes_bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
 data:
   datadir: data/Super
