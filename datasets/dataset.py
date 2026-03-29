@@ -202,27 +202,39 @@ class StereoMISDataset(BaseDataset):
         return ret
 
     def load_poses(self, basedir):
-        """Load poses from groundtruth.txt (TUM format: timestamp tx ty tz qx qy qz qw).
-        Falls back to identity poses if groundtruth.txt not found.
+        """Load poses for StereoMIS dataset.
 
-        When img_files has been sliced (e.g., [-4000:]), we extract the
-        frame index from the filename to align with the correct GT pose row.
+        self.poses: identity poses used for tracking initialization (first frame
+        pose and constant velocity model). DDS-SLAM estimates all poses from
+        rendering loss — it does NOT use GT poses during tracking.
+
+        self.gt_poses: real GT poses from groundtruth.txt (TUM format) used ONLY
+        for ATE evaluation after the run completes. If groundtruth.txt is not
+        found, gt_poses falls back to the same identity poses.
         """
-        gt_file = os.path.join(basedir, 'groundtruth.txt')
+        # Identity poses for tracking (matches original DDS-SLAM code)
         self.poses = []
+        for i in range(len(self.img_files)):
+            c2w = np.eye(4)
+            c2w[:3, 1] *= -1
+            c2w[:3, 2] *= -1
+            c2w[:3, 3] *= self.sc_factor
+            c2w = torch.from_numpy(c2w).float()
+            self.poses.append(c2w)
+
+        # Load GT poses for evaluation
+        gt_file = os.path.join(basedir, 'groundtruth.txt')
+        self.gt_poses = None
 
         if os.path.isfile(gt_file):
             data = np.loadtxt(gt_file)
             print(f"Loaded {len(data)} GT poses from {gt_file}")
+            self.gt_poses = []
 
             for img_path in self.img_files:
-                # Extract frame number from filename (e.g., '004466l.png' -> 4466)
-                import re
                 basename = os.path.splitext(os.path.basename(img_path))[0]
                 frame_num = int(re.sub(r'[^0-9]', '', basename))
-                # groundtruth.txt is 0-indexed: line 0 = frame 0, line 1 = frame 1, etc.
-                # But filenames are 1-indexed (000001l.png = first frame)
-                gt_idx = frame_num - 1
+                gt_idx = frame_num - 1  # filenames are 1-indexed
 
                 if 0 <= gt_idx < len(data):
                     tx, ty, tz = data[gt_idx, 1:4]
@@ -237,21 +249,13 @@ class StereoMISDataset(BaseDataset):
                     c2w[:3, 1] *= -1
                     c2w[:3, 2] *= -1
                 c2w = torch.from_numpy(c2w).float()
-                self.poses.append(c2w)
+                self.gt_poses.append(c2w)
 
-            # Log which GT frames we're using
             first_frame = int(re.sub(r'[^0-9]', '', os.path.basename(self.img_files[0])))
             last_frame = int(re.sub(r'[^0-9]', '', os.path.basename(self.img_files[-1])))
-            print(f"Using GT poses for frames {first_frame}-{last_frame} ({len(self.poses)} poses)")
+            print(f"GT poses loaded for frames {first_frame}-{last_frame} (for evaluation only)")
         else:
-            print(f"No groundtruth.txt found at {gt_file}, using identity poses")
-            for i in range(len(self.img_files)):
-                c2w = np.eye(4)
-                c2w[:3, 1] *= -1
-                c2w[:3, 2] *= -1
-                c2w[:3, 3] *= self.sc_factor
-                c2w = torch.from_numpy(c2w).float()
-                self.poses.append(c2w)
+            print(f"No groundtruth.txt found, ATE evaluation will use identity poses")
 
 class SuperDataset(BaseDataset):
     def __init__(self, cfg, basedir, trainskip=1, 

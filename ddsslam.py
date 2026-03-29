@@ -93,10 +93,14 @@ class DDSSLAM():
     
     def load_gt_pose(self):
         '''
-        Load the ground truth pose
+        Load the ground truth pose for evaluation.
+        Uses gt_poses from groundtruth.txt if available (StereoMIS),
+        otherwise falls back to dataset.poses (identity for StereoMIS,
+        or whatever the dataset provides).
         '''
         self.pose_gt = {}
-        for i, pose in enumerate(self.dataset.poses):
+        gt_source = getattr(self.dataset, 'gt_poses', None) or self.dataset.poses
+        for i, pose in enumerate(gt_source):
             self.pose_gt[i] = pose
  
     def save_state_dict(self, save_path):
