@@ -75,10 +75,14 @@ def main():
         print(f"No rendered images found in {args.render_dir}")
         return
 
-    # Find ground truth images
+    # Find ground truth images (Semantic-SuPer: *-left.png, StereoMIS: *l.png)
     gt_images = sorted(glob.glob(os.path.join(args.gt_dir, '*-left.png')))
     if not gt_images:
         gt_images = sorted(glob.glob(os.path.join(args.gt_dir, '*_left.png')))
+    if not gt_images:
+        # StereoMIS pattern: *l.png (exclude *r.png)
+        all_l = sorted(glob.glob(os.path.join(args.gt_dir, '*l.png')))
+        gt_images = [f for f in all_l if not f.endswith('r.png')]
     if not gt_images:
         print(f"No ground truth images found in {args.gt_dir}")
         return
