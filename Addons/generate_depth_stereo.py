@@ -81,7 +81,11 @@ def load_model(repo_dir, checkpoint_path, device):
     checkp = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 
     # Create model from checkpoint config
+    # Patch in missing inference config keys (see infer_trajectory.py)
     model_config = checkp['config']['model']
+    model_config.setdefault('lbgfs_iters', 2)
+    model_config.setdefault('use_weights', True)
+    model_config.setdefault('img_shape', [640, 512])
     model = PoseNet(model_config)
 
     # Handle DataParallel state dict
