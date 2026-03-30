@@ -166,7 +166,6 @@ class JointEncoding(nn.Module):
         # Normalize the input to [0, 1] (TCNN convention)
         if self.config['grid']['tcnn_encoding']:
             inputs_flat = (inputs_flat - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
-            inputs_flat = torch.clamp(inputs_flat, 1e-6, 1.0 - 1e-6)
 
         outputs_flat, edge_semantic = batchify(self.query_color_sdf, None)(inputs_flat)
         outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
