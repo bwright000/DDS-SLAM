@@ -61,16 +61,29 @@ GL_TO_CV = np.diag([1.0, -1.0, -1.0, 1.0])
 # =============================================================================
 
 def load_poses_from_txt(filepath):
-    """Load c2w poses from text file (12 floats per line)."""
+    """Load c2w poses from text file (12 floats per line or TUM format)."""
     poses = []
     with open(filepath, 'r') as f:
         for line in f:
-            vals = list(map(float, line.strip().split()))
-            if len(vals) != 12:
+            line = line.strip()
+            if not line or line.startswith('#'):
                 continue
-            mat = np.eye(4, dtype=np.float64)
-            mat[:3, :] = np.array(vals).reshape(3, 4)
-            poses.append(mat)
+            vals = list(map(float, line.split()))
+            if len(vals) == 12:
+                # 3x4 matrix format
+                mat = np.eye(4, dtype=np.float64)
+                mat[:3, :] = np.array(vals).reshape(3, 4)
+                poses.append(mat)
+            elif len(vals) == 8:
+                # TUM format: timestamp tx ty tz qx qy qz qw
+                from scipy.spatial.transform import Rotation
+                tx, ty, tz = vals[1:4]
+                qx, qy, qz, qw = vals[4:8]
+                r = Rotation.from_quat([qx, qy, qz, qw])
+                mat = np.eye(4, dtype=np.float64)
+                mat[:3, :3] = r.as_matrix()
+                mat[:3, 3] = [tx, ty, tz]
+                poses.append(mat)
     if not poses:
         raise ValueError(f"No poses loaded from {filepath}")
     print(f"Loaded {len(poses)} poses from {filepath}")
@@ -83,7 +96,11 @@ def get_left_images(datadir):
     if not files:
         files = sorted(glob.glob(os.path.join(datadir, 'rgb', '*_left.png')))
     if not files:
-        raise FileNotFoundError(f"No left images found in {datadir}/rgb/")
+        # StereoMIS pattern
+        files = sorted([f for f in glob.glob(os.path.join(datadir, 'video_frames', '*l.png'))
+                        if not f.endswith('r.png')])
+    if not files:
+        raise FileNotFoundError(f"No left images found in {datadir}/rgb/ or {datadir}/video_frames/")
     return files
 
 
@@ -108,8 +125,11 @@ def get_rendered_images(render_dir):
 
 
 def load_depth(depth_path, depth_scale):
-    """Load depth map from .npy and convert to meters."""
-    raw = np.load(depth_path).astype(np.float32)
+    """Load depth map from .npy or .png and convert to meters."""
+    if depth_path.endswith('.png'):
+        raw = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED).astype(np.float32)
+    else:
+        raw = np.load(depth_path).astype(np.float32)
     if raw.ndim > 2:
         raw = raw.reshape(raw.shape[-2:])
     return raw / depth_scale
@@ -379,9 +399,26 @@ def log_frame(frame_idx, est_pose, gt_rgb_path, rendered_path,
             ))
 
     # --- Rendered RGB ---
+    rendered_rgb = None
     if rendered_path and os.path.exists(rendered_path):
         rendered_rgb = load_rgb(rendered_path)
         rr.log(entity(prefix, "images/rendered_rgb"), rr.Image(rendered_rgb))
+
+    # --- DDS-SLAM rendered point cloud (separate from GT point cloud) ---
+    if log_pointcloud and depth is not None and rendered_rgb is not None:
+        # Resize rendered image to match depth if needed
+        if rendered_rgb.shape[:2] != depth.shape[:2]:
+            rendered_rgb_resized = cv2.resize(rendered_rgb, (depth.shape[1], depth.shape[0]))
+        else:
+            rendered_rgb_resized = rendered_rgb
+        rend_points, rend_colors = backproject_depth_to_pointcloud(
+            depth, rendered_rgb_resized, est_pose, fx, fy, cx, cy,
+            depth_trunc, max_points=pc_max_points
+        )
+        if len(rend_points) > 0:
+            rr.log(entity(prefix, "world/pointcloud_rendered"), rr.Points3D(
+                rend_points, colors=rend_colors, radii=0.001
+            ))
 
     # --- Metrics ---
     if metrics_row:
@@ -424,8 +461,8 @@ def main():
     parser = argparse.ArgumentParser(
         description='Visualize DDS-SLAM run outputs using Rerun.io')
     # Data paths
-    parser.add_argument('--datadir', type=str, required=True,
-                        help='Path to dataset (e.g., data/v2_data/trial_3)')
+    parser.add_argument('--datadir', type=str, default='',
+                        help='Path to dataset (e.g., data/v2_data/trial_3). Optional if only viewing meshes+poses.')
     parser.add_argument('--posefile', type=str, required=True,
                         help='Path to est_c2w_data.txt')
     parser.add_argument('--render_dir', type=str, default='',
@@ -485,14 +522,24 @@ def main():
     if args.gt_posefile and os.path.exists(args.gt_posefile):
         gt_poses = load_poses_from_txt(args.gt_posefile)
 
-    rgb_paths = get_left_images(args.datadir)
+    rgb_paths = []
+    if args.datadir and os.path.isdir(args.datadir):
+        try:
+            rgb_paths = get_left_images(args.datadir)
+        except FileNotFoundError:
+            print(f"No images found in {args.datadir}, continuing without RGB")
     rendered = get_rendered_images(args.render_dir)
 
     # Depth paths
+    depth_paths = []
     if args.depth_dir and os.path.isdir(args.depth_dir):
         depth_paths = sorted(glob.glob(os.path.join(args.depth_dir, '*_depth.npy')))
+        if not depth_paths:
+            depth_paths = sorted(glob.glob(os.path.join(args.depth_dir, '*.npy')))
+        if not depth_paths:
+            depth_paths = sorted(glob.glob(os.path.join(args.depth_dir, '*.png')))
         print(f"Using depth dir: {args.depth_dir} ({len(depth_paths)} files)")
-    else:
+    elif rgb_paths:
         depth_paths = [get_depth_path(p) for p in rgb_paths]
 
     # Metrics
@@ -500,7 +547,7 @@ def main():
     if args.metrics_csv and os.path.exists(args.metrics_csv):
         metrics = load_metrics_csv(args.metrics_csv)
 
-    n_frames = min(len(est_poses), len(rgb_paths))
+    n_frames = len(est_poses) if not rgb_paths else min(len(est_poses), len(rgb_paths))
     print(f"Frames: {n_frames} (poses: {len(est_poses)}, images: {len(rgb_paths)})")
     print(f"Rendered images found: {len(rendered)}")
     if gt_poses:
