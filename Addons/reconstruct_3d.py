@@ -310,6 +310,11 @@ def main():
                         help='Laplacian smoothing iterations (default: 3)')
     parser.add_argument('--sdf_trunc_factor', type=float, default=5.0,
                         help='TSDF sdf_trunc = tsdf_voxel * factor (default: 5.0)')
+    parser.add_argument('--mc_bound', type=float, nargs=6, default=None,
+                        metavar=('X_MIN', 'X_MAX', 'Y_MIN', 'Y_MAX', 'Z_MIN', 'Z_MAX'),
+                        help='Override marching cubes bounds for neural SDF extraction. '
+                             'Tighter bounds = higher effective resolution. '
+                             'Example: --mc_bound -0.4 0.4 -0.4 0.4 -0.1 0.5')
 
     args = parser.parse_args()
 
@@ -380,6 +385,15 @@ def main():
         model, model_cfg, bbox, mc_bound, device = load_model(
             args.config, args.checkpoint
         )
+
+        # Override marching cubes bounds if provided
+        if args.mc_bound is not None:
+            xmin, xmax, ymin, ymax, zmin, zmax = args.mc_bound
+            mc_bound = torch.tensor([[xmin, xmax], [ymin, ymax], [zmin, zmax]],
+                                    dtype=torch.float32, device=device)
+            dims = mc_bound[:, 1] - mc_bound[:, 0]
+            print(f"Using custom MC bounds: {mc_bound.cpu().numpy().tolist()}")
+            print(f"  Volume: {dims[0]:.2f} x {dims[1]:.2f} x {dims[2]:.2f} m")
 
         voxel_size = args.voxel_size
         if voxel_size is None:

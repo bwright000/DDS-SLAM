@@ -117,12 +117,12 @@ class StereoMISDataset(BaseDataset):
         self.translation = translation
         self.sc_factor = sc_factor
         self.crop = crop
-        self.img_files = sorted(glob.glob(f'{self.basedir}/video_frames/*l.png'))[:4000]
-        self.depth_paths = sorted(glob.glob(f'{self.basedir}/depth/*.png'))[:4000]
+        self.img_files = sorted(glob.glob(f'{self.basedir}/video_frames/*l.png'))[-4000:]
+        self.depth_paths = sorted(glob.glob(f'{self.basedir}/depth/*.png'))[-4000:]
 
         self.semantic_paths = sorted(
            glob.glob(os.path.join(
-           self.basedir, 'masks', '*.png')))[:2000]
+           self.basedir, 'masks', '*.png')))[-2000:]
 
         self.load_poses(self.basedir)
         

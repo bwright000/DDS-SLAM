@@ -451,9 +451,6 @@ class DDSSLAM():
         else:
             cur_c2w = self.predict_current_pose(frame_id, self.config['tracking']['const_speed'])
 
-        if frame_id <= 5:
-            print(f'Frame {frame_id} tracking: init_trans={cur_c2w[:3,3].cpu().numpy()*1000} mm')
-
         indice = None
         best_sdf_loss = None
         thresh=0
@@ -491,28 +488,6 @@ class DDSSLAM():
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, border=border, UseBorder=True)
             loss = self.get_loss_from_ret(ret)
 
-            # Diagnostic logging for first 5 frames
-            if frame_id <= 5:
-                with torch.no_grad():
-                    c2w_diag = self.matrix_from_tensor(cur_rot, cur_trans)
-                    trans_diag = c2w_diag[0, :3, 3]
-                    trans_gt = batch['c2w'][0, :3, 3].to(self.device)
-                    trans_dist = torch.norm(trans_diag - trans_gt).item() * 1000
-
-                    # Individual weighted loss components
-                    rgb_l = self.config['training']['rgb_weight'] * ret['rgb_loss'].item()
-                    depth_l = self.config['training']['depth_weight'] * ret['depth_loss'].item()
-                    sdf_l = self.config['training']['sdf_weight'] * ret['sdf_loss'].item()
-                    fs_l = self.config['training']['fs_weight'] * ret['fs_loss'].item()
-                    edge_l = self.config['training'].get('edge_semantic_weight', 0.5) * ret['edge_semantic_loss'].item()
-
-                print(f'  F{frame_id} iter{i}: loss={loss.item():.6f} dist={trans_dist:.3f}mm | '
-                      f'rgb={rgb_l:.4f} depth={depth_l:.4f} sdf={sdf_l:.4f} fs={fs_l:.4f} edge={edge_l:.4f}')
-
-                # After backward, log gradient info
-                if i < self.config['tracking']['iter'] - 1:  # not last iter (backward already called)
-                    pass  # gradients logged after backward below
-
             if best_sdf_loss is None:
                 best_sdf_loss = loss.cpu().item()
                 best_c2w_est = c2w_est.detach()
@@ -532,25 +507,6 @@ class DDSSLAM():
 
             loss.backward()
 
-            # Log gradient info for first 5 frames
-            if frame_id <= 5:
-                with torch.no_grad():
-                    rot_grad_norm = cur_rot.grad.norm().item() if cur_rot.grad is not None else 0
-                    trans_grad_norm = cur_trans.grad.norm().item() if cur_trans.grad is not None else 0
-                    trans_grad_dir = -cur_trans.grad[0].cpu().numpy() * 1000 if cur_trans.grad is not None else [0,0,0]
-                    # Check if gradient points toward or away from correct pose
-                    if cur_trans.grad is not None:
-                        correct_dir = (batch['c2w'][0, :3, 3].to(self.device) - cur_trans[0]).detach()
-                        grad_dir = -cur_trans.grad[0]
-                        if correct_dir.norm() > 1e-8:
-                            cos_sim = F.cosine_similarity(grad_dir.unsqueeze(0), correct_dir.unsqueeze(0)).item()
-                        else:
-                            cos_sim = 0.0
-                    else:
-                        cos_sim = 0.0
-                    print(f'    grad: rot={rot_grad_norm:.6f} trans={trans_grad_norm:.6f} '
-                          f'cos_to_correct={cos_sim:.4f} trans_grad_mm={trans_grad_dir}')
-
             pose_optimizer.step()
         
         if self.config['tracking']['best']:
@@ -559,11 +515,6 @@ class DDSSLAM():
         else:
             # Use the pose after the last iteration
             self.est_c2w_data[frame_id] = c2w_est.detach().clone()[0]
-
-        if frame_id <= 5:
-            final_pose = self.est_c2w_data[frame_id]
-            final_dist = torch.norm(final_pose[:3,3] - batch['c2w'][0, :3, 3].to(self.device)).item() * 1000
-            print(f'Frame {frame_id} RESULT: final_dist={final_dist:.3f}mm, best_loss={best_sdf_loss:.6f}')
 
        # Save relative pose of non-keyframes
         if frame_id % self.config['mapping']['keyframe_every'] != 0:

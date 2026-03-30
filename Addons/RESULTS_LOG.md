@@ -21,7 +21,7 @@ All results from our reproduction attempts, tracked by git commit and run condit
 | DA V2 + GT pose bypass | DA V2 | 50.0mm | 13.7mm | — | tracking_render bypassed BUT global_BA still overwrites poses |
 | DA V2 + dynamic=False | DA V2 | CRASH | — | — | `render_rays` reads `rays_o[...,3]` unconditionally — crashes without timestamps |
 | DA V2 + GT bypass + zero vox_motion | DA V2 | 50.5mm | 13.9mm | — | Tracking bypassed + deformation disabled. global_BA STILL corrupts poses |
-| DA V2 + GT bypass + zero vox + lr_pose=0 | DA V2 | **PENDING** | **PENDING** | — | **Currently running — BA can't move poses either** |
+| DA V2 + GT bypass + zero vox + lr_pose=0 | DA V2 | 50.4mm | 14.1mm | — | sed didn't match — lr was 0.0001 not 0.001, poses still optimized. Need to rerun with correct zero lr |
 
 ## StereoMIS P2_1 (real camera motion)
 
