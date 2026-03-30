@@ -192,8 +192,8 @@ def main():
         description='Generate depth using robust-pose-estimator pretrained RAFT stereo matching')
     parser.add_argument('--datadir', type=str, required=True,
                         help='Path to StereoMIS sequence (e.g., data/P2_1)')
-    parser.add_argument('--depth_scale', type=float, default=10000.0,
-                        help='Depth scale for PNG output (default: 10000 for 0.1mm resolution). Must match png_depth_scale in YAML config.')
+    parser.add_argument('--depth_scale', type=float, default=100.0,
+                        help='Depth scale for PNG output (default: 100 for 10mm resolution). Must match png_depth_scale in YAML config.')
     parser.add_argument('--checkpoint', type=str,
                         default='/tmp/robust-pose-estimator/trained/poseNet_2xf8up4b.pth',
                         help='Path to pretrained checkpoint')

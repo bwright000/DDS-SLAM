@@ -117,27 +117,12 @@ class StereoMISDataset(BaseDataset):
         self.translation = translation
         self.sc_factor = sc_factor
         self.crop = crop
-        self.img_files = sorted(glob.glob(f'{self.basedir}/video_frames/*l.png'))[:4000]
-        self.depth_paths = sorted(glob.glob(f'{self.basedir}/depth/*.png'))[:4000]
+        self.img_files = sorted(glob.glob(f'{self.basedir}/video_frames/*l.png'))[-4000:]
+        self.depth_paths = sorted(glob.glob(f'{self.basedir}/depth/*.png'))[-4000:]
 
         self.semantic_paths = sorted(
            glob.glob(os.path.join(
-           self.basedir, 'masks', '*.png')))[:2000]
-
-        # Ensure all lists are the same length to avoid IndexError
-        n_img = len(self.img_files)
-        n_depth = len(self.depth_paths)
-        n_sem = len(self.semantic_paths)
-        n = min(n_img, n_depth)
-        if n_img != n_depth:
-            print(f"WARNING: img count ({n_img}) != depth count ({n_depth}), truncating to {n}")
-            self.img_files = self.img_files[:n]
-            self.depth_paths = self.depth_paths[:n]
-        if n_sem < (n + 1) // 2:
-            print(f"WARNING: semantic masks ({n_sem}) < needed ({(n+1)//2}), truncating frames to {n_sem * 2}")
-            n = n_sem * 2
-            self.img_files = self.img_files[:n]
-            self.depth_paths = self.depth_paths[:n]
+           self.basedir, 'masks', '*.png')))[-2000:]
 
         self.load_poses(self.basedir)
 
