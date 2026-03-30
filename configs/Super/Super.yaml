@@ -104,13 +104,12 @@ training:
   trunc: 0.1
   rot_rep: 'axis_angle'
   rgb_missing: 0.05
-  edge_semantic_weight: 0.5
 
 mesh:
   resolution: 512
   render_color: False
   vis: 500
-  voxel_eval: 0.005
-  voxel_final: 0.005
+  voxel_eval: 0.03
+  voxel_final: 0.03
   visualisation: False
   

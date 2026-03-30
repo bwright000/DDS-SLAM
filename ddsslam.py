@@ -3,9 +3,6 @@ import os
 #import wandb
 # Package imports
 import torch
-# Match PyTorch 1.10 defaults for TF32 precision
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
 import torch.optim as optim
 import numpy as np
 import random
@@ -146,6 +143,7 @@ class DDSSLAM():
             sdf=True,
             depth=True,
             fs=True,
+            edge=False,
             edge_semantic=True,
             smooth=False,
     ):
@@ -161,8 +159,10 @@ class DDSSLAM():
             loss += self.config['training']['sdf_weight'] * ret["sdf_loss"]
         if fs:
             loss +=  self.config['training']['fs_weight'] * ret["fs_loss"]
+        if edge:
+            loss += self.config['training']['rgb_weight'] * 0.5 * ret["edge_loss"]
         if edge_semantic:
-            loss += self.config['training']['edge_semantic_weight'] * ret["edge_semantic_loss"]
+            loss += self.config['training']['rgb_weight'] * 0.1 * ret["edge_semantic_loss"]
         
         if smooth and self.config['training']['smooth_weight']>0:
             loss += self.config['training']['smooth_weight'] * self.smoothness(self.config['training']['smooth_pts'], 
@@ -296,8 +296,7 @@ class DDSSLAM():
         cur_trans = torch.nn.parameter.Parameter(poses[:, :3, 3])
         cur_rot = torch.nn.parameter.Parameter(self.matrix_to_tensor(poses[:, :3, :3]))
         pose_optimizer = torch.optim.Adam([{"params": cur_rot, "lr": self.config[task]['lr_rot']},
-                                               {"params": cur_trans, "lr": self.config[task]['lr_trans']}],
-                                              foreach=False)
+                                               {"params": cur_trans, "lr": self.config[task]['lr_trans']}])
         
         return cur_rot, cur_trans, pose_optimizer
     
@@ -601,7 +600,7 @@ class DDSSLAM():
         if not self.config['grid']['oneGrid']:
             trainable_parameters.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
         
-        self.map_optimizer = optim.Adam(trainable_parameters, betas=(0.9, 0.99), foreach=False)
+        self.map_optimizer = optim.Adam(trainable_parameters, betas=(0.9, 0.99))
         
         # Optimizer for current frame mapping
         if self.config['mapping']['cur_frame_iters'] > 0:
@@ -610,10 +609,9 @@ class DDSSLAM():
             if not self.config['grid']['oneGrid']:
                 params_cur_mapping.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
                  
-            self.cur_map_optimizer = optim.Adam(params_cur_mapping, betas=(0.9, 0.99), foreach=False)
+            self.cur_map_optimizer = optim.Adam(params_cur_mapping, betas=(0.9, 0.99))
         
     def run(self):
-        self.seed_everything(0)
         self.create_optimizer()
         data_loader = DataLoader(self.dataset, num_workers=self.config['data']['num_workers'])
 
