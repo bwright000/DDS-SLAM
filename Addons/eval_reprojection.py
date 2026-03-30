@@ -481,9 +481,8 @@ def main():
             'photo_mean_l1': f"{np.mean(photo_means):.4f}",
         })
 
-    print(f"\nNote: The paper's Rep.Err (Table I) uses green pin tracking annotations")
-    print(f"from Semantic-SuPer [11], which are not available. The round-trip")
-    print(f"consistency metric above is a pose+depth consistency proxy.")
+    print(f"\nNote: The round-trip metric above is a pose+depth consistency proxy.")
+    print(f"For the paper's Rep.Err metric, use --gt_pts to provide green pin landmarks.")
 
     # Optional CSV output
     if args.output_csv and csv_rows:
@@ -494,5 +493,201 @@ def main():
         print(f"\nResults saved to {args.output_csv}")
 
 
+# =============================================================================
+# Green pin reprojection error (paper's Rep.Err metric)
+# =============================================================================
+
+def load_gt_landmarks(pts_path):
+    """Load GT 2D landmarks from Semantic-SuPer trial_N_l_pts.npy.
+
+    Returns:
+        dict: frame_id (str, zero-padded) -> (N, 3) array [x, y, visibility]
+    """
+    data = np.load(pts_path, allow_pickle=True)
+    return data.item()['gt']
+
+
+def evaluate_green_pins(gt_landmarks, est_poses, depth_dir,
+                        fx, fy, cx, cy, K, depth_scale=8.0):
+    """Compute reprojection error on tracked green pin landmarks.
+
+    Method (following Semantic-SuPer [11]):
+      1. Back-project frame 0 landmarks to 3D using depth + estimated pose
+      2. For each frame, project 3D points using that frame's estimated pose
+      3. Compare projected 2D positions with GT 2D landmark positions
+      4. Report mean(std) pixel error
+
+    Args:
+        gt_landmarks: dict from load_gt_landmarks
+        est_poses: list of 4x4 c2w matrices
+        depth_dir: directory containing *_depth.npy files
+        fx, fy, cx, cy: camera intrinsics
+        K: 3x3 intrinsics matrix
+        depth_scale: depth npy values / depth_scale = meters
+
+    Returns:
+        all_errors: flat array of per-point per-frame pixel errors
+        per_frame_errors: list of (frame_idx, mean_error, n_points)
+    """
+    frames = sorted(gt_landmarks.keys())
+    n_frames = min(len(frames), len(est_poses))
+
+    # --- Back-project frame 0 landmarks to 3D ---
+    frame0_pts = gt_landmarks[frames[0]]
+    pts_2d_0 = frame0_pts[:, :2].astype(np.float64)
+    vis_0 = frame0_pts[:, 2].astype(bool)
+
+    # Load frame 0 depth
+    depth_0 = load_depth(
+        os.path.join(depth_dir, f'{frames[0]}-left_depth.npy'), depth_scale)
+    if depth_0 is None:
+        # Try alternate naming
+        depth_0 = load_depth(
+            os.path.join(depth_dir, f'{frames[0]}_left_depth.npy'), depth_scale)
+    if depth_0 is None:
+        print(f"ERROR: No depth map for frame {frames[0]} in {depth_dir}")
+        return None, None
+
+    # Back-project visible landmarks with valid depth
+    u0 = pts_2d_0[:, 0]
+    v0 = pts_2d_0[:, 1]
+    d0 = np.array([depth_0[int(round(v)), int(round(u))]
+                    if (0 <= int(round(u)) < depth_0.shape[1] and
+                        0 <= int(round(v)) < depth_0.shape[0])
+                    else 0.0
+                    for u, v in zip(u0, v0)])
+    valid_0 = vis_0 & (d0 > 0)
+
+    print(f"Frame 0: {valid_0.sum()}/{len(valid_0)} landmarks with valid depth")
+
+    # Back-project to 3D in world frame
+    pts_3d_world = backproject_pixels(
+        u0[valid_0], v0[valid_0], d0[valid_0],
+        fx, fy, cx, cy, est_poses[0])
+
+    # --- Project into each frame and compare ---
+    all_errors = []
+    per_frame_errors = []
+
+    for i in range(n_frames):
+        frame_key = frames[i]
+        gt_pts = gt_landmarks[frame_key]
+        gt_2d = gt_pts[:, :2].astype(np.float64)
+        vis = gt_pts[:, 2].astype(bool)
+
+        # Only evaluate points valid in frame 0 AND visible in this frame
+        valid_this = valid_0 & vis
+        if valid_this.sum() == 0:
+            continue
+
+        # Get the subset of 3D points corresponding to valid_this
+        # valid_0 is a superset; we need the indices within the valid_0 set
+        idx_in_valid0 = []
+        j = 0
+        for k in range(len(valid_0)):
+            if valid_0[k]:
+                if valid_this[k]:
+                    idx_in_valid0.append(j)
+                j += 1
+        idx_in_valid0 = np.array(idx_in_valid0)
+
+        if len(idx_in_valid0) == 0:
+            continue
+
+        pts_subset = pts_3d_world[idx_in_valid0]
+        gt_2d_subset = gt_2d[valid_this]
+
+        # Project using this frame's estimated pose
+        w2c = np.linalg.inv(est_poses[i])
+        u_proj, v_proj, z_cam = project_to_image(pts_subset, w2c, K)
+
+        # Filter points behind camera (z_cam should be < 0 in OpenGL)
+        in_front = z_cam < 0
+        if in_front.sum() == 0:
+            continue
+
+        # Pixel error
+        errors = np.sqrt(
+            (u_proj[in_front] - gt_2d_subset[in_front, 0]) ** 2 +
+            (v_proj[in_front] - gt_2d_subset[in_front, 1]) ** 2)
+
+        all_errors.extend(errors.tolist())
+        per_frame_errors.append((i, errors.mean(), len(errors)))
+
+    return np.array(all_errors), per_frame_errors
+
+
+def main_green_pins():
+    """Entry point for green pin reprojection error evaluation."""
+    parser = argparse.ArgumentParser(
+        description='Compute Rep.Err on Semantic-SuPer green pin landmarks (paper Table I)')
+    parser.add_argument('--gt_pts', required=True,
+                        help='Path to trial_N_l_pts.npy (GT landmarks)')
+    parser.add_argument('--est_poses', required=True,
+                        help='Path to est_c2w_data.txt')
+    parser.add_argument('--depth_dir', required=True,
+                        help='Directory containing *_depth.npy files')
+    parser.add_argument('--fx', type=float, default=768.98551924)
+    parser.add_argument('--fy', type=float, default=768.98551924)
+    parser.add_argument('--cx', type=float, default=292.8861567)
+    parser.add_argument('--cy', type=float, default=291.61479526)
+    parser.add_argument('--depth_scale', type=float, default=8.0)
+    parser.add_argument('--name', type=str, default='')
+    args = parser.parse_args()
+
+    K = np.array([
+        [args.fx, 0.0, args.cx],
+        [0.0, args.fy, args.cy],
+        [0.0, 0.0, 1.0]
+    ], dtype=np.float64)
+
+    print(f"{'=' * 55}")
+    print(f"Rep.Err — Green Pin Landmarks (Paper Table I metric)")
+    print(f"{'=' * 55}")
+    if args.name:
+        print(f"Method: {args.name}")
+    print(f"Intrinsics: fx={args.fx:.2f}, fy={args.fy:.2f}, cx={args.cx:.2f}, cy={args.cy:.2f}")
+
+    gt_landmarks = load_gt_landmarks(args.gt_pts)
+    est_poses = load_poses_from_txt(args.est_poses)
+    print(f"GT landmarks: {len(gt_landmarks)} frames, "
+          f"{gt_landmarks[sorted(gt_landmarks.keys())[0]].shape[0]} points each")
+    print(f"Estimated poses: {len(est_poses)} frames")
+
+    all_errors, per_frame = evaluate_green_pins(
+        gt_landmarks, est_poses, args.depth_dir,
+        args.fx, args.fy, args.cx, args.cy, K, args.depth_scale)
+
+    if all_errors is None or len(all_errors) == 0:
+        print("ERROR: No valid reprojection errors computed")
+        return
+
+    print(f"\n{'=' * 55}")
+    print(f"RESULT: {all_errors.mean():.1f}({all_errors.std():.1f}) px")
+    print(f"{'=' * 55}")
+    print(f"  Paper DDS-SLAM (Lab1/trail3): 3.3(0.4) px")
+    print(f"  Mean:   {all_errors.mean():.2f} px")
+    print(f"  Std:    {all_errors.std():.2f} px")
+    print(f"  Median: {np.median(all_errors):.2f} px")
+    print(f"  Min:    {all_errors.min():.2f} px")
+    print(f"  Max:    {all_errors.max():.2f} px")
+    print(f"  Points: {len(all_errors)}")
+
+    # Per-frame summary
+    if per_frame:
+        frame_means = [e for _, e, _ in per_frame]
+        print(f"\nPer-frame mean error over time:")
+        for idx, mean_err, n_pts in per_frame[:5]:
+            print(f"  Frame {idx:3d}: {mean_err:.2f} px ({n_pts} pts)")
+        if len(per_frame) > 10:
+            print(f"  ...")
+        for idx, mean_err, n_pts in per_frame[-5:]:
+            print(f"  Frame {idx:3d}: {mean_err:.2f} px ({n_pts} pts)")
+
+
 if __name__ == '__main__':
-    main()
+    import sys
+    if '--gt_pts' in sys.argv:
+        main_green_pins()
+    else:
+        main()
