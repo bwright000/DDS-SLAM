@@ -102,7 +102,7 @@ else
         fi
     fi
     echo "  Installing toolkit (no driver)..."
-    sudo sh "$RUNFILE_PATH" --silent --toolkit --toolkitpath="$CUDA_INSTALL_DIR" --no-opengl-libs
+    sudo sh "$RUNFILE_PATH" --silent --toolkit --toolkitpath="$CUDA_INSTALL_DIR" --no-opengl-libs --override
     echo "  CUDA 11.3.1 installed to $CUDA_INSTALL_DIR"
 fi
 
