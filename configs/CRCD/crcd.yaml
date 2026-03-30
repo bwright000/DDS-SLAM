@@ -66,17 +66,17 @@ decoder:
   learnable_beta: true
 
 cam:
-  H: 512
-  W: 640
-  fx: 516.9471435
-  fy: 516.8573608
-  cx: 302.289287
-  cy: 257.488098
-  png_depth_scale: 10000 #0.1mm resolution (was 100=10mm, caused quantization collapse at close range)
+  H: 720
+  W: 1280
+  fx: 1096.69619
+  fy: 1096.69619
+  cx: 622.807617
+  cy: 383.12598
+  png_depth_scale: 100
   crop_edge: 0
   near: 0
-  far: 2
-  depth_trunc: 10. #100.0
+  far: 1
+  depth_trunc: 10.
 
 training:
   rgb_weight: 5.0
@@ -91,7 +91,6 @@ training:
   smooth_pts: 32
   smooth_vox: 0.1
   smooth_margin: 0.05
-  #n_samples: 256
   n_samples_d: 32
   range_d: 0.05
   n_range_d: 16
@@ -109,4 +108,3 @@ mesh:
   voxel_eval: 0.05
   voxel_final: 0.02
   visualisation: False
-  

@@ -242,7 +242,9 @@ class StereoMISDataset(BaseDataset):
         self.gt_poses = None
 
         if os.path.isfile(gt_file):
-            data = np.loadtxt(gt_file)
+            data = np.loadtxt(gt_file, comments='#')
+            if data.ndim == 1:
+                data = data.reshape(1, -1)
             print(f"Loaded {len(data)} GT poses from {gt_file}")
             self.gt_poses = []
 

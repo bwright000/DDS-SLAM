@@ -192,8 +192,8 @@ def main():
         description='Generate depth using robust-pose-estimator pretrained RAFT stereo matching')
     parser.add_argument('--datadir', type=str, required=True,
                         help='Path to StereoMIS sequence (e.g., data/P2_1)')
-    parser.add_argument('--depth_scale', type=float, default=100.0,
-                        help='Depth scale for PNG output (default: 100)')
+    parser.add_argument('--depth_scale', type=float, default=10000.0,
+                        help='Depth scale for PNG output (default: 10000 for 0.1mm resolution). Must match png_depth_scale in YAML config.')
     parser.add_argument('--checkpoint', type=str,
                         default='/tmp/robust-pose-estimator/trained/poseNet_2xf8up4b.pth',
                         help='Path to pretrained checkpoint')
@@ -223,7 +223,16 @@ def main():
     output_dir = args.output_dir or os.path.join(args.datadir, 'depth')
     os.makedirs(output_dir, exist_ok=True)
 
+    # Load instrument masks if available (from StereoMIS masks/ directory)
+    mask_dir = os.path.join(args.datadir, 'masks')
+    instrument_masks = {}
+    if os.path.isdir(mask_dir):
+        for mf in sorted(glob.glob(os.path.join(mask_dir, '*.png'))):
+            instrument_masks[os.path.basename(mf)] = mf
+        print(f"Found {len(instrument_masks)} instrument masks in {mask_dir}")
+
     # Process each stereo pair
+    masked_count = 0
     with torch.no_grad():
         for left_path in tqdm(left_files, desc="RAFT Stereo Depth"):
             right_path = left_path.replace('l.png', 'r.png')
@@ -241,45 +250,67 @@ def main():
             right_t = torch.from_numpy(right_img).permute(2, 0, 1).unsqueeze(0).float().to(device)
 
             # Compute depth via RAFT stereo matching
-            # PoseEstimator passes: self.baseline * self.scale to flow2depth
-            # where self.baseline = bf (in mm·px) and self.scale = 1/depth_clip_max
-            # depth_clipping = [1, 250] mm → scale = 1/250
-            # Output depth is normalized: 1.0 = depth_clip_max mm
             depth_clip_max_mm = 250.0
             scale = 1.0 / depth_clip_max_mm
-            # bf is in mm·px units (matching robust-pose-estimator's calib['bf'])
             baseline_for_model = torch.tensor([bf * scale]).to(device)
             depth, flow, valid = model.flow2depth(left_t, right_t, baseline_for_model)
 
             # Convert normalized depth [0,1] to meters
-            # depth_normalized represents depth/depth_clip_max
-            # So real_depth_mm = depth_normalized * depth_clip_max_mm
-            # And real_depth_m = real_depth_mm / 1000
             depth_np = depth.squeeze().cpu().numpy().astype(np.float32)
             depth_np = depth_np * depth_clip_max_mm / 1000.0  # to meters
 
             # Clamp to valid range
             depth_np = np.clip(depth_np, 0.0, 10.0)
 
-            # Save as 16-bit PNG
-            depth_png = (depth_np * args.depth_scale).astype(np.uint16)
+            # Apply masking (matching robust-pose-estimator pipeline)
+            # 1. Specularity mask: pixels where sum(RGB) >= 3*255*0.96 = 734
+            spec_mask = left_img.sum(axis=-1) >= (3 * 255 * 0.96)
+            # Erode mask by 11px to expand exclusion zone
+            spec_mask_eroded = cv2.dilate(spec_mask.astype(np.uint8),
+                                          kernel=np.ones((11, 11))) > 0
+            depth_np[spec_mask_eroded] = 0.0
 
-            # Derive output filename
+            # 2. Instrument mask from masks/ directory
             frame_name = os.path.splitext(os.path.basename(left_path))[0]
             if frame_name.endswith('l'):
                 frame_name = frame_name[:-1]
+            mask_key = frame_name + 'l.png'
+            if mask_key in instrument_masks:
+                inst_mask = cv2.imread(instrument_masks[mask_key], cv2.IMREAD_GRAYSCALE)
+                if inst_mask is not None:
+                    # In StereoMIS masks: 0 = instrument/invalid, >0 = valid tissue
+                    inst_invalid = inst_mask == 0
+                    if inst_mask.shape != depth_np.shape:
+                        inst_invalid = cv2.resize(inst_invalid.astype(np.uint8),
+                                                  (depth_np.shape[1], depth_np.shape[0]),
+                                                  interpolation=cv2.INTER_NEAREST) > 0
+                    depth_np[inst_invalid] = 0.0
+
+            # 3. flow2depth valid mask (depth <= 0 or > 1.0 normalized)
+            valid_np = valid.squeeze().cpu().numpy()
+            depth_np[~valid_np] = 0.0
+
+            zero_pct = (depth_np == 0).sum() / depth_np.size * 100
+            if zero_pct > 0:
+                masked_count += 1
+
+            # Save as 16-bit PNG
+            depth_png = (depth_np * args.depth_scale).astype(np.uint16)
             out_path = os.path.join(output_dir, f'{frame_name}.png')
             cv2.imwrite(out_path, depth_png)
 
     print(f"Done. Generated {len(left_files)} depth maps in {output_dir}")
+    print(f"Frames with masked pixels: {masked_count}/{len(left_files)}")
 
     # Verify a sample
     sample = cv2.imread(os.path.join(output_dir, os.listdir(output_dir)[0]),
                         cv2.IMREAD_UNCHANGED)
     d_m = sample.astype(np.float32) / args.depth_scale
-    valid = d_m[d_m > 0]
+    valid_px = d_m[d_m > 0]
+    zero_pct = (d_m == 0).sum() / d_m.size * 100
     print(f"Sample depth: shape={sample.shape}, dtype={sample.dtype}, "
-          f"range=[{valid.min():.3f}, {valid.max():.3f}]m, mean={valid.mean():.3f}m")
+          f"range=[{valid_px.min():.3f}, {valid_px.max():.3f}]m, "
+          f"mean={valid_px.mean():.3f}m, zero={zero_pct:.1f}%")
 
 
 if __name__ == '__main__':

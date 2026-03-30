@@ -93,15 +93,20 @@ class DDSSLAM():
     
     def load_gt_pose(self):
         '''
-        Load the ground truth pose for evaluation.
-        Uses gt_poses from groundtruth.txt if available (StereoMIS),
-        otherwise falls back to dataset.poses (identity for StereoMIS,
-        or whatever the dataset provides).
+        Load ground truth poses for evaluation.
+        - pose_gt: real GT from groundtruth.txt if available, else identity
+        - pose_gt_identity: always identity (matches paper's evaluation method)
         '''
+        # Real GT (from groundtruth.txt or identity fallback)
         self.pose_gt = {}
         gt_source = getattr(self.dataset, 'gt_poses', None) or self.dataset.poses
         for i, pose in enumerate(gt_source):
             self.pose_gt[i] = pose
+
+        # Identity GT (paper's method — measures drift from starting pose)
+        self.pose_gt_identity = {}
+        for i, pose in enumerate(self.dataset.poses):
+            self.pose_gt_identity[i] = pose
  
     def save_state_dict(self, save_path):
         torch.save(self.model.state_dict(), save_path)
@@ -610,16 +615,20 @@ class DDSSLAM():
 
                 if i % self.config['mesh']['vis']==0:
                     pose_relative = self.convert_relative_pose()
-                    pose_evaluation(self.pose_gt, self.est_c2w_data, 1, os.path.join(self.config['data']['output'], self.config['data']['exp_name']), i)
-                    pose_evaluation(self.pose_gt, pose_relative, 1, os.path.join(self.config['data']['output'], self.config['data']['exp_name']), i, img='pose_r', name='output_relative.txt')
+                    out_dir = os.path.join(self.config['data']['output'], self.config['data']['exp_name'])
+                    pose_evaluation(self.pose_gt, self.est_c2w_data, 1, out_dir, i)
+                    pose_evaluation(self.pose_gt, pose_relative, 1, out_dir, i, img='pose_r', name='output_relative.txt')
+                    pose_evaluation(self.pose_gt_identity, self.est_c2w_data, 1, out_dir, i, img='pose_id', name='output_identity.txt')
 
-        model_savepath = os.path.join(self.config['data']['output'], self.config['data']['exp_name'], 'checkpoint{}.pt'.format(i)) 
-        
+        model_savepath = os.path.join(self.config['data']['output'], self.config['data']['exp_name'], 'checkpoint{}.pt'.format(i))
+
         self.save_ckpt(model_savepath)
-        
+
         pose_relative = self.convert_relative_pose()
-        pose_evaluation(self.pose_gt, self.est_c2w_data, 1, os.path.join(self.config['data']['output'], self.config['data']['exp_name']), i)
-        pose_evaluation(self.pose_gt, pose_relative, 1, os.path.join(self.config['data']['output'], self.config['data']['exp_name']), i, img='pose_r', name='output_relative.txt')
+        out_dir = os.path.join(self.config['data']['output'], self.config['data']['exp_name'])
+        pose_evaluation(self.pose_gt, self.est_c2w_data, 1, out_dir, i)
+        pose_evaluation(self.pose_gt, pose_relative, 1, out_dir, i, img='pose_r', name='output_relative.txt')
+        pose_evaluation(self.pose_gt_identity, self.est_c2w_data, 1, out_dir, i, img='pose_id', name='output_identity.txt')
         est_c2w_data_path = os.path.join(self.config['data']['output'], self.config['data']['exp_name'], 'est_c2w_data.txt')
         with open(est_c2w_data_path, 'w') as f:
             for key, value in self.est_c2w_data.items():
