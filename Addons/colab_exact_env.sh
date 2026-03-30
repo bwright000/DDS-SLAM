@@ -43,7 +43,7 @@ echo "  Colab OS: Ubuntu $OS_VERSION"
 
 # --- 0. Verify GPU ---
 echo ""
-echo "[0/7] Verifying GPU..."
+echo "[0/8] Verifying GPU..."
 python3 -c "
 import subprocess
 result = subprocess.run(['nvidia-smi', '--query-gpu=name,driver_version,memory.total', '--format=csv,noheader'], capture_output=True, text=True)
@@ -54,9 +54,24 @@ print('  ' + result.stdout.strip())
 # Phase A: System Setup
 # ============================================================
 
-# --- 1. Install Python 3.7 ---
+# --- 1. Install GCC 10 (CUDA 11.3 nvcc rejects GCC > 10) ---
 echo ""
-echo "[1/7] Installing Python 3.7..."
+echo "[1/8] Installing GCC 10..."
+if dpkg -l gcc-10 &>/dev/null; then
+    echo "  GCC 10 already installed"
+else
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq gcc-10 g++-10
+    echo "  GCC 10 installed"
+fi
+export CC=/usr/bin/gcc-10
+export CXX=/usr/bin/g++-10
+export CUDAHOSTCXX=/usr/bin/g++-10
+echo "  CC=$CC  CXX=$CXX  CUDAHOSTCXX=$CUDAHOSTCXX"
+
+# --- 2. Install Python 3.7 ---
+echo ""
+echo "[2/8] Installing Python 3.7..."
 if command -v python3.7 &>/dev/null; then
     echo "  Python 3.7 already installed: $(python3.7 --version)"
 else
@@ -80,9 +95,9 @@ else
 fi
 echo "  $(python3.7 --version)"
 
-# --- 2. Install CUDA 11.3.1 toolkit ---
+# --- 3. Install CUDA 11.3.1 toolkit ---
 echo ""
-echo "[2/7] Installing CUDA 11.3.1 toolkit..."
+echo "[3/8] Installing CUDA 11.3.1 toolkit..."
 if [ -f "$CUDA_INSTALL_DIR/bin/nvcc" ]; then
     echo "  CUDA 11.3 already installed"
 else
@@ -106,7 +121,7 @@ else
     echo "  CUDA 11.3.1 installed to $CUDA_INSTALL_DIR"
 fi
 
-# --- 3. Set CUDA environment ---
+# --- 4. Set CUDA environment ---
 export CUDA_HOME="$CUDA_INSTALL_DIR"
 export PATH="$CUDA_INSTALL_DIR/bin:$PATH"
 export LD_LIBRARY_PATH="$CUDA_INSTALL_DIR/lib64:${LD_LIBRARY_PATH:-}"
@@ -116,11 +131,11 @@ echo "  nvcc: $($CUDA_INSTALL_DIR/bin/nvcc --version | grep release)"
 # Phase B: Python Environment
 # ============================================================
 
-# --- 4. Check for cached venv ---
+# --- 5. Check for cached venv ---
 CACHE_RESTORED=false
 if [ "$SKIP_CACHE" = false ] && [ "$NO_DRIVE" = false ] && [ -f "$CACHE_DIR/dds_env.tar.gz" ]; then
     echo ""
-    echo "[3/7] Restoring cached Python environment from Google Drive..."
+    echo "[5/8] Restoring cached Python environment from Google Drive..."
     # Validate cache was built on same OS
     CACHED_OS=$(cat "$CACHE_DIR/dds_env_os.txt" 2>/dev/null || echo "none")
     if [ "$CACHED_OS" = "$OS_VERSION" ]; then
@@ -132,7 +147,7 @@ if [ "$SKIP_CACHE" = false ] && [ "$NO_DRIVE" = false ] && [ -f "$CACHE_DIR/dds_
     fi
 else
     echo ""
-    echo "[3/7] No cache found, building from scratch..."
+    echo "[5/8] No cache found, building from scratch..."
 fi
 
 if [ "$CACHE_RESTORED" = false ]; then
@@ -144,36 +159,35 @@ if [ "$CACHE_RESTORED" = false ]; then
     source "$VENV_DIR/bin/activate"
     pip install --upgrade pip setuptools wheel
 
-    # --- 5. Install PyTorch 1.10.1+cu113 ---
+    # --- 6. Install PyTorch 1.10.1+cu113 ---
     echo ""
-    echo "[4/7] Installing PyTorch 1.10.1+cu113..."
+    echo "[6/8] Installing PyTorch 1.10.1+cu113..."
     pip install torch==1.10.1+cu113 torchvision==0.11.2+cu113 torchaudio==0.10.1 \
         -f https://download.pytorch.org/whl/cu113/torch_stable.html
     python -c "import torch; print(f'  PyTorch {torch.__version__}, CUDA {torch.version.cuda}')"
 
-    # --- 6. Install tinycudann ---
+    # --- 7. Install tinycudann ---
     echo ""
-    echo "[5/7] Building tinycudann (~5 min)..."
+    echo "[7/8] Building tinycudann + pytorch3d + deps (~15 min)..."
     pip install ninja
     export TCNN_CUDA_ARCHITECTURES=75  # T4 = compute capability 7.5
     # Pin to commit known to work with PyTorch 1.10 + CUDA 11.3
     pip install "git+https://github.com/NVlabs/tiny-cuda-nn/@91ee479d275d322a65726435040fc20b56b9c991#subdirectory=bindings/torch"
     python -c "import tinycudann; print('  tinycudann: OK')"
 
-    # --- 7. Install pytorch3d v0.7.2 ---
-    echo ""
-    echo "[6/7] Building pytorch3d v0.7.2 (~10 min)..."
+    # --- Install pytorch3d v0.7.2 ---
+    echo "  Building pytorch3d v0.7.2 (~10 min)..."
     pip install fvcore==0.1.5.post20210915 iopath==0.1.9
     export CUB_HOME="$CUDA_INSTALL_DIR/include"
     pip install "git+https://github.com/facebookresearch/pytorch3d.git@v0.7.2"
     python -c "from pytorch3d.transforms import matrix_to_quaternion; print('  pytorch3d: OK')"
 
-    # --- 8. Install remaining requirements (exact versions from requirements.txt) ---
+    # --- Install remaining requirements (exact versions from requirements.txt) ---
     echo "  Installing pip requirements..."
     pip install Cython numpy==1.21.6
     pip install -r "$REPO_ROOT/requirements.txt"
 
-    # --- 9. Build marching cubes ---
+    # --- Build marching cubes ---
     echo "  Building marching cubes C++ extension..."
     cd "$REPO_ROOT/external/NumpyMarchingCubes"
     rm -f marching_cubes/src/_mcubes.cpp  # Force Cython regeneration
@@ -190,14 +204,14 @@ if [ "$CACHE_RESTORED" = false ]; then
     fi
 else
     source "$VENV_DIR/bin/activate"
-    echo "[4-6/7] Skipped (using cached environment)"
+    echo "[6-7/8] Skipped (using cached environment)"
 fi
 
 # ============================================================
 # Phase C: Verification
 # ============================================================
 echo ""
-echo "[7/7] Verifying environment..."
+echo "[8/8] Verifying environment..."
 python -c "
 import sys
 print(f'  Python:       {sys.version}')
@@ -289,6 +303,7 @@ echo "IMPORTANT: Activate the environment before running:"
 echo "  export CUDA_HOME=$CUDA_INSTALL_DIR"
 echo "  export PATH=$CUDA_INSTALL_DIR/bin:\$PATH"
 echo "  export LD_LIBRARY_PATH=$CUDA_INSTALL_DIR/lib64:\$LD_LIBRARY_PATH"
+echo "  export CC=/usr/bin/gcc-10 CXX=/usr/bin/g++-10 CUDAHOSTCXX=/usr/bin/g++-10"
 echo "  source $VENV_DIR/bin/activate"
 echo ""
 echo "Run DDS-SLAM:"
