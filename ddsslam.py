@@ -163,10 +163,10 @@ class DDSSLAM():
             loss += self.config['training']['rgb_weight'] * 0.5 * ret["edge_loss"]
         if edge_semantic:
             loss += self.config['training']['rgb_weight'] * 0.1 * ret["edge_semantic_loss"]
-        
+
         if smooth and self.config['training']['smooth_weight']>0:
-            loss += self.config['training']['smooth_weight'] * self.smoothness(self.config['training']['smooth_pts'], 
-                                                                                  self.config['training']['smooth_vox'], 
+            loss += self.config['training']['smooth_weight'] * self.smoothness(self.config['training']['smooth_pts'],
+                                                                                  self.config['training']['smooth_vox'],
                                                                                   margin=self.config['training']['smooth_margin'])
         return loss             
 
@@ -238,22 +238,20 @@ class DDSSLAM():
         c2w = self.est_c2w_data[cur_frame_id].to(self.device)
 
         self.model.train()
-        cur_rot, cur_trans, pose_optimizer = self.get_pose_param_optim(c2w[None, ...], mapping=True)
+
         # Training
         for i in range(self.config['mapping']['cur_frame_iters']):
-            pose_optimizer.zero_grad()
             self.cur_map_optimizer.zero_grad()
-            c2w_est = self.matrix_from_tensor(cur_rot, cur_trans)
             indice = self.select_samples(self.dataset.H, self.dataset.W, self.config['mapping']['sample'])
-            
+
             indice_h, indice_w = indice % (self.dataset.H), indice // (self.dataset.H)
             rays_d_cam = batch['direction'].squeeze(0)[indice_h, indice_w, :].to(self.device)
             target_s = batch['rgb'].squeeze(0)[indice_h, indice_w, :].to(self.device)
             target_edge_semantic = batch['edge_semantic'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             target_d = batch['depth'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
 
-            rays_o = c2w_est[..., :3, -1].repeat(self.config['mapping']['sample'], 1)
-            rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[: ,:3, :3], -1)
+            rays_o = c2w[None, :3, -1].repeat(self.config['mapping']['sample'], 1)
+            rays_d = torch.sum(rays_d_cam[..., None, :] * c2w[:3, :3], -1)
             if self.config['dynamic']:
                 cur_id = (cur_frame_id*torch.ones(rays_o.shape[0]))
                 timestamps = cur_id.to(self.device) #/ self.n_imgs #*2 -1

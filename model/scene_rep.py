@@ -161,12 +161,12 @@ class JointEncoding(nn.Module):
             embed_pos = self.embed_fre_pos(pts)
             h = torch.cat([embed_time,embed_pos],dim=-1)
             vox_motion = self.time_net(h)
-            vox_motion = torch.where(frame_time.reshape(-1, frame_time.shape[-1]) == 0, torch.zeros_like(vox_motion), vox_motion) 
             inputs_flat = pts + vox_motion
         
         # Normalize the input to [0, 1] (TCNN convention)
         if self.config['grid']['tcnn_encoding']:
             inputs_flat = (inputs_flat - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
+            inputs_flat = torch.clamp(inputs_flat, 1e-6, 1.0 - 1e-6)
 
         outputs_flat, edge_semantic = batchify(self.query_color_sdf, None)(inputs_flat)
         outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
@@ -228,6 +228,7 @@ class JointEncoding(nn.Module):
         # Normalize for TCNN
         if self.config['grid']['tcnn_encoding']:
             inputs_flat = (inputs_flat - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
+            inputs_flat = torch.clamp(inputs_flat, 1e-6, 1.0 - 1e-6)
 
         embedded = self.embed_fn(inputs_flat)
         embedded_pos = self.embedpos_fn(inputs_flat)
@@ -262,6 +263,7 @@ class JointEncoding(nn.Module):
 
         if self.config['grid']['tcnn_encoding']:
             inputs_flat = (inputs_flat - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
+            inputs_flat = torch.clamp(inputs_flat, 1e-6, 1.0 - 1e-6)
 
         out = self.query_color_sdf(inputs_flat)
         if isinstance(out, tuple):
