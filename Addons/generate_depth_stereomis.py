@@ -109,7 +109,7 @@ def setup_raft_stereo():
 
 
 def run_raft_stereo(datadir, png_depth_scale, baseline=0.00416, fx=516.95,
-                    target_h=512, target_w=640):
+                    target_h=None, target_w=None):
     """Generate depth using RAFT-Stereo with stereo image pairs."""
     repo_dir = setup_raft_stereo()
     sys.path.insert(0, repo_dir)
@@ -173,7 +173,7 @@ def run_raft_stereo(datadir, png_depth_scale, baseline=0.00416, fx=516.95,
             disp = np.maximum(disp, min_disp)
             depth = (fx * baseline) / disp
 
-            if depth.shape != (target_h, target_w):
+            if target_h and target_w and depth.shape != (target_h, target_w):
                 depth = cv2.resize(depth, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
 
             depth = np.clip(depth, 0.0, 10.0)

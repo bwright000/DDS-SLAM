@@ -1,0 +1,117 @@
+"""
+Render all frames from a saved DDS-SLAM checkpoint.
+
+Run from the DDS-SLAM root directory:
+  cd /content/DDS-SLAM/DDS-SLAM
+  python Addons/render_all_frames.py \
+    --config configs/StereoMIS/p2_1.yaml \
+    --checkpoint output/StereoMIS/P2_1/demo/checkpoint3999.pt \
+    --output_dir output/StereoMIS/P2_1/rendered_all
+"""
+
+import argparse
+import os
+import sys
+import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+from torch.utils.data import DataLoader
+
+# Ensure DDS-SLAM root is on path (works when called from root or Addons/)
+root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if root not in sys.path:
+    sys.path.insert(0, root)
+
+from config import load_config
+from datasets.dataset import get_dataset
+from model.scene_rep import JointEncoding
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Render all frames from checkpoint')
+    parser.add_argument('--config', type=str, required=True)
+    parser.add_argument('--checkpoint', type=str, required=True)
+    parser.add_argument('--output_dir', type=str, required=True)
+    parser.add_argument('--ray_batch_size', type=int, default=240)
+    parser.add_argument('--skip', type=int, default=1, help='Render every N-th frame')
+    parser.add_argument('--save_gt', action='store_true', help='Also save GT frames')
+    args = parser.parse_args()
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    config = load_config(args.config)
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # Load dataset
+    dataset = get_dataset(config)
+    data_loader = DataLoader(dataset, num_workers=0)
+
+    # Load model
+    model = JointEncoding(config, dataset.H, dataset.W, device).to(device)
+
+    # Load checkpoint
+    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    model.load_state_dict(ckpt['model'])
+    est_c2w_data = ckpt['pose']
+    model.eval()
+
+    H, W = dataset.H, dataset.W
+    dynamic = config.get('dynamic', False)
+    print(f"Checkpoint: {args.checkpoint}")
+    print(f"Frames: {len(dataset)}, Resolution: {W}x{H}, Dynamic: {dynamic}")
+    print(f"Rendering to: {args.output_dir} (skip={args.skip})")
+
+    with torch.no_grad():
+        for i, batch in tqdm(enumerate(data_loader), total=len(dataset), desc="Rendering"):
+            if i % args.skip != 0:
+                continue
+            if i not in est_c2w_data:
+                continue
+
+            c2w = est_c2w_data[i].to(device).unsqueeze(0)  # [1, 4, 4]
+
+            # Build rays for full image
+            rays_d_cam = batch['direction'].squeeze(0).to(device)  # [H, W, 3]
+            target_d = batch['depth'].squeeze(0).to(device).unsqueeze(-1).view(-1, 1)
+            target_s = batch['rgb'].squeeze(0)
+            target_edge_semantic = batch['edge_semantic'].squeeze(0).to(device).unsqueeze(-1)
+
+            rays_o = c2w[:, :3, 3].repeat(H * W, 1)  # [H*W, 3]
+            rays_d = torch.sum(rays_d_cam[..., None, :] * c2w[:, :3, :3], -1).view(-1, 3)
+
+            # Render in batches
+            rgb_chunks = []
+            for j in range(0, rays_d.shape[0], args.ray_batch_size):
+                torch.cuda.empty_cache()
+                rays_o1 = rays_o[j:j + args.ray_batch_size]
+                rays_d1 = rays_d[j:j + args.ray_batch_size]
+                target_d1 = target_d[j:j + args.ray_batch_size]
+
+                if dynamic:
+                    cur_id = i * torch.ones(rays_o1.shape[0])
+                    timestamps = cur_id.to(device)
+                    rays_o1 = torch.cat([rays_o1, timestamps.unsqueeze(-1)], dim=1)
+
+                ret = model.forward(rays_o1, rays_d1, target_s, target_d1,
+                                    target_edge_semantic=target_edge_semantic,
+                                    notFirstMap=False, render_only=True)
+                rgb_chunks.append(ret['rgb'].cpu())
+
+            color = torch.cat(rgb_chunks, dim=0).reshape(H, W, 3).numpy()
+            color = np.clip(color, 0, 1)
+            # Normalize if needed
+            if color.max() > 0:
+                color = (color - color.min()) / (color.max() - color.min() + 1e-8)
+
+            plt.imsave(os.path.join(args.output_dir, f'{i:04d}.png'), color)
+
+            if args.save_gt:
+                gt_color = batch['rgb'].squeeze(0).numpy()
+                gt_color = np.clip(gt_color, 0, 1)
+                plt.imsave(os.path.join(args.output_dir, f'{i:04d}_gt.png'), gt_color)
+
+    print(f"Done. Rendered frames saved to {args.output_dir}")
+
+
+if __name__ == '__main__':
+    main()

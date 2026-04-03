@@ -72,7 +72,7 @@ cam:
   fy: 1096.69619
   cx: 622.807617
   cy: 383.12598
-  png_depth_scale: 100
+  png_depth_scale: 10000
   crop_edge: 0
   near: 0
   far: 1
