@@ -54,9 +54,9 @@ def load_image(path, target_size=None):
     img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
     if img is None:
         return None
-    # Handle RGBA
+    # Handle RGBA → convert to RGB (OpenCV loads as BGRA, we want RGB)
     if img.ndim == 3 and img.shape[2] == 4:
-        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+        img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
     elif img.ndim == 3:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     elif img.ndim == 2:
@@ -98,8 +98,12 @@ def load_trajectory(est_path, gt_path=None, gt_frames=None):
     est_xyz = []
     with open(est_path) as f:
         for line in f:
+            if line.startswith('#'):
+                continue
             vals = list(map(float, line.strip().split()))
-            if len(vals) == 12:
+            if len(vals) == 8:
+                est_xyz.append(vals[1:4])
+            elif len(vals) == 12:
                 c2w = np.array(vals).reshape(3, 4)
                 est_xyz.append(c2w[:3, 3])
     est_xyz = np.array(est_xyz)
@@ -122,7 +126,37 @@ def load_trajectory(est_path, gt_path=None, gt_frames=None):
     return est_xyz, gt_xyz
 
 
-def render_trajectory_frame(est_xyz, gt_xyz, current_frame, panel_size, azim_offset=0):
+def horn_align(model, data):
+    """Horn's method: find rigid transform from model to data (both 3xN)."""
+    model_zc = model - model.mean(1, keepdims=True)
+    data_zc = data - data.mean(1, keepdims=True)
+    W = model_zc @ data_zc.T
+    U, d, Vh = np.linalg.svd(W.T)
+    S = np.eye(3)
+    if np.linalg.det(U) * np.linalg.det(Vh) < 0:
+        S[2, 2] = -1
+    rot = U @ S @ Vh
+    trans = data.mean(1, keepdims=True) - rot @ model.mean(1, keepdims=True)
+    aligned = rot @ model + trans
+    return aligned.T
+
+
+def overlay_mask_on_rgb(rgb, mask, alpha=0.5):
+    """Blend coloured mask over RGB."""
+    if rgb.dtype != np.uint8:
+        rgb = (rgb * 255).astype(np.uint8) if rgb.max() <= 1.0 else rgb.astype(np.uint8)
+    if mask.shape[:2] != rgb.shape[:2]:
+        mask = cv2.resize(mask, (rgb.shape[1], rgb.shape[0]))
+    if mask.ndim == 2:
+        mask = np.stack([mask, mask, mask], axis=-1)
+    # Only overlay where mask is not background (not dark grey)
+    has_mask = mask.sum(axis=-1) > 100
+    blended = rgb.copy()
+    blended[has_mask] = (rgb[has_mask] * (1 - alpha) + mask[has_mask] * alpha).astype(np.uint8)
+    return blended
+
+
+def render_trajectory_frame(est_xyz, gt_xyz, current_frame, panel_size, azim_offset=0, align=True):
     """Render a 3D trajectory plot as an image array."""
     import matplotlib
     matplotlib.use('Agg')
@@ -134,14 +168,20 @@ def render_trajectory_frame(est_xyz, gt_xyz, current_frame, panel_size, azim_off
     fig = plt.figure(figsize=(w / dpi, h / dpi), dpi=dpi)
     ax = fig.add_subplot(111, projection='3d')
 
-    est_mm = est_xyz * 1000
+    # Horn-align estimated to GT if requested and GT is available
+    if align and gt_xyz is not None and len(gt_xyz) == len(est_xyz):
+        est_aligned = horn_align(est_xyz.T, gt_xyz.T)
+    else:
+        est_aligned = est_xyz
+
+    est_mm = est_aligned * 1000
     n = current_frame + 1
 
     # GT trajectory (full, grey dashed)
     if gt_xyz is not None:
         gt_mm = gt_xyz * 1000
         ax.plot(gt_mm[:, 0], gt_mm[:, 1], gt_mm[:, 2],
-                '--', color='#888888', linewidth=1.0, alpha=0.6)
+                '--', color='#888888', linewidth=1.5, alpha=0.7)
 
     # Estimated trail up to current frame (jet colormap)
     if n > 1:
@@ -277,6 +317,11 @@ def main():
             panels.append('Segmentation')
             panel_data['Segmentation'] = paths
             print(f"Segmentation: {len(paths)} frames")
+            # Also add overlay panel if we have rendered RGB
+            if 'Rendered RGB' in panel_data:
+                panels.append('Seg Overlay')
+                panel_data['Seg Overlay'] = (panel_data['Rendered RGB'], paths)
+                print(f"Seg Overlay: enabled (rendered RGB + seg)")
 
     if args.trajectory_est:
         panels.append('Trajectory')
@@ -287,7 +332,12 @@ def main():
         return
 
     # Determine frame count
-    frame_counts = [len(v) for k, v in panel_data.items()]
+    frame_counts = []
+    for k, v in panel_data.items():
+        if k == 'Seg Overlay':
+            frame_counts.append(min(len(v[0]), len(v[1])))
+        else:
+            frame_counts.append(len(v))
     if args.trajectory_est:
         est_xyz, gt_xyz = load_trajectory(args.trajectory_est, args.trajectory_gt)
         if args.gt_frame_slice:
@@ -323,6 +373,15 @@ def main():
     canvas_w = cols * panel_size[1]
     print(f"Layout: {rows}x{cols}, Canvas: {canvas_w}x{canvas_h}")
 
+    # Compute trajectory stride: if rendered panels are sparser than pose count,
+    # map video frame_idx -> pose index so trajectory stays in sync with RGB panels.
+    trajectory_stride = 1
+    if args.trajectory_est and n_frames > 0:
+        trajectory_stride = max(1, len(est_xyz) // n_frames)
+        if trajectory_stride > 1:
+            print(f"Trajectory stride: {trajectory_stride} "
+                  f"(video has {n_frames} frames, est has {len(est_xyz)} poses)")
+
     # Video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     writer = cv2.VideoWriter(args.output, fourcc, args.fps, (canvas_w, canvas_h))
@@ -337,9 +396,20 @@ def main():
             x0 = col * panel_size[1]
 
             if panel_name == 'Trajectory':
+                pose_idx = min(frame_idx * trajectory_stride, len(est_xyz) - 1)
                 azim = frame_idx * args.rotation_speed
-                img = render_trajectory_frame(est_xyz, gt_xyz, min(frame_idx, len(est_xyz) - 1),
+                img = render_trajectory_frame(est_xyz, gt_xyz, pose_idx,
                                               panel_size, azim_offset=azim)
+            elif panel_name == 'Seg Overlay':
+                rgb_paths, seg_paths = panel_data[panel_name]
+                ri = min(frame_idx, len(rgb_paths) - 1)
+                si = min(frame_idx, len(seg_paths) - 1)
+                rgb = load_image(rgb_paths[ri], panel_size)
+                seg = load_image(seg_paths[si], panel_size)
+                if rgb is not None and seg is not None:
+                    img = overlay_mask_on_rgb(rgb, seg, alpha=0.5)
+                else:
+                    img = rgb if rgb is not None else seg
             elif panel_name in ('Input Depth', 'Output Depth'):
                 paths = panel_data[panel_name]
                 idx = min(frame_idx, len(paths) - 1)

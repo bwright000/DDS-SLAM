@@ -67,6 +67,9 @@ def main():
     parser.add_argument('--sequence', type=str, default='Lab1 (trail3)',
                         choices=list(PAPER_REFERENCES.keys()),
                         help='Sequence name for paper reference values')
+    parser.add_argument('--gt_offset', type=int, default=0,
+                        help='Add this to parsed rendered-filename indices before '
+                             'looking up GT. Use 4465 for StereoMIS [-4000:] runs.')
     args = parser.parse_args()
 
     # Find rendered images
@@ -107,16 +110,35 @@ def main():
     psnr_list = []
     ssim_list = []
     lpips_list = []
+    frame_indices = []
 
-    n_eval = min(len(rendered), len(gt_images))
-    for i in range(n_eval):
+    # If rendered filenames are numeric (e.g. "0500.jpg"), treat them as absolute
+    # GT frame indices — needed when render_freq > 1 and rendered set is sparse.
+    def _parse_idx(path):
+        try:
+            return int(os.path.splitext(os.path.basename(path))[0])
+        except ValueError:
+            return None
+    numeric_render = all(_parse_idx(p) is not None for p in rendered)
+
+    if numeric_render:
+        pairs = [(p, _parse_idx(p) + args.gt_offset) for p in rendered
+                 if _parse_idx(p) + args.gt_offset < len(gt_images)]
+        print(f"Pairing by filename index (stride-aware, gt_offset={args.gt_offset}): "
+              f"{len(pairs)} pairs")
+    else:
+        n_eval = min(len(rendered), len(gt_images))
+        pairs = [(rendered[i], i) for i in range(n_eval)]
+
+    for render_path, gt_idx in pairs:
         # Load rendered image
-        render = cv2.imread(rendered[i])
+        render = cv2.imread(render_path)
         render = cv2.cvtColor(render, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
         # Load ground truth
-        gt = cv2.imread(gt_images[i])
+        gt = cv2.imread(gt_images[gt_idx])
         gt = cv2.cvtColor(gt, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        frame_indices.append(gt_idx)
 
         # Resize if needed
         if render.shape != gt.shape:
@@ -141,6 +163,7 @@ def main():
             lpips_val = lpips_fn(render_t, gt_t).item()
             lpips_list.append(lpips_val)
 
+    n_eval = len(psnr_list)
     print(f"\n{'='*50}")
     print(f"Results: {args.name} ({n_eval} frames)")
     print(f"{'='*50}")
@@ -159,7 +182,7 @@ def main():
                 header.append('lpips')
             writer.writerow(header)
             for i in range(n_eval):
-                row = [i, f"{psnr_list[i]:.4f}", f"{ssim_list[i]:.4f}"]
+                row = [frame_indices[i], f"{psnr_list[i]:.4f}", f"{ssim_list[i]:.4f}"]
                 if lpips_list:
                     row.append(f"{lpips_list[i]:.4f}")
                 writer.writerow(row)

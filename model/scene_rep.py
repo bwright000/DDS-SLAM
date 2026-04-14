@@ -308,8 +308,8 @@ class JointEncoding(nn.Module):
         # Run rendering pipeline
         pts = rays_o[...,None,:3] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples, 3]
         timestamps = (rays_o[...,3]).reshape(-1,1)
-        timestamps = timestamps.repeat(1,pts.shape[1]).unsqueeze(-1) 
-        pts = torch.cat([pts,timestamps],dim=-1)        
+        timestamps = timestamps.repeat(1,pts.shape[1]).unsqueeze(-1)
+        pts = torch.cat([pts,timestamps],dim=-1)
         raw, edge_semantic = self.run_network(pts)
         rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map = self.raw2outputs(raw,edge_semantic, z_vals, self.config['training']['white_bkgd'])
 
