@@ -1,0 +1,29 @@
+inherit_from: configs/Super/trail3_fix1.yaml
+
+# ============================================================================
+# Fix 2: disable mapping pose refinement (isolation test for the walker source)
+# ----------------------------------------------------------------------------
+# Fix 1 result: ATE 63 mm, per-frame translation median 11 mm.
+# The 11 mm/frame matches mapping's theoretical walk cap exactly:
+#   mapping.lr_trans (0.0001) * cur_frame_iters (100) = 10 mm/frame
+# Fix 1's tracker cap of 0.5 mm/frame was never honored because mapping
+# overwrites the pose every frame (keyframe_every=1, map_every=1).
+#
+# Fix 2 isolates the source: turn mapping pose refinement off entirely.
+# - If ATE drops to near 0 (identity GT) and per-frame median ~ 0.5 mm:
+#     mapping refinement IS the walker. Then queue fix3 to tune
+#     mapping.lr_trans + cur_frame_iters rather than disabling them.
+# - If ATE stays ~60 mm:
+#     neither tracker nor mapping pose optim is the walker. Likely
+#     decoder/SDF updates are corrupting the next-frame tracking basin.
+#     Then look at mapping iters/LRs for the field, not the pose.
+#
+# Inherits all fix1 settings; only flips optim_cur.
+# ============================================================================
+
+mapping:
+  optim_cur: False
+
+data:
+  output: output/trail3_fix2
+  exp_name: demo
