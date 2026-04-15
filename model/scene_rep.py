@@ -390,14 +390,14 @@ class JointEncoding(nn.Module):
                 edge_semantic_loss = compute_loss(
                     rend_dict["edge_semantic"].squeeze()[valid_depth_mask],
                     target_edge_semantic.squeeze()[valid_depth_mask],
-                    UsePercentage=notFirstMap
+                    UsePercentage=False
                 )
             else:
                 edge_semantic_loss = compute_loss(
                     rend_dict["edge_semantic"].squeeze()[valid_depth_mask],
                     target_edge_semantic.squeeze()[valid_depth_mask],
                     border=border.squeeze()[valid_depth_mask],
-                    UsePercentage=notFirstMap
+                    UsePercentage=False
                 )
 
             if 'rgb0' in rend_dict:
