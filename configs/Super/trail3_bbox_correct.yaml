@@ -1,0 +1,38 @@
+inherit_from: configs/Super/trail3.yaml
+
+# ============================================================================
+# Phase 3a: Bbox properly sized to actual scene extent (measured 2026-04-15)
+# ----------------------------------------------------------------------------
+# Scene measurement via Addons/inspect_scene_extent.py on trail3 MoGe depth:
+#   Depth range:    0.317 - 0.734 m  (p1=0.383, p99=0.697)
+#   X extent:       -0.239 to +0.206 (p1-p99 = 0.445 m)
+#   Y extent:       -0.223 to +0.137 (p1-p99 = 0.360 m)
+#   Z extent:       +0.383 to +0.697 (p1-p99 = 0.314 m)
+#
+# Compared to trail3.yaml default bbox:
+#   X: [-0.7, +0.7]  (1.4 m = 3.1x oversized)
+#   Y: [-0.7, +0.7]  (1.4 m = 3.9x oversized)
+#   Z: [+0.7, +1.2]  (0.5 m, BUT z_min=0.7 > scene p99=0.697 -> 99% of scene
+#                     is BELOW bbox, gets clamped to z_norm~=0 via
+#                     torch.clamp(inputs_flat, 1e-6, 1-1e-6) at scene_rep.py:231)
+#
+# Fix: set bbox to p1..p99 + 20% margin on each axis, also shrink far plane
+# from 5.0 to 1.0 m (scene z_p99 * 1.5).
+#
+# Hypothesis (from second auditor):
+#   Oversized bbox -> TCNN normalization (pts - bmin)/(bmax-bmin) attenuates
+#   pose-gradient by bbox_extent factor -> flat loss landscape -> random walk.
+# Expected: per-frame translation median drops from 10.7mm toward ~3mm
+# (3-4x improvement matching the oversize ratio).
+# ============================================================================
+
+mapping:
+  bound: [[-0.33, 0.30], [-0.30, 0.21], [0.32, 0.76]]
+  marching_cubes_bound: [[-0.33, 0.30], [-0.30, 0.21], [0.32, 0.76]]
+
+cam:
+  far: 1.0
+
+data:
+  output: output/trail3_bbox_correct
+  exp_name: demo
