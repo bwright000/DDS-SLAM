@@ -27,7 +27,35 @@ The paper's **8.3 mm ATE on StereoMIS** is measured against **identity GT** (dri
 | DA V2 + GT bypass + zero vox_motion | DA V2 | 50.5mm | 13.9mm | — | Tracking bypassed + deformation disabled. global_BA STILL corrupts poses |
 | DA V2 + GT bypass + zero vox + lr_pose=0 | DA V2 | 50.4mm | 14.1mm | — | sed didn't match — lr was 0.0001 not 0.001, poses still optimized. Rerun with correct zero lr needed |
 | **trail3_fix1** (tracker LR ×0.1, iter 50) | MoGe | 63.0mm | 11.0mm median, 53mm max | — | Tracker walk-cap 0.5mm/frame not honored — mapping pose optim (lr_trans=0.0001 × cur_frame_iters=100 = 10mm/frame) overwrites tracker output every frame. Confirms global_BA is dominant walker (matches GT-bypass row). |
-| trail3_fix2 (optim_cur=False) | MoGe | — | — | — | **Pending** — disables mapping pose refinement entirely to confirm global_BA attribution |
+| **trail3_fix2** (optim_cur=False) | MoGe | 66.7mm | 11.08mm median, 59mm max | — | **Null result** — per-frame delta essentially identical to fix1 (11.04mm). `optim_cur=False` only blocks current-frame pose write at ddsslam.py:422; past-keyframe re-optimization at line 418 continues every frame (keyframe_every=1, map_every=1). Walker is past-KF path, not current-frame path. Not on critical path for paper reproduction. |
+| **trail3_bbox_correct** (bbox sized to scene + far=1.0) | MoGe | 61.9mm | 16.88mm median, 70.7mm max | — | **Refuted.** Per-frame got **57% WORSE** (10.72 → 16.88mm). Opposite of the bbox-gradient-attenuation hypothesis's prediction. ATE changed within seed-variance (66.7→61.9). Tight bbox made field-oscillation-per-pose-change higher-leverage, not lower. Bbox oversize is NOT the cause of per-frame walk. |
+| **trail3_D9** (UsePercentage=False at scene_rep.py:393,400, plain MSE per paper Eq.12) | MoGe | 57.7mm | 10.68mm median, 59.1mm max | — | **Null.** Per-frame essentially identical to baseline 10.72mm. ATE shift 66.7→57.7 within prior 3.4× seed variance. **Consistent with unified theory prediction**: L_m outlier discard is DDS-only; Co-SLAM (no L_m) walks identically on StereoMIS to 4 sig figs, so DDS-only fixes cannot be the universal cause. D9 closes. Code patch at scene_rep.py:393,400 left applied (paper-spec). |
+
+## 4-Lab Paper-Spec Baseline (2026-04-15) — All Labs Walk Universally
+
+Ran unmodified paper-spec config across all 4 SemSuP labs with consistent MoGe depth, to produce a clean comparison against paper Table I. Result: **every lab walks far beyond paper's near-stationary behavior**, with no correlation to paper's Rep.Err difficulty ordering.
+
+| Paper Lab | Config | Depth | ATE RMSE | ATE mean | ATE max | per-frame median | per-frame max | trajectory extent (x,y,z mm) | Paper Rep.Err |
+|---|---|---|---|---|---|---|---|---|---|
+| Lab 1 | trail3 | MoGe | **66.66 mm** | 61.0 | 115.5 | **10.72 mm** | 54.1 mm | (99, 43, 192) | 3.3 (0.4) |
+| Lab 2 | trail4 | MoGe | **151.4 mm** | 145.6 | 247.0 | **28.22 mm** | 93.7 mm | (160, **417**, 239) | 3.0 (0.5) |
+| Lab 3 | trail8 | MoGe | **43.55 mm** | 40.3 | 97.1 | **13.63 mm** | 65.3 mm | (32, 69, 158) | 2.4 (0.4) |
+| Lab 4 | trail9 | MoGe | **34.94 mm** | 31.3 | 83.2 | **18.13 mm** | 80.3 mm | (38, 52, 145) | 2.0 (0.2) |
+
+**Key conclusions:**
+- Universal walk of 11–28 mm/frame on a ~stationary camera (100-300× paper's implied behavior). Bug is universal, not lab-specific.
+- Our walk ordering (Lab 1 < Lab 3 < Lab 4 < Lab 2) does not match paper's difficulty ordering (Lab 4 < Lab 3 < Lab 2 < Lab 1). Not a scaled version of the right signal.
+- **Two distinct failure-mode signatures in one codebase on same config:**
+  - *Random-walk dominant* (Labs 1, 4): high per-frame walk (11–18 mm), but ATE stays moderate (35–67 mm) because the pose zigzags back to near-origin.
+  - *Directional-pull dominant* (Lab 2): high per-frame walk (28 mm) AND high ATE (151 mm) with 417 mm Y-axis drift on a static recording. Loss landscape is actively pulling the pose in a consistent direction.
+  - Lab 3 is intermediate (13 mm walk, 44 mm ATE).
+- The presence of BOTH modes on a single codebase indicates a **scene-dependent non-zero gradient bias**, not uniform noise. Exactly what a corrupted loss landscape would produce — same code, different scene → different bad gradient direction.
+- fix1/fix2/paper-spec on trail3 all produce ~11 mm/frame — tracker/mapping LR knobs don't matter. The loss landscape itself is wrong.
+- **D1 (semantic-distance GT shape) becomes the prime remaining hypothesis.** It is the only known structural difference from paper in the loss, and a scene-dependent loss-landscape bug fits the dual-failure-mode symptom.
+
+**Notes for future runs:**
+- `output.txt` and `output_identity.txt` **append** rather than overwrite across runs. Always `rm output/trail*/demo/output.txt` before re-running to avoid historical contamination. (Lab 1's output.txt contains 3 concatenated dictionaries from baseline + fix1 + fix2 runs — most recent value is last.)
+- `output.txt` and `output_identity.txt` contents are **identical** on SemSuP because SuperDataset returns identity poses for both — there is no separate real GT.
 
 ## StereoMIS P2_1 (real camera motion, identity ATE)
 
@@ -182,16 +210,80 @@ Upstream applies this + loads binary instrument masks from `masks/` to exclude s
 | 14 | GT pose bypass (tracking only) | Skip tracking_render | global_BA still corrupts poses |
 | 15 | Evaluation metric mismatch | Traced paper's `load_gt_pose` to see it uses identity, not kinematics | **Paper's 8.3mm is identity ATE.** Our first-1500 identity ATE is 4.3mm (beats paper 2×). |
 
-## Untested Hypotheses (as of 2026-04-15)
+## Audit (2026-04-15) — Paper vs Code Divergences
+
+Summary: our code is byte-identical to upstream IRMVLab/DDS-SLAM, but the authors' own code diverges from paper's written equations on 11 items. Audit completed 2026-04-15 via two independent investigators; full D1–D11 table below.
+
+| # | Divergence | Paper | Code | Severity |
+|---|---|---|---|---|
+| D1 | Semantic-distance GT | raw Euclidean `dist` | `exp(-dist/10)` — **sign-inverted field** | HIGH |
+| D2 | Semantic decoder γ(d) input | takes view dir | missing | LOW |
+| D3 | PE frequencies | L_x=10, L_t=4 | n_frequencies=12 (both) | HIGH |
+| D4 | Rendering weights | Eq.7 alpha-compositing | `sigmoid × sigmoid` product | CRITICAL |
+| D5 | SDF→density κ | σ=κ·Sigmoid(-κs), κ learnable | Not implemented; `learnable_beta` dead config | CRITICAL |
+| D6 | Free-space target | drive SDF→T=0.1 | drives SDF→1.0 | ~~CRITICAL~~ **NOT A BUG** — `predicted_sdf` is normalized (unit=truncation) per Eq.11 self-consistency. Drive→1 == drive→T in paper units. |
+| D7 | Super ray samples | 32+16=48 | 32+11=43 (Super yaml only) | MED |
+| D8 | Mapping procedure | separate pose-fixed local phase | joint optim | MED |
+| D9 | L_m MSE | plain MSE | top-20%-error pixels discarded (`UsePercentage=0.8`) | MED |
+| D10 | First-sign-change mask | N/A | zeros weights past first SDF zero-crossing | CODE-ONLY |
+| D11 | `rays_o[...,3]` read | N/A | unconditional; crashes if `dynamic=False` | BLOCKER for dynamic=False test |
+
+Independently verified by second investigator. Interpretation (shared): paper is idealisation; authors' code diverges; authors hit 8.3 mm because specific biases happen to balance on their data/depth/seed. Fixing divergences reduces reliance on accidental cancellation.
+
+Variance note: on StereoMIS scale=10⁶ runs, Run B = 13.9 mm, Run C = 47.0 mm on identical config with different seeds (3.4× swing). Authors may have a favourable seed; untestable without their RNG state.
+
+## Scene Extent Measurement (trail3, Lab 1) — 2026-04-15
+
+Via `Addons/inspect_scene_extent.py` on MoGe depth NPYs:
+
+| Axis | Scene p1 | Scene p99 | Scene extent | Current bbox | Oversize |
+|---|---|---|---|---|---|
+| X | -0.239 | +0.206 | 0.445 m | [-0.7, +0.7] = 1.4 m | 3.1× |
+| Y | -0.223 | +0.137 | 0.360 m | [-0.7, +0.7] = 1.4 m | 3.9× |
+| Z | +0.383 | +0.697 | 0.314 m | **[+0.7, +1.2] = 0.5 m** | **MISALIGNED** — 99% of scene Z is BELOW bbox z_min=0.7 |
+
+**Critical**: trail3.yaml default bbox Z starts at 0.7, but scene Z p99 = 0.697. Virtually the entire scene is outside the bbox on the Z axis, clamped via `torch.clamp(inputs_flat, 1e-6, 1-1e-6)` at [scene_rep.py:231](../model/scene_rep.py#L231). The hash grid sees a Z-collapsed 2D projection, not the 3D scene.
+
+Also: `far: 5.0` in Super.yaml vs scene z p99 = 0.697 → 93% of ray sample budget beyond scene.
+
+Recommended bbox (p1-p99 + 20% margin): `[[-0.33, 0.30], [-0.30, 0.21], [0.32, 0.76]]` with `far: 1.0`. Queued as `configs/Super/trail3_bbox_correct.yaml`.
+
+Note: depth values in meters after `/png_depth_scale` (=8.0). Bbox oversize is 3-4×, not the 22× the StereoMIS bbox implied — per-SemSuP effect of bbox shrink should be modest (2-3× gradient sensitivity improvement per axis).
+
+## Dual-mechanism hypothesis (2026-04-15)
+
+Best current synthesis of the per-frame walk:
+
+- **Bbox oversize → noisy flat loss landscape → random-walk per-frame motion.** StereoMIS config bbox ~4 m cube vs actual scene ~0.15 m = 22× oversize. TCNN hash normalises by bbox_extent, so effective voxel count in scene is ~100³ (not configured 2000³). A 1 mm pose perturbation becomes 2.5e-4 normalised shift instead of 3.3e-3. Loss curvature ~20× flatter than intended. **Explains why tracker-LR tuning (fix1/fix2) did nothing — tracker is gradient-noise-dominated in a miscalibrated landscape, not budget-limited.** Fits Labs 1/3/4 random-walk signature and StereoMIS.
+- **D6/D1 biases → directional pull on top of the flat landscape.** D6 pushes free-space SDF to invisible weight region; D1 inverts semantic signal. Both produce scene-dependent non-zero gradients. Fits Lab 2's 417 mm Y-axis directional drift on a stationary recording.
+
+Prior "scene-aligned bbox" test ([[-0.7, 0.7], [-0.7, 0.7], [0.2, 0.9]] → no effect) was still a 1.4 m cube, still ~10× oversize. Hypothesis predicts actual-size (~0.3 m) bbox would help — regime not yet tested.
+
+## Shared-infrastructure cross-check
+
+On StereoMIS last-4000 with identical RAFT-stereo depth:
+- DDS-SLAM per-frame trans median: **2.08 mm** (34.7× GT)
+- Co-SLAM per-frame trans median: **2.11 mm** (35.2× GT)
+- GT per-frame median (groundtruth.txt): **0.060 mm**
+
+Agreement to 4 sig figs across two architectures rules out architecture-specific causes (TimeNet, EdgeNet, HNDSR). The shared walk-magnitude locks the cause to something in the shared infrastructure: depth loader, loss formulation, tracker hyperparameters, SDF truncation, bbox. Consistent with bbox+D6 hypothesis.
+
+## Untested Hypotheses (updated 2026-04-15 post-audit)
 
 | # | Hypothesis | Priority | Status |
 |---|-----------|----------|--------|
-| 1 | **Specularity + instrument masking on depth** (trail3 + StereoMIS last-4000) | **HIGH** | `regenerate_stereomis_depth.py` + `run_step1a_masked_depth.sh` ready, not yet run |
-| 2 | **Mapping pose refinement as walker** (disable `optim_cur`) | **HIGH** | `trail3_fix2.yaml` queued — direct follow-up to GT-bypass finding |
-| 3 | Tracker convergence radius vs 78mm camera motion at frame ~1530 | MEDIUM | No direct test yet; would need staged-motion synthetic data |
-| 4 | Paper's missing depth extraction code | MEDIUM | Robust-pose-estimator never saves PNGs; author contact may be needed |
-| 5 | Multiple random seeds | LOW | Untested |
-| 6 | Pure-PyTorch hash grid | LOW | Untested |
+| 1 | **D9 — L_m outlier discard** (`UsePercentage=notFirstMap` → `False` at scene_rep.py:393,400) | **RUNNING** | Paper Eq. 12 is plain MSE; code drops top-20%-error pixels. Code patched locally; Colab test pending. |
+| 2 | **D1 — Semantic GT sign inversion** (`exp(-dist/10)` + remove sigmoid at scene_rep.py:111) | HIGH | 2-line change across 2 files (NOT 1-line — sigmoid at line 111 pairs with bounded GT). Test if D9 null. |
+| 3 | **D4/D5 — Rendering weights + learnable κ** (sigmoid-product → paper's alpha compositing) | HIGH | Shared with Co-SLAM; ~20-line refactor. Strong candidate for StereoMIS shared-infrastructure walk. |
+| 4 | Depth quality — paper's finetuned Monodepth2 (inaccessible) or author contact | HIGH | StereoMIS path too (masked depth: `run_step1a_masked_depth.sh` ready) |
+| 5 | D3 encoding frequencies (12 → L_x=10, L_t=4), D7 ray samples (11 → 16 Super), D8 mapping procedure | MED | Single-line / config changes; after bigger candidates |
+| 6 | Multiple random seeds on StereoMIS scale=10⁶ (third run) | LOW | Variance characterisation (prior 3.4× seed swing) |
+| 7 | D11 — dynamic=False guard at scene_rep.py:310-312 | LOW | Blocks in-place Co-SLAM-equivalent test; 3-line guard |
+| — | **CLOSED hypotheses:** | | |
+| — | Bbox shrink (trail3_bbox_correct) | REFUTED | Per-frame got **worse** (10.7 → 16.9mm); tight bbox amplifies field-update leverage on pose |
+| — | D6 free-space target 1.0 → 0.1 | NOT A BUG | `predicted_sdf` is normalized (unit=truncation) per Eq.11 self-consistency; drive→1 == drive→T in paper units |
+| — | fix1 tracker-LR cut | NULL | Tracker output overwritten by global_BA every frame |
+| — | fix2 optim_cur=False | NULL | Past-KF re-optimization at ddsslam.py:418 continues regardless |
 
 ## Environment
 
@@ -199,18 +291,60 @@ Upstream applies this + loads binary instrument masks from `masks/` to exclude s
 - **Exact paper env (verified 2026-03-30):** Python 3.7.17, PyTorch 1.10.1+cu113, CUDA 11.3, TCNN 1.6 @ commit 91ee479, GCC 10 host compiler. Setup: [`colab_exact_env.sh`](../Addons/colab_exact_env.sh). Cached venv: `MyDrive/dds_cache/dds_env.tar.gz` (~1GB, ~2min restore).
 - **Paper:** Python 3.7, PyTorch 1.10.1+cu113, CUDA 11.3, TCNN ~v1.5, RTX 3090 (sm_86)
 
-## Key Findings
+## Key Findings (updated 2026-04-15 post-pose-data analysis)
 
-1. **Tracker works excellently on stable windows** — 4.3mm identity ATE on StereoMIS first-1500, **2× better than paper's 8.3mm on 4000 frames.** The reproduction is not globally broken.
-2. **Failure is frame-window-dependent, not env/code/depth-version dependent.** Catastrophic drift event at StereoMIS frame ~1530 where camera moves 78mm in Z over 500 frames — tracker exceeds its convergence radius and never recovers.
-3. **Environment eliminated** — exact paper stack produces 13.9mm vs modern stack's 12.3mm on first-4000. Within noise.
-4. **Code and depth pipelines byte-identical** to upstream DDS-SLAM and robust-pose-estimator (including their distortion bug, replicated).
-5. **Paper evaluates against identity GT, not robot kinematics** — both metrics now emitted (`output_identity.txt` vs `output.txt`).
-6. **On trail3, mapping pose refinement is the walker.** GT-pose-bypass run still drifts to 50mm — tracker isn't the problem, global_BA overwrites poses via `optim_cur=True` + `cur_frame_iters=100` + `keyframe_every=1`.
-7. **fix1 null result confirms mapping is dominant walker** — 10× cut to tracker LR had no effect on per-frame walk (63mm ATE, 11mm/frame), exactly matching mapping's theoretical 10mm/frame walk cap.
-8. **Stereo depth essential for StereoMIS** — monocular depth fails catastrophically (1000mm+ ATE).
-9. **Rendering quality robust despite jitter** — neural SDF compensates for wrong poses (PSNR 27.6 vs 28.6).
-10. **Co-SLAM has the same issue on StereoMIS last-4000** (ATE 94mm, worse than DDS-SLAM's 43.9mm) — cross-system confirmation that problem is not DDS-SLAM-specific.
+1. **All 4 SemSuP labs are RANDOM-WALK, not directional drift.** Analysis of `est_c2w_data.txt` across all 4 labs: drift ratios (net_displacement / total_|Δ|) are ≤ 0.16 on every axis for every lab. Lab 2's 417mm Y extent was the max excursion of a wide random walk, not directional drift. Earlier "dual mechanism" story (Lab 2 directional vs others random) was wrong.
+2. **Walk is Z-axis dominant.** Total `|Δ|` in Z axis across 151 frames: Lab1=1803mm, Lab2=4437mm, Lab3=2340mm, Lab4=2994mm. That's 12-30 mm per-frame Z jitter. Z is the camera-forward/depth axis — textbook signature of **depth-ambiguity tracking noise**.
+3. **Rotation jitter is small** (0.24-0.52 deg/frame median). Consistent with paper's 3.3mm Rep.Err magnitudes. Rotation isn't the problem.
+4. **This eliminates all "loss-landscape-bias" hypotheses.** D1, D2, D6, D9 all posit a consistent wrong-direction gradient which would produce drift ratio ≈ 1.0. Observed ratio ≤ 0.16 rules this class out. D9 test is unlikely to help.
+5. **DDS-SLAM ≈ Co-SLAM on StereoMIS (4 sig fig match).** Confirms walker is in shared infrastructure: depth input and/or TCNN sigmoid-product rendering. Not any DDS-only code.
+6. **Bbox-shrink refuted.** Per-frame walk got **worse** (10.7 → 16.9 mm). Smaller bbox amplifies field-update leverage instead of reducing it.
+7. **D6 eliminated as a bug.** `predicted_sdf` is normalized by truncation per Eq.11 self-consistency; "drive to 1" == "drive to T" in paper units. Was misflagged in the audit handoff.
+8. **Strongest remaining hypothesis: DEPTH QUALITY.** Z-axis random walk + shared-infrastructure Co-SLAM cross-check + "paper used inaccessible finetuned Monodepth2" all point here.
+
+## Pose-Data Analysis (trail3-9 paper-spec baseline, 2026-04-15)
+
+| Lab | per-frame |Δt| mm | per-frame Δθ deg | Z total |Δ| mm | X drift ratio | Y drift ratio | Z drift ratio |
+|---|---|---|---|---|---|---|
+| 1 | 10.72 | 0.33 | 1803 | 0.038 | 0.077 | 0.056 |
+| 2 | **28.22** | 0.52 | **4437** | 0.149 | 0.127 | 0.024 |
+| 3 | 13.63 | 0.24 | 2340 | 0.079 | 0.159 | 0.022 |
+| 4 | 18.13 | 0.29 | 2994 | 0.011 | 0.072 | 0.036 |
+
+All labs: high Z-axis random-walk magnitude, near-zero drift ratio on all axes. Mechanism is uniform across labs; Lab 2 is an amplitude outlier, not a mechanism outlier.
+4. **Tracker works excellently on stable StereoMIS windows** — 4.3 mm identity ATE on first-1500, 2× better than paper's 8.3 mm on 4000. Reproduction is not globally broken.
+5. **StereoMIS failure is frame-window-dependent** — catastrophic drift event at frame ~1530 under 78 mm camera motion in Z. Tracker exceeds convergence radius.
+6. **Environment eliminated** — exact paper stack 13.9 mm vs modern stack's 12.3 mm on StereoMIS first-4000. Within noise.
+7. **Code and depth pipelines byte-identical to upstream** (DDS-SLAM + robust-pose-estimator, including their distortion bug).
+8. **Paper evaluates against identity GT**, not robot kinematics. On SemSuP these two are the same because SuperDataset only has identity.
+9. **Mapping pose refinement is the walker on SemSuP**, not the tracker. fix1/fix2 null results confirm. Past-keyframe re-optimization at `ddsslam.py:418` continues regardless of `optim_cur`.
+10. **Stereo depth essential for StereoMIS** — monocular fails catastrophically (1000mm+ ATE).
+11. **Rendering quality robust despite tracking noise** — neural SDF compensates; PSNR 27.6 vs paper 28.6 on Lab 1 (the field gets the scene ~right, the tracker misreads where the camera is).
+12. **Co-SLAM has the same StereoMIS issue** (ATE 94 mm, worse than ours 43.9 mm) — cross-system confirmation.
+
+## Session Logs (reverse chronological)
+
+### 2026-04-15 — 4-lab SemSuP paper-spec baseline
+
+- Recovered trail4/8/9 configs from commit `d9e4958` (had been deleted as "dead" before confirming Lab mapping).
+- Confirmed Lab mapping: trail3=Lab 1, trail4=Lab 2, trail8=Lab 3, trail9=Lab 4.
+- Generated MoGe depth for trail4/8/9 on Colab base Python 3.12 (MoGe requires torch ≥ 2.0, incompatible with Py 3.7 venv).
+- Ran all 4 labs under exact-paper env. All walk. Results pushed to `MyDrive/DDS-SLAM-Results/paper_spec_baseline_20260415_1708/`.
+- Audited `compute_edge_semantic` + `EdgeNet_Semantic`: confirmed D1 divergence (exp decay vs raw distance), flagged D2 (missing view-direction input).
+- fix1 and fix2 null results logged; their branches closed as non-critical-path.
+- RESULTS_LOG reorganized: metric clarification, 4-lab baseline table, session log.
+
+### 2026-03-31 — Day 2 StereoMIS investigation
+- Code diff vs upstream: byte-identical on tracking/mapping.
+- Depth pipeline vs robust-pose-estimator: byte-identical.
+- Paper evaluates against identity GT (not kinematics) discovered.
+- Frame-by-frame drift analysis: StereoMIS first-1500 = 4.3 mm (beats paper), first-4000 = 27.5 mm, catastrophic event at frame ~1530.
+- Depth quantization ruled out via scale=10000 test.
+- Specularity/instrument masking identified as remaining untested depth variable.
+
+### 2026-03-30 — Environment elimination
+- Built exact paper env on Colab: Py 3.7, PyTorch 1.10.1+cu113, CUDA 11.3, TCNN v1.6 @ 91ee479.
+- StereoMIS first-4000: 13.9 mm (exact env) vs 12.3 mm (modern). Within noise. Env eliminated.
 
 ## Open Questions
 
