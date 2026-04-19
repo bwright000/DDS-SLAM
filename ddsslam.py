@@ -372,15 +372,23 @@ class DDSSLAM():
 
         # all the KF poses: 0, 5, 10, ...
         poses = torch.stack([self.est_c2w_data[i] for i in range(0, cur_frame_id, self.config['mapping']['keyframe_every'])])
-        
+
         # frame ids for all KFs, used for update poses after optimization
         frame_ids_all = torch.tensor(list(range(0, cur_frame_id, self.config['mapping']['keyframe_every'])))
 
-        if len(self.keyframeDatabase.frame_ids) < 2:
+        # DIAGNOSTIC: full D8 paper-faithful Phase A — freeze ALL poses during BA.
+        # Skips pose_optimizer entirely; no pose writes back to est_c2w_data.
+        if self.config.get('pose_fixed_ba', False):
+            current_pose = self.est_c2w_data[cur_frame_id][None, ...].to(self.device)
+            poses_all = torch.cat([poses.to(self.device), current_pose], dim=0)
+            cur_rot = cur_trans = None
+            # pose_optimizer stays None — existing guards skip pose.step() and writeback
+
+        elif len(self.keyframeDatabase.frame_ids) < 2:
             poses_fixed = torch.nn.parameter.Parameter(poses).to(self.device)
             current_pose = self.est_c2w_data[cur_frame_id][None,...]
             poses_all = torch.cat([poses_fixed, current_pose], dim=0)
-        
+
         else:
             poses_fixed = torch.nn.parameter.Parameter(poses[:1]).to(self.device)
             current_pose = self.est_c2w_data[cur_frame_id][None,...]
@@ -834,6 +842,10 @@ if __name__ == '__main__':
                         help='DIAGNOSTIC: override pose used for mapping with GT-derived pose. '
                              'Tracking still runs (its estimate is logged separately). Answers '
                              'whether mapping lock-in is the source of drift.')
+    parser.add_argument('--pose_fixed_ba', action='store_true',
+                        help='DIAGNOSTIC (paper-faithful D8 fix): freeze ALL poses during global_BA. '
+                             'Disables pose_optimizer entirely so mapping only updates the scene. '
+                             'Tests whether joint pose+scene optimization in BA is the lock-in mechanism.')
 
     args = parser.parse_args()
 
@@ -841,6 +853,7 @@ if __name__ == '__main__':
     if args.output is not None:
         cfg['data']['output'] = args.output
     cfg['diagnostic_use_gt_mapping'] = args.use_gt_mapping
+    cfg['pose_fixed_ba'] = args.pose_fixed_ba
 
     print("Saving config and script...")
     save_path = os.path.join(cfg["data"]["output"], cfg['data']['exp_name'])
