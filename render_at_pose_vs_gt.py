@@ -46,6 +46,9 @@ def render_full_image(slam, batch, c2w, frame_id, chunk=8192):
     rays_o = c2w_t[:3, -1].unsqueeze(0).repeat(N, 1)
     rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_t[:3, :3], -1)
 
+    # Depth-guided sampling (same as tracking_render uses) — avoids missing n_samples config
+    target_d = batch['depth'].squeeze(0).to(device).reshape(-1, 1)
+
     if slam.config['dynamic']:
         timestamps = (float(frame_id) * torch.ones(N, device=device)).unsqueeze(-1)
         rays_o = torch.cat([rays_o, timestamps], dim=1)
@@ -56,7 +59,7 @@ def render_full_image(slam, batch, c2w, frame_id, chunk=8192):
     with torch.no_grad():
         for i in range(0, N, chunk):
             ret = slam.model.render_rays(
-                rays_o[i:i+chunk], rays_d[i:i+chunk], target_d=None
+                rays_o[i:i+chunk], rays_d[i:i+chunk], target_d=target_d[i:i+chunk]
             )
             rgb_chunks.append(ret['rgb'])
             depth_chunks.append(ret['depth'].squeeze(-1))
