@@ -77,7 +77,7 @@ cam:
   fy: 560.0741
   cx: 329.7418
   cy: 257.4321
-  png_depth_scale: 100 #for depth image in png format
+  png_depth_scale: 10000 #for depth image in png format; matches regen scale (uint16 = depth_m * 10000)
   crop_edge: 0
   near: 0
   far: 2
