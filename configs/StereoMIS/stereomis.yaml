@@ -21,7 +21,7 @@ mapping:
   map_every: 5
   n_pixels: 0.05
   first_iters: 200
-  optim_cur: True
+  optim_cur: False    # TEST 2026-04-19: prevent global_BA from updating current-frame pose; attacks mapping lock-in mechanism
   min_pixels_cur: 1024
   map_accum_step: 1
   pose_accum_step: 5
