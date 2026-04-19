@@ -9,11 +9,11 @@
 # Cached run: ~5 min (restores venv from Google Drive)
 #
 # Usage (in Colab terminal or notebook cell):
-#   bash Addons/colab_exact_env.sh [--skip-data] [--skip-cache] [--no-drive]
+#   bash Addons/env/colab_exact_env.sh [--skip-data] [--skip-cache] [--no-drive]
 # ============================================================
 set -e
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DATA_DIR="$REPO_ROOT/data"
 CACHE_DIR="/content/drive/MyDrive/dds_cache"
 VENV_DIR="/tmp/dds_env"

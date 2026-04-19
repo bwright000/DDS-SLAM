@@ -234,7 +234,7 @@ Variance note: on StereoMIS scale=10⁶ runs, Run B = 13.9 mm, Run C = 47.0 mm o
 
 ## Scene Extent Measurement (trail3, Lab 1) — 2026-04-15
 
-Via `Addons/inspect_scene_extent.py` on MoGe depth NPYs:
+Via `Addons/diagnostics/inspect_scene_extent.py` on MoGe depth NPYs:
 
 | Axis | Scene p1 | Scene p99 | Scene extent | Current bbox | Oversize |
 |---|---|---|---|---|---|
@@ -287,8 +287,8 @@ Agreement to 4 sig figs across two architectures rules out architecture-specific
 
 ## Environment
 
-- **Modern stack (default):** Python 3.12, PyTorch 2.10+cu128, CUDA 12.8, TCNN v2.0, Colab T4 (sm_75). Setup: [`colab_setup.sh`](../Addons/colab_setup.sh)
-- **Exact paper env (verified 2026-03-30):** Python 3.7.17, PyTorch 1.10.1+cu113, CUDA 11.3, TCNN 1.6 @ commit 91ee479, GCC 10 host compiler. Setup: [`colab_exact_env.sh`](../Addons/colab_exact_env.sh). Cached venv: `MyDrive/dds_cache/dds_env.tar.gz` (~1GB, ~2min restore).
+- **Modern stack (default):** Python 3.12, PyTorch 2.10+cu128, CUDA 12.8, TCNN v2.0, Colab T4 (sm_75). Setup: [`colab_setup.sh`](../Addons/env/colab_setup.sh)
+- **Exact paper env (verified 2026-03-30):** Python 3.7.17, PyTorch 1.10.1+cu113, CUDA 11.3, TCNN 1.6 @ commit 91ee479, GCC 10 host compiler. Setup: [`colab_exact_env.sh`](../Addons/env/colab_exact_env.sh). Cached venv: `MyDrive/dds_cache/dds_env.tar.gz` (~1GB, ~2min restore).
 - **Paper:** Python 3.7, PyTorch 1.10.1+cu113, CUDA 11.3, TCNN ~v1.5, RTX 3090 (sm_86)
 
 ## Key Findings (updated 2026-04-15 post-pose-data analysis)
@@ -361,7 +361,7 @@ All labs: high Z-axis random-walk magnitude, near-zero drift ratio on all axes. 
 ## Project Status — CRCD Pipeline (as of 2026-03-31)
 
 Despite the StereoMIS reproduction gap, the CRCD pipeline is fully built:
-- `Addons/preprocess_crcd.py` — converts data packs to DDS-SLAM format (rectification, masks, poses)
+- `Addons/preprocess/preprocess_crcd.py` — converts data packs to DDS-SLAM format (rectification, masks, poses)
 - Calibration extracted: fx=1096.70, baseline=5.485mm
 - SAM3 masks rasterized (liver + gallbladder + tool, 3-class)
 - C_1 snippet_001 preprocessed (271 frames)

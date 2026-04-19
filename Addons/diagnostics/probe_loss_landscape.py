@@ -31,8 +31,9 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# Make local imports work
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Make local imports work — go up two levels: Addons/diagnostics -> Addons -> DDS-SLAM
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, REPO_ROOT)
 
 import config as ddsconfig
 from ddsslam import DDSSLAM

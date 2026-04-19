@@ -6,11 +6,12 @@
 # with minimal code patches applied to the repo.
 #
 # Usage (in Colab terminal):
-#   bash Addons/colab_setup.sh [--skip-data] [--skip-tunnel]
+#   bash Addons/env/colab_setup.sh [--skip-data] [--skip-tunnel]
 # ============================================================
 set -e
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Script is now at Addons/env/ — go up two levels to repo root
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DATA_DIR="$REPO_ROOT/data"
 
 SKIP_DATA=false

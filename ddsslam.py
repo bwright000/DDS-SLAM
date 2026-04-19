@@ -23,7 +23,6 @@ from datasets.dataset import get_dataset
 from utils import coordinates, extract_mesh, colormap_image
 from tools.eval_ate import pose_evaluation
 from optimization.utils import at_to_transform_matrix, qt_to_transform_matrix, matrix_to_axis_angle, matrix_to_quaternion
-from debug_logger import DebugLogger
 import matplotlib.pyplot as plt
 
 save_rendering_result=True
@@ -33,15 +32,12 @@ class DDSSLAM():
         self.config = config
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.dataset = get_dataset(config)
-
+        
         self.create_bounds()
         self.create_pose_data()
         self.get_pose_representation()
         self.keyframeDatabase = self.create_kf_database(config)
         self.model = JointEncoding(config, self.bounding_box).to(self.device)
-
-        _dbg_dir = os.path.join(config['data']['output'], config['data']['exp_name'], 'debug')
-        self.debug_logger = DebugLogger(_dbg_dir)
     
     def seed_everything(self, seed):
         random.seed(seed)
@@ -72,26 +68,7 @@ class DDSSLAM():
         '''
         self.est_c2w_data = {}
         self.est_c2w_data_rel = {}
-        # DIAGNOSTIC: records what tracking WOULD choose even when mapping uses GT poses.
-        # Populated in tracking_render when --use_gt_mapping is active.
-        self.tracking_only_data = {}
-        self.load_gt_pose()
-
-    def _override_all_poses_with_gt(self):
-        """DIAGNOSTIC: restore every est_c2w_data entry (except 0) to GT-target after BA."""
-        if 0 not in self.est_c2w_data:
-            return
-        gt_0 = self.pose_gt[0]
-        est_0 = self.est_c2w_data[0]
-        gt_0 = gt_0.to(self.device).float() if torch.is_tensor(gt_0) else torch.as_tensor(gt_0, dtype=torch.float32, device=self.device)
-        est_0 = est_0.to(self.device).float() if torch.is_tensor(est_0) else torch.as_tensor(est_0, dtype=torch.float32, device=self.device)
-        gt_0_inv = torch.inverse(gt_0)
-        for fid in list(self.est_c2w_data.keys()):
-            if fid == 0:
-                continue
-            gt_N = self.pose_gt[fid]
-            gt_N = gt_N.to(self.device).float() if torch.is_tensor(gt_N) else torch.as_tensor(gt_N, dtype=torch.float32, device=self.device)
-            self.est_c2w_data[fid] = ((gt_N @ gt_0_inv) @ est_0).detach()
+        self.load_gt_pose() 
     
     def create_bounds(self):
         '''
@@ -244,36 +221,6 @@ class DDSSLAM():
         # First frame will always be a keyframe
         self.keyframeDatabase.add_keyframe(batch, filter_depth=self.config['mapping']['filter_depth'])
         print('First frame mapping done')
-
-        # Debug log — frame 0
-        try:
-            _dvalid = ((batch['depth'] > 0) & (batch['depth'] < self.config['cam']['depth_trunc'])).float().mean().item()
-            _dmean = batch['depth'][batch['depth'] > 0].mean().item() if (batch['depth'] > 0).any() else 0.0
-            self.debug_logger.log_tracking(
-                frame_id=0,
-                est_c2w=self.est_c2w_data[0],
-                gt_c2w=self.pose_gt[0],
-                is_keyframe=True,
-                init_c2w=self.est_c2w_data[0],  # identity init = final (first-frame)
-                tracking_iters_used=n_iters,
-                tracking_iters_config=n_iters,
-                best_loss=loss.item(),
-                last_loss=loss.item(),
-                loss_components={
-                    'rgb': ret['rgb_loss'].item() if ret.get('rgb_loss') is not None else None,
-                    'depth': ret['depth_loss'].item() if ret.get('depth_loss') is not None else None,
-                    'sdf': ret['sdf_loss'].item() if ret.get('sdf_loss') is not None else None,
-                    'fs': ret['fs_loss'].item() if ret.get('fs_loss') is not None else None,
-                    'edge_semantic': ret['edge_semantic_loss'].item() if ret.get('edge_semantic_loss') is not None else None,
-                },
-                psnr=ret['psnr'].item() if ret.get('psnr') is not None else None,
-                depth_valid_frac=_dvalid,
-                depth_mean=_dmean,
-                rgb_mean=batch['rgb'].mean().item(),
-            )
-        except Exception as _e:
-            print(f'[DebugLogger] first-frame log failed: {_e}')
-
         return ret, loss
 
     def current_frame_mapping(self, batch, cur_frame_id):
@@ -372,23 +319,15 @@ class DDSSLAM():
 
         # all the KF poses: 0, 5, 10, ...
         poses = torch.stack([self.est_c2w_data[i] for i in range(0, cur_frame_id, self.config['mapping']['keyframe_every'])])
-
+        
         # frame ids for all KFs, used for update poses after optimization
         frame_ids_all = torch.tensor(list(range(0, cur_frame_id, self.config['mapping']['keyframe_every'])))
 
-        # DIAGNOSTIC: full D8 paper-faithful Phase A — freeze ALL poses during BA.
-        # Skips pose_optimizer entirely; no pose writes back to est_c2w_data.
-        if self.config.get('pose_fixed_ba', False):
-            current_pose = self.est_c2w_data[cur_frame_id][None, ...].to(self.device)
-            poses_all = torch.cat([poses.to(self.device), current_pose], dim=0)
-            cur_rot = cur_trans = None
-            # pose_optimizer stays None — existing guards skip pose.step() and writeback
-
-        elif len(self.keyframeDatabase.frame_ids) < 2:
+        if len(self.keyframeDatabase.frame_ids) < 2:
             poses_fixed = torch.nn.parameter.Parameter(poses).to(self.device)
             current_pose = self.est_c2w_data[cur_frame_id][None,...]
             poses_all = torch.cat([poses_fixed, current_pose], dim=0)
-
+        
         else:
             poses_fixed = torch.nn.parameter.Parameter(poses[:1]).to(self.device)
             current_pose = self.est_c2w_data[cur_frame_id][None,...]
@@ -526,9 +465,6 @@ class DDSSLAM():
 
         cur_rot, cur_trans, pose_optimizer = self.get_pose_param_optim(cur_c2w[None,...], mapping=False)
 
-        # capture init pose (constant-velocity prediction) for debug
-        _init_c2w_for_log = cur_c2w.detach().clone()
-
         # Start tracking
         for i in range(self.config['tracking']['iter']):
             pose_optimizer.zero_grad()
@@ -580,30 +516,10 @@ class DDSSLAM():
         
         if self.config['tracking']['best']:
             # Use the pose with smallest loss
-            tracking_result = best_c2w_est.detach().clone()[0]
+            self.est_c2w_data[frame_id] = best_c2w_est.detach().clone()[0]
         else:
             # Use the pose after the last iteration
-            tracking_result = c2w_est.detach().clone()[0]
-
-        # Always record what tracking would have picked (for later evaluation)
-        self.tracking_only_data[frame_id] = tracking_result.clone()
-
-        # DIAGNOSTIC: override mapping pose with GT-derived if flag set
-        if self.config.get('diagnostic_use_gt_mapping', False):
-            gt_0 = self.pose_gt[0]
-            gt_N = self.pose_gt[frame_id]
-            est_0 = self.est_c2w_data[0]
-            if torch.is_tensor(gt_0): gt_0 = gt_0.to(self.device).float()
-            else: gt_0 = torch.as_tensor(gt_0, dtype=torch.float32, device=self.device)
-            if torch.is_tensor(gt_N): gt_N = gt_N.to(self.device).float()
-            else: gt_N = torch.as_tensor(gt_N, dtype=torch.float32, device=self.device)
-            if torch.is_tensor(est_0): est_0 = est_0.to(self.device).float()
-            else: est_0 = torch.as_tensor(est_0, dtype=torch.float32, device=self.device)
-            rel_gt_motion = gt_N @ torch.inverse(gt_0)
-            gt_target = (rel_gt_motion @ est_0).detach()
-            self.est_c2w_data[frame_id] = gt_target
-        else:
-            self.est_c2w_data[frame_id] = tracking_result
+            self.est_c2w_data[frame_id] = c2w_est.detach().clone()[0]
 
        # Save relative pose of non-keyframes
         if frame_id % self.config['mapping']['keyframe_every'] != 0:
@@ -614,38 +530,7 @@ class DDSSLAM():
             self.est_c2w_data_rel[frame_id] = delta
         
         print('Best loss: {}, Last loss{}'.format(F.l1_loss(best_c2w_est.to(self.device)[0,:3], c2w_gt[:3]).cpu().item(), F.l1_loss(c2w_est[0,:3], c2w_gt[:3]).cpu().item()))
-
-        # Debug log — per-frame tracking result
-        try:
-            _tracking_iters_used = i + 1
-            _is_kf = (frame_id % self.config['mapping']['keyframe_every'] == 0)
-            _dvalid = ((batch['depth'] > 0) & (batch['depth'] < self.config['cam']['depth_trunc'])).float().mean().item()
-            _dmean = batch['depth'][batch['depth'] > 0].mean().item() if (batch['depth'] > 0).any() else 0.0
-            self.debug_logger.log_tracking(
-                frame_id=frame_id,
-                est_c2w=self.est_c2w_data[frame_id],
-                gt_c2w=self.pose_gt[frame_id],
-                is_keyframe=_is_kf,
-                init_c2w=_init_c2w_for_log,
-                tracking_iters_used=_tracking_iters_used,
-                tracking_iters_config=self.config['tracking']['iter'],
-                best_loss=best_sdf_loss,
-                last_loss=loss.cpu().item(),
-                loss_components={
-                    'rgb': ret['rgb_loss'].item() if ret.get('rgb_loss') is not None else None,
-                    'depth': ret['depth_loss'].item() if ret.get('depth_loss') is not None else None,
-                    'sdf': ret['sdf_loss'].item() if ret.get('sdf_loss') is not None else None,
-                    'fs': ret['fs_loss'].item() if ret.get('fs_loss') is not None else None,
-                    'edge_semantic': ret['edge_semantic_loss'].item() if ret.get('edge_semantic_loss') is not None else None,
-                },
-                psnr=ret['psnr'].item() if ret.get('psnr') is not None else None,
-                depth_valid_frac=_dvalid,
-                depth_mean=_dmean,
-                rgb_mean=batch['rgb'].mean().item(),
-            )
-        except Exception as _e:
-            print(f'[DebugLogger] frame {frame_id} log failed: {_e}')
-
+    
     def convert_relative_pose(self):
         poses = {}
         for i in range(len(self.est_c2w_data)):
@@ -718,9 +603,6 @@ class DDSSLAM():
                 if i%self.config['mapping']['map_every']==0:
                     self.global_BA(batch, i)
                     self.current_frame_mapping(batch, i)
-                    # DIAGNOSTIC: global_BA may have shifted poses during BA — restore GT
-                    if self.config.get('diagnostic_use_gt_mapping', False):
-                        self._override_all_poses_with_gt()
 
                 if i % self.config['render_freq'] == 0:
                     self.rendering(batch, i)
@@ -737,7 +619,6 @@ class DDSSLAM():
                     pose_evaluation(self.pose_gt, self.est_c2w_data, 1, out_dir, i)
                     pose_evaluation(self.pose_gt, pose_relative, 1, out_dir, i, img='pose_r', name='output_relative.txt')
                     pose_evaluation(self.pose_gt_identity, self.est_c2w_data, 1, out_dir, i, img='pose_id', name='output_identity.txt')
-                    self.debug_logger.save_pose_snapshot(self.est_c2w_data, tag=f'frame_{i:05d}')
 
         model_savepath = os.path.join(self.config['data']['output'], self.config['data']['exp_name'], 'checkpoint{}.pt'.format(i))
 
@@ -753,21 +634,6 @@ class DDSSLAM():
             for key, value in self.est_c2w_data.items():
                 f.write(" ".join(map(str, value.cpu().numpy().reshape(16)[:12].tolist())) + "\n")
         print('Saved estimated camera poses to {}'.format(est_c2w_data_path))
-
-        # DIAGNOSTIC: when mapping was fed GT poses, separately evaluate what
-        # tracking_render produced each frame — tells us whether tracking can
-        # find correct poses when the scene isn't biased.
-        if self.config.get('diagnostic_use_gt_mapping', False) and len(self.tracking_only_data) > 0:
-            print('\n=== DIAGNOSTIC: tracking-only pose evaluation ===')
-            # Insert frame 0 (identity-ish) so indices align
-            tracking_data = {0: self.est_c2w_data[0], **self.tracking_only_data}
-            pose_evaluation(self.pose_gt, tracking_data, 1, out_dir, i,
-                            img='pose_trackonly', name='output_tracking_only.txt')
-            track_path = os.path.join(out_dir, 'tracking_only_c2w_data.txt')
-            with open(track_path, 'w') as f:
-                for key, value in tracking_data.items():
-                    f.write(" ".join(map(str, value.cpu().numpy().reshape(16)[:12].tolist())) + "\n")
-            print('Saved tracking-only poses to {}'.format(track_path))
         #TODO: Evaluation of reconstruction
 
     def rendering(self, batch, frame_id):
@@ -838,22 +704,12 @@ if __name__ == '__main__':
                         help='input folder, this have higher priority, can overwrite the one in config file')
     parser.add_argument('--output', type=str,
                         help='output folder, this have higher priority, can overwrite the one in config file')
-    parser.add_argument('--use_gt_mapping', action='store_true',
-                        help='DIAGNOSTIC: override pose used for mapping with GT-derived pose. '
-                             'Tracking still runs (its estimate is logged separately). Answers '
-                             'whether mapping lock-in is the source of drift.')
-    parser.add_argument('--pose_fixed_ba', action='store_true',
-                        help='DIAGNOSTIC (paper-faithful D8 fix): freeze ALL poses during global_BA. '
-                             'Disables pose_optimizer entirely so mapping only updates the scene. '
-                             'Tests whether joint pose+scene optimization in BA is the lock-in mechanism.')
-
+    
     args = parser.parse_args()
 
     cfg = config.load_config(args.config)
     if args.output is not None:
         cfg['data']['output'] = args.output
-    cfg['diagnostic_use_gt_mapping'] = args.use_gt_mapping
-    cfg['pose_fixed_ba'] = args.pose_fixed_ba
 
     print("Saving config and script...")
     save_path = os.path.join(cfg["data"]["output"], cfg['data']['exp_name'])

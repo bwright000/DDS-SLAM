@@ -21,7 +21,7 @@ mapping:
   map_every: 5
   n_pixels: 0.05
   first_iters: 200
-  optim_cur: False    # TEST 2026-04-19: prevent global_BA from updating current-frame pose; attacks mapping lock-in mechanism
+  optim_cur: True
   min_pixels_cur: 1024
   map_accum_step: 1
   pose_accum_step: 5
@@ -29,11 +29,11 @@ mapping:
   filter_depth: False
 
 tracking:
-  iter: 50         # TEST-B 2026-04-19: was 10; ×5 to compensate for reduced lr
+  iter: 10
   sample: 1024
   pc_samples: 40960
-  lr_rot: 0.0001   # TEST-B 2026-04-19: was 0.001; ÷10 to match GT motion scale (0.2mm/frame)
-  lr_trans: 0.0001 # TEST-B 2026-04-19: was 0.001; ÷10 to match GT motion scale
+  lr_rot: 0.001
+  lr_trans: 0.001
   ignore_edge_W: 1
   ignore_edge_H: 1
   iter_point: 0
@@ -77,7 +77,7 @@ cam:
   fy: 560.0741
   cx: 329.7418
   cy: 257.4321
-  png_depth_scale: 10000 #for depth image in png format; matches regen scale (uint16 = depth_m * 10000)
+  png_depth_scale: 100 #for depth image in png format
   crop_edge: 0
   near: 0
   far: 2

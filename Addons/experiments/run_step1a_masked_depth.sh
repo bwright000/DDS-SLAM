@@ -4,7 +4,7 @@
 # at mm quantization (scale=1000), then run DDS-SLAM and print ATE.
 #
 # Run on Colab from /content/DDS-SLAM after activating the venv:
-#   bash Addons/run_step1a_masked_depth.sh
+#   bash Addons/experiments/run_step1a_masked_depth.sh
 #
 # Assumes /content/p2_1_local/ already populated per CLAUDE.local.md
 # (video_frames/, depth/, masks/, groundtruth.txt, StereoCalibration.ini).
@@ -22,7 +22,7 @@ for sub in video_frames masks groundtruth.txt StereoCalibration.ini; do
 done
 
 echo "=== Regenerating depth (scale 100 -> 1000, masked) ==="
-python Addons/regenerate_stereomis_depth.py \
+python Addons/depth/regenerate_stereomis_depth.py \
   --depth_in  "$SRC/depth" \
   --rgb_dir   "$SRC/video_frames" \
   --mask_dir  "$SRC/masks" \
