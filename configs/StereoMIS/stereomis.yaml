@@ -29,11 +29,11 @@ mapping:
   filter_depth: False
 
 tracking:
-  iter: 10
+  iter: 50         # TEST-B 2026-04-19: was 10; ×5 to compensate for reduced lr
   sample: 1024
   pc_samples: 40960
-  lr_rot: 0.001
-  lr_trans: 0.001
+  lr_rot: 0.0001   # TEST-B 2026-04-19: was 0.001; ÷10 to match GT motion scale (0.2mm/frame)
+  lr_trans: 0.0001 # TEST-B 2026-04-19: was 0.001; ÷10 to match GT motion scale
   ignore_edge_W: 1
   ignore_edge_H: 1
   iter_point: 0
