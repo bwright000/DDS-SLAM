@@ -72,6 +72,25 @@ class DDSSLAM():
         '''
         self.est_c2w_data = {}
         self.est_c2w_data_rel = {}
+        # DIAGNOSTIC: records what tracking WOULD choose even when mapping uses GT poses.
+        # Populated in tracking_render when --use_gt_mapping is active.
+        self.tracking_only_data = {}
+
+    def _override_all_poses_with_gt(self):
+        """DIAGNOSTIC: restore every est_c2w_data entry (except 0) to GT-target after BA."""
+        if 0 not in self.est_c2w_data:
+            return
+        gt_0 = self.pose_gt[0]
+        est_0 = self.est_c2w_data[0]
+        gt_0 = gt_0.to(self.device).float() if torch.is_tensor(gt_0) else torch.as_tensor(gt_0, dtype=torch.float32, device=self.device)
+        est_0 = est_0.to(self.device).float() if torch.is_tensor(est_0) else torch.as_tensor(est_0, dtype=torch.float32, device=self.device)
+        gt_0_inv = torch.inverse(gt_0)
+        for fid in list(self.est_c2w_data.keys()):
+            if fid == 0:
+                continue
+            gt_N = self.pose_gt[fid]
+            gt_N = gt_N.to(self.device).float() if torch.is_tensor(gt_N) else torch.as_tensor(gt_N, dtype=torch.float32, device=self.device)
+            self.est_c2w_data[fid] = ((gt_N @ gt_0_inv) @ est_0).detach()
         self.load_gt_pose() 
     
     def create_bounds(self):
@@ -553,10 +572,30 @@ class DDSSLAM():
         
         if self.config['tracking']['best']:
             # Use the pose with smallest loss
-            self.est_c2w_data[frame_id] = best_c2w_est.detach().clone()[0]
+            tracking_result = best_c2w_est.detach().clone()[0]
         else:
             # Use the pose after the last iteration
-            self.est_c2w_data[frame_id] = c2w_est.detach().clone()[0]
+            tracking_result = c2w_est.detach().clone()[0]
+
+        # Always record what tracking would have picked (for later evaluation)
+        self.tracking_only_data[frame_id] = tracking_result.clone()
+
+        # DIAGNOSTIC: override mapping pose with GT-derived if flag set
+        if self.config.get('diagnostic_use_gt_mapping', False):
+            gt_0 = self.pose_gt[0]
+            gt_N = self.pose_gt[frame_id]
+            est_0 = self.est_c2w_data[0]
+            if torch.is_tensor(gt_0): gt_0 = gt_0.to(self.device).float()
+            else: gt_0 = torch.as_tensor(gt_0, dtype=torch.float32, device=self.device)
+            if torch.is_tensor(gt_N): gt_N = gt_N.to(self.device).float()
+            else: gt_N = torch.as_tensor(gt_N, dtype=torch.float32, device=self.device)
+            if torch.is_tensor(est_0): est_0 = est_0.to(self.device).float()
+            else: est_0 = torch.as_tensor(est_0, dtype=torch.float32, device=self.device)
+            rel_gt_motion = gt_N @ torch.inverse(gt_0)
+            gt_target = (rel_gt_motion @ est_0).detach()
+            self.est_c2w_data[frame_id] = gt_target
+        else:
+            self.est_c2w_data[frame_id] = tracking_result
 
        # Save relative pose of non-keyframes
         if frame_id % self.config['mapping']['keyframe_every'] != 0:
@@ -671,6 +710,9 @@ class DDSSLAM():
                 if i%self.config['mapping']['map_every']==0:
                     self.global_BA(batch, i)
                     self.current_frame_mapping(batch, i)
+                    # DIAGNOSTIC: global_BA may have shifted poses during BA — restore GT
+                    if self.config.get('diagnostic_use_gt_mapping', False):
+                        self._override_all_poses_with_gt()
 
                 if i % self.config['render_freq'] == 0:
                     self.rendering(batch, i)
@@ -703,6 +745,21 @@ class DDSSLAM():
             for key, value in self.est_c2w_data.items():
                 f.write(" ".join(map(str, value.cpu().numpy().reshape(16)[:12].tolist())) + "\n")
         print('Saved estimated camera poses to {}'.format(est_c2w_data_path))
+
+        # DIAGNOSTIC: when mapping was fed GT poses, separately evaluate what
+        # tracking_render produced each frame — tells us whether tracking can
+        # find correct poses when the scene isn't biased.
+        if self.config.get('diagnostic_use_gt_mapping', False) and len(self.tracking_only_data) > 0:
+            print('\n=== DIAGNOSTIC: tracking-only pose evaluation ===')
+            # Insert frame 0 (identity-ish) so indices align
+            tracking_data = {0: self.est_c2w_data[0], **self.tracking_only_data}
+            pose_evaluation(self.pose_gt, tracking_data, 1, out_dir, i,
+                            img='pose_trackonly', name='output_tracking_only.txt')
+            track_path = os.path.join(out_dir, 'tracking_only_c2w_data.txt')
+            with open(track_path, 'w') as f:
+                for key, value in tracking_data.items():
+                    f.write(" ".join(map(str, value.cpu().numpy().reshape(16)[:12].tolist())) + "\n")
+            print('Saved tracking-only poses to {}'.format(track_path))
         #TODO: Evaluation of reconstruction
 
     def rendering(self, batch, frame_id):
@@ -773,12 +830,17 @@ if __name__ == '__main__':
                         help='input folder, this have higher priority, can overwrite the one in config file')
     parser.add_argument('--output', type=str,
                         help='output folder, this have higher priority, can overwrite the one in config file')
-    
+    parser.add_argument('--use_gt_mapping', action='store_true',
+                        help='DIAGNOSTIC: override pose used for mapping with GT-derived pose. '
+                             'Tracking still runs (its estimate is logged separately). Answers '
+                             'whether mapping lock-in is the source of drift.')
+
     args = parser.parse_args()
 
     cfg = config.load_config(args.config)
     if args.output is not None:
         cfg['data']['output'] = args.output
+    cfg['diagnostic_use_gt_mapping'] = args.use_gt_mapping
 
     print("Saving config and script...")
     save_path = os.path.join(cfg["data"]["output"], cfg['data']['exp_name'])
