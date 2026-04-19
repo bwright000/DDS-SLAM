@@ -23,6 +23,7 @@ from datasets.dataset import get_dataset
 from utils import coordinates, extract_mesh, colormap_image
 from tools.eval_ate import pose_evaluation
 from optimization.utils import at_to_transform_matrix, qt_to_transform_matrix, matrix_to_axis_angle, matrix_to_quaternion
+from debug_logger import DebugLogger
 import matplotlib.pyplot as plt
 
 save_rendering_result=True
@@ -32,12 +33,15 @@ class DDSSLAM():
         self.config = config
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.dataset = get_dataset(config)
-        
+
         self.create_bounds()
         self.create_pose_data()
         self.get_pose_representation()
         self.keyframeDatabase = self.create_kf_database(config)
         self.model = JointEncoding(config, self.bounding_box).to(self.device)
+
+        _dbg_dir = os.path.join(config['data']['output'], config['data']['exp_name'], 'debug')
+        self.debug_logger = DebugLogger(_dbg_dir)
     
     def seed_everything(self, seed):
         random.seed(seed)
@@ -221,6 +225,36 @@ class DDSSLAM():
         # First frame will always be a keyframe
         self.keyframeDatabase.add_keyframe(batch, filter_depth=self.config['mapping']['filter_depth'])
         print('First frame mapping done')
+
+        # Debug log — frame 0
+        try:
+            _dvalid = ((batch['depth'] > 0) & (batch['depth'] < self.config['cam']['depth_trunc'])).float().mean().item()
+            _dmean = batch['depth'][batch['depth'] > 0].mean().item() if (batch['depth'] > 0).any() else 0.0
+            self.debug_logger.log_tracking(
+                frame_id=0,
+                est_c2w=self.est_c2w_data[0],
+                gt_c2w=self.pose_gt[0],
+                is_keyframe=True,
+                init_c2w=self.est_c2w_data[0],  # identity init = final (first-frame)
+                tracking_iters_used=n_iters,
+                tracking_iters_config=n_iters,
+                best_loss=loss.item(),
+                last_loss=loss.item(),
+                loss_components={
+                    'rgb': ret['rgb_loss'].item() if ret.get('rgb_loss') is not None else None,
+                    'depth': ret['depth_loss'].item() if ret.get('depth_loss') is not None else None,
+                    'sdf': ret['sdf_loss'].item() if ret.get('sdf_loss') is not None else None,
+                    'fs': ret['fs_loss'].item() if ret.get('fs_loss') is not None else None,
+                    'edge_semantic': ret['edge_semantic_loss'].item() if ret.get('edge_semantic_loss') is not None else None,
+                },
+                psnr=ret['psnr'].item() if ret.get('psnr') is not None else None,
+                depth_valid_frac=_dvalid,
+                depth_mean=_dmean,
+                rgb_mean=batch['rgb'].mean().item(),
+            )
+        except Exception as _e:
+            print(f'[DebugLogger] first-frame log failed: {_e}')
+
         return ret, loss
 
     def current_frame_mapping(self, batch, cur_frame_id):
@@ -465,6 +499,9 @@ class DDSSLAM():
 
         cur_rot, cur_trans, pose_optimizer = self.get_pose_param_optim(cur_c2w[None,...], mapping=False)
 
+        # capture init pose (constant-velocity prediction) for debug
+        _init_c2w_for_log = cur_c2w.detach().clone()
+
         # Start tracking
         for i in range(self.config['tracking']['iter']):
             pose_optimizer.zero_grad()
@@ -530,7 +567,38 @@ class DDSSLAM():
             self.est_c2w_data_rel[frame_id] = delta
         
         print('Best loss: {}, Last loss{}'.format(F.l1_loss(best_c2w_est.to(self.device)[0,:3], c2w_gt[:3]).cpu().item(), F.l1_loss(c2w_est[0,:3], c2w_gt[:3]).cpu().item()))
-    
+
+        # Debug log — per-frame tracking result
+        try:
+            _tracking_iters_used = i + 1
+            _is_kf = (frame_id % self.config['mapping']['keyframe_every'] == 0)
+            _dvalid = ((batch['depth'] > 0) & (batch['depth'] < self.config['cam']['depth_trunc'])).float().mean().item()
+            _dmean = batch['depth'][batch['depth'] > 0].mean().item() if (batch['depth'] > 0).any() else 0.0
+            self.debug_logger.log_tracking(
+                frame_id=frame_id,
+                est_c2w=self.est_c2w_data[frame_id],
+                gt_c2w=self.pose_gt[frame_id],
+                is_keyframe=_is_kf,
+                init_c2w=_init_c2w_for_log,
+                tracking_iters_used=_tracking_iters_used,
+                tracking_iters_config=self.config['tracking']['iter'],
+                best_loss=best_sdf_loss,
+                last_loss=loss.cpu().item(),
+                loss_components={
+                    'rgb': ret['rgb_loss'].item() if ret.get('rgb_loss') is not None else None,
+                    'depth': ret['depth_loss'].item() if ret.get('depth_loss') is not None else None,
+                    'sdf': ret['sdf_loss'].item() if ret.get('sdf_loss') is not None else None,
+                    'fs': ret['fs_loss'].item() if ret.get('fs_loss') is not None else None,
+                    'edge_semantic': ret['edge_semantic_loss'].item() if ret.get('edge_semantic_loss') is not None else None,
+                },
+                psnr=ret['psnr'].item() if ret.get('psnr') is not None else None,
+                depth_valid_frac=_dvalid,
+                depth_mean=_dmean,
+                rgb_mean=batch['rgb'].mean().item(),
+            )
+        except Exception as _e:
+            print(f'[DebugLogger] frame {frame_id} log failed: {_e}')
+
     def convert_relative_pose(self):
         poses = {}
         for i in range(len(self.est_c2w_data)):
@@ -619,6 +687,7 @@ class DDSSLAM():
                     pose_evaluation(self.pose_gt, self.est_c2w_data, 1, out_dir, i)
                     pose_evaluation(self.pose_gt, pose_relative, 1, out_dir, i, img='pose_r', name='output_relative.txt')
                     pose_evaluation(self.pose_gt_identity, self.est_c2w_data, 1, out_dir, i, img='pose_id', name='output_identity.txt')
+                    self.debug_logger.save_pose_snapshot(self.est_c2w_data, tag=f'frame_{i:05d}')
 
         model_savepath = os.path.join(self.config['data']['output'], self.config['data']['exp_name'], 'checkpoint{}.pt'.format(i))
 
