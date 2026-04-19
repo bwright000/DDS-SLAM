@@ -75,6 +75,7 @@ class DDSSLAM():
         # DIAGNOSTIC: records what tracking WOULD choose even when mapping uses GT poses.
         # Populated in tracking_render when --use_gt_mapping is active.
         self.tracking_only_data = {}
+        self.load_gt_pose()
 
     def _override_all_poses_with_gt(self):
         """DIAGNOSTIC: restore every est_c2w_data entry (except 0) to GT-target after BA."""
@@ -91,7 +92,6 @@ class DDSSLAM():
             gt_N = self.pose_gt[fid]
             gt_N = gt_N.to(self.device).float() if torch.is_tensor(gt_N) else torch.as_tensor(gt_N, dtype=torch.float32, device=self.device)
             self.est_c2w_data[fid] = ((gt_N @ gt_0_inv) @ est_0).detach()
-        self.load_gt_pose() 
     
     def create_bounds(self):
         '''
