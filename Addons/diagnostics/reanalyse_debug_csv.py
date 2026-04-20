@@ -68,20 +68,37 @@ def apply_sim(R, t, s, pts):
     return s * (R @ pts.T).T + t
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--debug_dir', required=True,
-                    help='folder containing debug_log.csv')
-    ap.add_argument('--output_csv', default=None,
-                    help='output path (default: debug_log_aligned.csv in debug_dir)')
-    args = ap.parse_args()
+def reanalyse_csv(in_csv, out_csv=None, in_place=False, verbose=True):
+    """Append alignment-aware columns to a debug_log.csv.
 
-    in_csv = os.path.join(args.debug_dir, 'debug_log.csv')
-    out_csv = args.output_csv or os.path.join(args.debug_dir, 'debug_log_aligned.csv')
+    Columns added:
+        trans_err_aligned_m, rot_err_aligned_rad   (Umeyama R+t fit)
+        trans_err_sim_m,     rot_err_sim_rad       (Umeyama R+t+s fit)
+        rpe_trans_m,         rpe_rot_rad           (body-frame RPE)
+
+    If the CSV already contains these columns (e.g. live logger), they are
+    refreshed. Returns (out_csv_path, summary_dict).
+
+    Params:
+        in_csv     : path to debug_log.csv
+        out_csv    : optional output path
+        in_place   : if True, overwrite in_csv; out_csv ignored
+        verbose    : print summary to stdout
+    """
+    if in_place:
+        out_csv = in_csv
+    elif out_csv is None:
+        out_csv = os.path.splitext(in_csv)[0] + '_aligned.csv'
 
     df = pd.read_csv(in_csv)
     N = len(df)
-    print(f'loaded {N} rows from {in_csv}')
+    if verbose:
+        print(f'loaded {N} rows from {in_csv}')
+
+    if N < 3:
+        if verbose:
+            print(f'  too few rows for alignment ({N}) — skipping')
+        return out_csv, {'n_rows': N, 'skipped': True}
 
     est_t = df[['est_tx', 'est_ty', 'est_tz']].to_numpy()
     gt_t = df[['gt_tx', 'gt_ty', 'gt_tz']].to_numpy()
@@ -140,6 +157,8 @@ def main():
     df_out['rot_err_aligned_rad'] = rot_err_rt_rad
     df_out['trans_err_sim_m'] = trans_err_sim_mm / 1000.0
     df_out['rot_err_sim_rad'] = rot_err_sim_rad
+    # If logger already wrote live rpe columns, keep its values and also
+    # overwrite with the post-hoc version (identical if logger worked correctly).
     df_out['rpe_trans_m'] = rpe_trans_m
     df_out['rpe_rot_rad'] = rpe_rot_rad
     df_out.to_csv(out_csv, index=False)
@@ -151,6 +170,21 @@ def main():
 
     raw_trans_rmse = rmse(df['trans_err_m'].to_numpy() * 1000)
     raw_rot_rmse = rmse(df['rot_err_rad'].to_numpy())
+
+    summary = {
+        'n_rows': N,
+        'raw_trans_rmse_mm': raw_trans_rmse,
+        'raw_rot_rmse_rad': raw_rot_rmse,
+        'ate_rt_trans_mm': rmse(trans_err_rt_mm),
+        'ate_sim_trans_mm': rmse(trans_err_sim_mm),
+        'rpe_trans_mm': rmse(rpe_trans_m * 1000),
+        'rpe_rot_rad': rmse(rpe_rot_rad),
+        'umeyama_scale': float(s_sim),
+        'out_csv': out_csv,
+    }
+
+    if not verbose:
+        return out_csv, summary
 
     print()
     print('Trajectory alignment summary')
@@ -171,6 +205,23 @@ def main():
     print(f'  t       = [{t_sim[0] * 1000:+.2f}, {t_sim[1] * 1000:+.2f}, {t_sim[2] * 1000:+.2f}] mm')
     print()
     print(f'wrote {out_csv}')
+
+    return out_csv, summary
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--debug_dir', required=True,
+                    help='folder containing debug_log.csv')
+    ap.add_argument('--output_csv', default=None,
+                    help='output path (default: debug_log_aligned.csv in debug_dir)')
+    ap.add_argument('--in_place', action='store_true',
+                    help='overwrite debug_log.csv in place')
+    args = ap.parse_args()
+
+    in_csv = os.path.join(args.debug_dir, 'debug_log.csv')
+    out_csv = args.output_csv or os.path.join(args.debug_dir, 'debug_log_aligned.csv')
+    reanalyse_csv(in_csv, out_csv=out_csv, in_place=args.in_place, verbose=True)
 
 
 if __name__ == '__main__':

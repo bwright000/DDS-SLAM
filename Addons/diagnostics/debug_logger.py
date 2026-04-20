@@ -15,9 +15,11 @@ All fields are optional in log_tracking() — passing None fills the cell with '
 No runtime dependency: uses only numpy + stdlib csv.
 """
 
-import os
+import atexit
 import csv
+import os
 import time
+
 import numpy as np
 import torch
 
@@ -122,6 +124,11 @@ class DebugLogger:
         self._prev_est = None
         self._prev_gt = None
         self._start = time.time()
+        self._closed = False
+        # Run reanalyse_csv on process exit so the CSV always gets
+        # trans_err_aligned_m / rpe_trans_m / scale-aware ATE columns even
+        # if close() was never called explicitly.
+        atexit.register(self._finalise)
         print(f'[DebugLogger] writing to {self.csv_path}')
 
     def log_tracking(
@@ -216,6 +223,40 @@ class DebugLogger:
         ]
         self._writer.writerow(row)
 
+    def _finalise(self):
+        """Flush CSV and append alignment-aware columns in-place.
+
+        Called automatically via atexit. Safe to call multiple times.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._csv_f.close()
+        except Exception:
+            pass
+        try:
+            from reanalyse_debug_csv import reanalyse_csv
+        except ImportError:
+            # fall back to import by absolute path (debug_logger is placed
+            # on sys.path by ddsslam.py but reanalyse_debug_csv may not be)
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                'reanalyse_debug_csv',
+                os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             'reanalyse_debug_csv.py'))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            reanalyse_csv = mod.reanalyse_csv
+        try:
+            _, summary = reanalyse_csv(self.csv_path, in_place=True, verbose=False)
+            print(f'[DebugLogger] CSV finalised: '
+                  f'ATE(R,t)={summary.get("ate_rt_trans_mm", float("nan")):.2f}mm, '
+                  f'RPE_trans={summary.get("rpe_trans_mm", float("nan")):.3f}mm/frame, '
+                  f'scale={summary.get("umeyama_scale", float("nan")):.4f}')
+        except Exception as e:
+            print(f'[DebugLogger] reanalyse failed (CSV still valid): {e}')
+
     def save_pose_snapshot(self, est_c2w_data, tag):
         """Dump all current pose estimates to npz for retrospective analysis."""
         ids = sorted(est_c2w_data.keys())
@@ -227,7 +268,5 @@ class DebugLogger:
         print(f'[DebugLogger] saved {len(ids)} poses -> {path}')
 
     def close(self):
-        try:
-            self._csv_f.close()
-        except Exception:
-            pass
+        """Finalise CSV + run alignment. Idempotent — safe to call twice."""
+        self._finalise()

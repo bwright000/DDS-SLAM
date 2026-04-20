@@ -203,12 +203,30 @@ const final_trans_err_mm = df.trans_err_m[n-1] * 1000;
 const mean_est_delta = mean(trans_delta_mm);
 const mean_gt_delta = mean(gt_delta_mm);
 
+// Aligned metrics (present only after reanalyse_csv has run — logger finalises on close)
+const has_aligned = df.trans_err_aligned_m !== undefined;
+function rmse(arr) {
+  const valid = arr.filter(v => v !== null && v !== '' && !isNaN(v));
+  if (!valid.length) return NaN;
+  return Math.sqrt(valid.reduce((a, v) => a + v * v, 0) / valid.length);
+}
+const ate_rt_mm = has_aligned ? rmse(df.trans_err_aligned_m.map(v => v * 1000)) : NaN;
+const ate_sim_mm = has_aligned ? rmse(df.trans_err_sim_m.map(v => v * 1000)) : NaN;
+const rpe_trans_mm = has_aligned ? rmse(df.rpe_trans_m.map(v => v === null || v === '' ? null : v * 1000).filter(v => v !== null)) : NaN;
+const rpe_rot_deg = has_aligned ? rmse(df.rpe_rot_rad.filter(v => v !== null && v !== '')) * 180 / Math.PI : NaN;
+
 const stats = [
   { label: 'Frames', value: n, subvalue: DATA.meta.kf_count + ' keyframes' },
   { label: 'Run duration', value: (df.wall_s[n-1] / 60).toFixed(1) + ' min' },
-  { label: 'Final raw trans err', value: final_trans_err_mm.toFixed(1) + ' mm', subvalue: 'unaligned' },
-  { label: 'Per-frame motion (est)', value: median(trans_delta_mm).toFixed(3) + ' mm', subvalue: 'median, ' + p95(trans_delta_mm).toFixed(3) + ' mm p95' },
-  { label: 'Per-frame motion (GT)', value: median(gt_delta_mm).toFixed(3) + ' mm', subvalue: 'median, ' + p95(gt_delta_mm).toFixed(3) + ' mm p95' },
+  has_aligned
+    ? { label: 'ATE (R,t) — paper', value: ate_rt_mm.toFixed(1) + ' mm', subvalue: 'Umeyama-aligned RMSE' }
+    : { label: 'Final raw trans err', value: final_trans_err_mm.toFixed(1) + ' mm', subvalue: 'unaligned — run reanalyse_csv' },
+  has_aligned
+    ? { label: 'ATE (R,t,s) — scaled', value: ate_sim_mm.toFixed(1) + ' mm', subvalue: 'with scale correction' }
+    : { label: 'Per-frame motion (est)', value: median(trans_delta_mm).toFixed(3) + ' mm', subvalue: 'median, ' + p95(trans_delta_mm).toFixed(3) + ' mm p95' },
+  has_aligned
+    ? { label: 'RPE trans / frame', value: rpe_trans_mm.toFixed(3) + ' mm', subvalue: 'alignment-invariant' }
+    : { label: 'Per-frame motion (GT)', value: median(gt_delta_mm).toFixed(3) + ' mm', subvalue: 'median, ' + p95(gt_delta_mm).toFixed(3) + ' mm p95' },
   { label: 'Motion inflation', value: (mean_est_delta / mean_gt_delta).toFixed(2) + 'x', subvalue: 'est_mean / gt_mean' },
   { label: 'Final PSNR', value: df.psnr[n-1] ? df.psnr[n-1].toFixed(2) : 'n/a', subvalue: 'mean: ' + mean(df.psnr.filter(v => v !== null && v !== '')).toFixed(2) },
   { label: 'Total time', value: df.wall_s[n-1].toFixed(0) + ' s' }
@@ -249,15 +267,49 @@ const init_trans_err_mm = df.init_trans_err_m.map(v => (v === null || v === '') 
 const rot_err_deg = df.rot_err_rad.map(v => v * 180 / Math.PI);
 const init_rot_err_deg = df.init_rot_err_rad.map(v => (v === null || v === '') ? null : v * 180 / Math.PI);
 
-Plotly.newPlot('chart-trans-err', [
-  { x: frame_ids, y: trans_err_mm, type: 'scatter', mode: 'lines', name: 'final (after tracker)', line: { color: '#f85149' } },
-  { x: frame_ids, y: init_trans_err_mm, type: 'scatter', mode: 'lines', name: 'init (before tracker)', line: { color: '#8b949e', dash: 'dash' } }
-], { ...DARK, title: 'Translation error (raw, unaligned)', xaxis: { ...DARK.xaxis, title: 'frame' }, yaxis: { ...DARK.yaxis, title: 'mm' }, height: 350 });
+// Prefer aligned columns if present (logger finalises CSV on close via reanalyse_csv)
+const trans_err_aligned_mm = has_aligned ? df.trans_err_aligned_m.map(v => v * 1000) : null;
+const rot_err_aligned_deg  = has_aligned ? df.rot_err_aligned_rad.map(v => v * 180 / Math.PI) : null;
+const rpe_trans_series_mm  = has_aligned ? df.rpe_trans_m.map(v => (v === null || v === '') ? null : v * 1000) : null;
+const rpe_rot_series_deg   = has_aligned ? df.rpe_rot_rad.map(v => (v === null || v === '') ? null : v * 180 / Math.PI) : null;
 
-Plotly.newPlot('chart-rot-err', [
-  { x: frame_ids, y: rot_err_deg, type: 'scatter', mode: 'lines', name: 'final', line: { color: '#f85149' } },
-  { x: frame_ids, y: init_rot_err_deg, type: 'scatter', mode: 'lines', name: 'init', line: { color: '#8b949e', dash: 'dash' } }
-], { ...DARK, title: 'Rotation error (raw, unaligned)', xaxis: { ...DARK.xaxis, title: 'frame' }, yaxis: { ...DARK.yaxis, title: 'deg' }, height: 350 });
+const trans_traces = has_aligned
+  ? [
+      { x: frame_ids, y: trans_err_aligned_mm, type: 'scatter', mode: 'lines', name: 'aligned (Umeyama R,t)', line: { color: '#f85149' } },
+      { x: frame_ids, y: trans_err_mm,        type: 'scatter', mode: 'lines', name: 'raw (unaligned)',      line: { color: '#8b949e', dash: 'dot' } },
+      { x: frame_ids, y: rpe_trans_series_mm, type: 'scatter', mode: 'lines', name: 'RPE (body-frame)',     line: { color: '#58a6ff' }, yaxis: 'y2' },
+    ]
+  : [
+      { x: frame_ids, y: trans_err_mm,        type: 'scatter', mode: 'lines', name: 'final (after tracker)', line: { color: '#f85149' } },
+      { x: frame_ids, y: init_trans_err_mm,   type: 'scatter', mode: 'lines', name: 'init (before tracker)', line: { color: '#8b949e', dash: 'dash' } },
+    ];
+const trans_title = has_aligned
+  ? 'Translation error — aligned (red) + raw (grey) + RPE per frame (blue, right axis)'
+  : 'Translation error (raw, unaligned — run reanalyse_csv for aligned view)';
+const trans_layout = { ...DARK, title: trans_title, xaxis: { ...DARK.xaxis, title: 'frame' }, yaxis: { ...DARK.yaxis, title: 'mm' }, height: 350 };
+if (has_aligned) {
+  trans_layout.yaxis2 = { title: 'RPE mm/frame', overlaying: 'y', side: 'right', color: '#58a6ff', gridcolor: '#21262d' };
+}
+Plotly.newPlot('chart-trans-err', trans_traces, trans_layout);
+
+const rot_traces = has_aligned
+  ? [
+      { x: frame_ids, y: rot_err_aligned_deg, type: 'scatter', mode: 'lines', name: 'aligned (Umeyama R,t)', line: { color: '#f85149' } },
+      { x: frame_ids, y: rot_err_deg,         type: 'scatter', mode: 'lines', name: 'raw (unaligned)',      line: { color: '#8b949e', dash: 'dot' } },
+      { x: frame_ids, y: rpe_rot_series_deg,  type: 'scatter', mode: 'lines', name: 'RPE (body-frame)',     line: { color: '#58a6ff' }, yaxis: 'y2' },
+    ]
+  : [
+      { x: frame_ids, y: rot_err_deg,         type: 'scatter', mode: 'lines', name: 'final', line: { color: '#f85149' } },
+      { x: frame_ids, y: init_rot_err_deg,    type: 'scatter', mode: 'lines', name: 'init',  line: { color: '#8b949e', dash: 'dash' } },
+    ];
+const rot_title = has_aligned
+  ? 'Rotation error — aligned (red) + raw (grey) + RPE per frame (blue, right axis)'
+  : 'Rotation error (raw, unaligned — run reanalyse_csv for aligned view)';
+const rot_layout = { ...DARK, title: rot_title, xaxis: { ...DARK.xaxis, title: 'frame' }, yaxis: { ...DARK.yaxis, title: 'deg' }, height: 350 };
+if (has_aligned) {
+  rot_layout.yaxis2 = { title: 'RPE deg/frame', overlaying: 'y', side: 'right', color: '#58a6ff', gridcolor: '#21262d' };
+}
+Plotly.newPlot('chart-rot-err', rot_traces, rot_layout);
 
 // Per-axis (delta from frame 0, to remove coord baseline)
 const est_x0 = df.est_tx[0], est_y0 = df.est_ty[0], est_z0 = df.est_tz[0];
