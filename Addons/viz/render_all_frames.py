@@ -65,7 +65,7 @@ def main():
     model = JointEncoding(config, bounding_box).to(device)
 
     # Load checkpoint
-    ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    ckpt = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(ckpt['model'])
     est_c2w_data = ckpt['pose']
     model.eval()
