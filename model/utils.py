@@ -165,15 +165,34 @@ def get_sdf_loss(z_vals, target_d, predicted_sdf, truncation, loss_type=None, gr
     Return:
         fs_loss: torch.Tensor, (1,)
         sdf_loss: torch.Tensor, (1,)
-        eikonal_loss: torch.Tensor, (1,)
+        [eikonal_loss]: torch.Tensor, (1,)   # only if grad is not None
+        stats: dict of mask / range diagnostics for the current batch
     '''
     front_mask, sdf_mask, fs_weight, sdf_weight = get_masks(z_vals, target_d, truncation)
 
     fs_loss = compute_loss(predicted_sdf * front_mask, torch.ones_like(predicted_sdf) * front_mask, loss_type) * fs_weight
     sdf_loss = compute_loss((z_vals + predicted_sdf * truncation) * sdf_mask, target_d * sdf_mask, loss_type) * sdf_weight
 
+    with torch.no_grad():
+        n_fs = int(front_mask.sum().item())
+        n_sdf = int(sdf_mask.sum().item())
+        n_total = int(front_mask.numel())
+        n_back = n_total - n_fs - n_sdf
+        d_valid = target_d[target_d > 0]
+        stats = {
+            'n_fs_samples': n_fs,
+            'n_sdf_samples': n_sdf,
+            'n_back_samples': n_back,
+            'n_total_samples': n_total,
+            'zval_min': float(z_vals.min().item()),
+            'zval_max': float(z_vals.max().item()),
+            'target_d_min': float(d_valid.min().item()) if d_valid.numel() > 0 else 0.0,
+            'target_d_max': float(d_valid.max().item()) if d_valid.numel() > 0 else 0.0,
+            'target_d_n_valid': int(d_valid.numel()),
+        }
+
     if grad is not None:
         eikonal_loss = (((grad.norm(2, dim=-1) - 1) ** 2) * sdf_mask / sdf_mask.sum()).sum()
-        return fs_loss, sdf_loss, eikonal_loss
+        return fs_loss, sdf_loss, eikonal_loss, stats
 
-    return fs_loss, sdf_loss
+    return fs_loss, sdf_loss, stats

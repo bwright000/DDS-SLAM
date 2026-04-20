@@ -91,9 +91,13 @@ COLUMNS = [
     # tracking optimization stats
     'tracking_iters_used', 'tracking_iters_config',
     'best_loss', 'last_loss',
-    # loss components (at best pose)
+    # loss components at the BEST-iter pose (the one stored in est_c2w_data)
     'loss_rgb', 'loss_depth', 'loss_sdf', 'loss_fs', 'loss_edge_semantic',
     'psnr',
+    # SDF/FS mask diagnostics at BEST-iter pose — explains why loss_sdf/loss_fs may be 0
+    'n_fs_samples', 'n_sdf_samples', 'n_back_samples', 'n_total_samples',
+    'zval_min', 'zval_max',
+    'target_d_min', 'target_d_max', 'target_d_n_valid',
     # input stats
     'depth_valid_frac', 'depth_mean', 'rgb_mean',
     # delta from previous frame (computed by logger)
@@ -131,6 +135,7 @@ class DebugLogger:
         depth_valid_frac=None,
         depth_mean=None,
         rgb_mean=None,
+        sdf_stats=None,
     ):
         """Append one row to debug_log.csv with everything known about this frame."""
         est_t = _pose_components(est_c2w)
@@ -149,6 +154,7 @@ class DebugLogger:
         self._prev_est = _to_np(est_c2w).copy()
 
         lc = loss_components or {}
+        st = sdf_stats or {}
         row = [
             f'{time.time() - self._start:.3f}',
             int(frame_id),
@@ -167,6 +173,15 @@ class DebugLogger:
             lc.get('fs', ''),
             lc.get('edge_semantic', ''),
             '' if psnr is None else float(psnr),
+            st.get('n_fs_samples', ''),
+            st.get('n_sdf_samples', ''),
+            st.get('n_back_samples', ''),
+            st.get('n_total_samples', ''),
+            st.get('zval_min', ''),
+            st.get('zval_max', ''),
+            st.get('target_d_min', ''),
+            st.get('target_d_max', ''),
+            st.get('target_d_n_valid', ''),
             '' if depth_valid_frac is None else float(depth_valid_frac),
             '' if depth_mean is None else float(depth_mean),
             '' if rgb_mean is None else float(rgb_mean),

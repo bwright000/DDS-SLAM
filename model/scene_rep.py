@@ -408,10 +408,11 @@ class JointEncoding(nn.Module):
             z_vals = rend_dict['z_vals']  # [N_rand, N_samples + N_importance]
             sdf = rend_dict['raw'][..., -1]  # [N_rand, N_samples + N_importance]
             truncation = self.config['training']['trunc'] * self.config['data']['sc_factor']
-            fs_loss, sdf_loss = get_sdf_loss(z_vals, target_d, sdf, truncation, 'l2', grad=None)
+            fs_loss, sdf_loss, sdf_stats = get_sdf_loss(z_vals, target_d, sdf, truncation, 'l2', grad=None)
 
         else:
             rgb_loss = depth_loss = edge_loss = edge_semantic_loss = sdf_loss = fs_loss = psnr = None
+            sdf_stats = None
 
         ret = {
             "rgb": rend_dict["rgb"],
@@ -423,6 +424,7 @@ class JointEncoding(nn.Module):
             "sdf_loss": sdf_loss,
             "fs_loss": fs_loss,
             "psnr": psnr,
+            "sdf_stats": sdf_stats,
         }
 
         return ret

@@ -1,4 +1,5 @@
 import os
+import sys
 #os.environ['TCNN_CUDA_ARCHITECTURES'] = '86'
 #import wandb
 # Package imports
@@ -23,6 +24,11 @@ from datasets.dataset import get_dataset
 from utils import coordinates, extract_mesh, colormap_image
 from tools.eval_ate import pose_evaluation
 from optimization.utils import at_to_transform_matrix, qt_to_transform_matrix, matrix_to_axis_angle, matrix_to_quaternion
+
+# Debug logger lives at Addons/diagnostics/ — add to path before import
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Addons', 'diagnostics'))
+from debug_logger import DebugLogger
+
 import matplotlib.pyplot as plt
 
 save_rendering_result=True
@@ -38,7 +44,10 @@ class DDSSLAM():
         self.get_pose_representation()
         self.keyframeDatabase = self.create_kf_database(config)
         self.model = JointEncoding(config, self.bounding_box).to(self.device)
-    
+
+        _dbg_dir = os.path.join(config['data']['output'], config['data']['exp_name'], 'debug')
+        self.debug_logger = DebugLogger(_dbg_dir)
+
     def seed_everything(self, seed):
         random.seed(seed)
         os.environ['PYTHONHASHSEED'] = str(seed)
@@ -141,6 +150,30 @@ class DDSSLAM():
         indice = torch.tensor(indice)
         return indice
 
+    def _snapshot_ret(self, ret):
+        '''
+        Extract scalar diagnostics from a tracking-iteration `ret` dict so we
+        can keep them around without pinning the autograd graph. Used to log
+        the BEST-iter loss components (matches the pose stored in est_c2w_data).
+        '''
+        def _f(x):
+            if x is None:
+                return None
+            try:
+                return float(x.item())
+            except AttributeError:
+                return float(x)
+        snap = {
+            'rgb_loss':           _f(ret.get('rgb_loss')),
+            'depth_loss':         _f(ret.get('depth_loss')),
+            'sdf_loss':           _f(ret.get('sdf_loss')),
+            'fs_loss':            _f(ret.get('fs_loss')),
+            'edge_semantic_loss': _f(ret.get('edge_semantic_loss')),
+            'psnr':               _f(ret.get('psnr')),
+            'sdf_stats':          dict(ret['sdf_stats']) if ret.get('sdf_stats') else None,
+        }
+        return snap
+
     def get_loss_from_ret(
             self,
             ret,
@@ -221,6 +254,38 @@ class DDSSLAM():
         # First frame will always be a keyframe
         self.keyframeDatabase.add_keyframe(batch, filter_depth=self.config['mapping']['filter_depth'])
         print('First frame mapping done')
+
+        # Debug log — frame 0 (no tracking iters, use last mapping ret)
+        try:
+            _dvalid = ((batch['depth'] > 0) & (batch['depth'] < self.config['cam']['depth_trunc'])).float().mean().item()
+            _dmean = batch['depth'][batch['depth'] > 0].mean().item() if (batch['depth'] > 0).any() else 0.0
+            snap = self._snapshot_ret(ret)
+            self.debug_logger.log_tracking(
+                frame_id=0,
+                est_c2w=self.est_c2w_data[0],
+                gt_c2w=self.pose_gt[0],
+                is_keyframe=True,
+                init_c2w=self.est_c2w_data[0],
+                tracking_iters_used=n_iters,
+                tracking_iters_config=n_iters,
+                best_loss=loss.item(),
+                last_loss=loss.item(),
+                loss_components={
+                    'rgb': snap.get('rgb_loss'),
+                    'depth': snap.get('depth_loss'),
+                    'sdf': snap.get('sdf_loss'),
+                    'fs': snap.get('fs_loss'),
+                    'edge_semantic': snap.get('edge_semantic_loss'),
+                },
+                psnr=snap.get('psnr'),
+                depth_valid_frac=_dvalid,
+                depth_mean=_dmean,
+                rgb_mean=batch['rgb'].mean().item(),
+                sdf_stats=snap.get('sdf_stats'),
+            )
+        except Exception as _e:
+            print(f'[DebugLogger] first-frame log failed: {_e}')
+
         return ret, loss
 
     def current_frame_mapping(self, batch, cur_frame_id):
@@ -458,12 +523,16 @@ class DDSSLAM():
 
         indice = None
         best_sdf_loss = None
+        best_ret = None
         thresh=0
 
         iW = self.config['tracking']['ignore_edge_W']
         iH = self.config['tracking']['ignore_edge_H']
 
         cur_rot, cur_trans, pose_optimizer = self.get_pose_param_optim(cur_c2w[None,...], mapping=False)
+
+        # capture init pose (const-velocity prediction) for debug
+        _init_c2w_for_log = cur_c2w.detach().clone()
 
         # Start tracking
         for i in range(self.config['tracking']['iter']):
@@ -473,7 +542,7 @@ class DDSSLAM():
             # Note here we fix the sampled points for optimisation
             if indice is None:
                 indice = self.select_samples(self.dataset.H-iH*2, self.dataset.W-iW*2, self.config['tracking']['sample'])
-            
+
                 # Slicing
                 indice_h, indice_w = indice % (self.dataset.H - iH * 2), indice // (self.dataset.H - iH * 2)
                 rays_d_cam = batch['direction'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
@@ -484,18 +553,19 @@ class DDSSLAM():
 
             rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1)
-            
+
             if self.config['dynamic']:
                 cur_id = (frame_id*torch.ones(rays_o.shape[0]))
                 timestamps = cur_id.to(self.device) #/ self.n_imgs #*2 -1
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
-                
+
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, border=border, UseBorder=True)
             loss = self.get_loss_from_ret(ret)
 
             if best_sdf_loss is None:
                 best_sdf_loss = loss.cpu().item()
                 best_c2w_est = c2w_est.detach()
+                best_ret = self._snapshot_ret(ret)
 
             with torch.no_grad():
                 c2w_est = self.matrix_from_tensor(cur_rot, cur_trans)
@@ -503,17 +573,18 @@ class DDSSLAM():
                 if loss.cpu().item() < best_sdf_loss:
                     best_sdf_loss = loss.cpu().item()
                     best_c2w_est = c2w_est.detach()
+                    best_ret = self._snapshot_ret(ret)
                     thresh = 0
                 else:
                     thresh +=1
-            
+
             if thresh >self.config['tracking']['wait_iters']:
                 break
 
             loss.backward()
 
             pose_optimizer.step()
-        
+
         if self.config['tracking']['best']:
             # Use the pose with smallest loss
             self.est_c2w_data[frame_id] = best_c2w_est.detach().clone()[0]
@@ -528,8 +599,41 @@ class DDSSLAM():
             c2w_key = self.est_c2w_data[kf_frame_id]
             delta = self.est_c2w_data[frame_id] @ c2w_key.float().inverse()
             self.est_c2w_data_rel[frame_id] = delta
-        
+
         print('Best loss: {}, Last loss{}'.format(F.l1_loss(best_c2w_est.to(self.device)[0,:3], c2w_gt[:3]).cpu().item(), F.l1_loss(c2w_est[0,:3], c2w_gt[:3]).cpu().item()))
+
+        # Debug log — per-frame tracking result, using loss components at the BEST-iter pose
+        try:
+            _tracking_iters_used = i + 1
+            _is_kf = (frame_id % self.config['mapping']['keyframe_every'] == 0)
+            _dvalid = ((batch['depth'] > 0) & (batch['depth'] < self.config['cam']['depth_trunc'])).float().mean().item()
+            _dmean = batch['depth'][batch['depth'] > 0].mean().item() if (batch['depth'] > 0).any() else 0.0
+            br = best_ret if best_ret is not None else {}
+            self.debug_logger.log_tracking(
+                frame_id=frame_id,
+                est_c2w=self.est_c2w_data[frame_id],
+                gt_c2w=self.pose_gt[frame_id],
+                is_keyframe=_is_kf,
+                init_c2w=_init_c2w_for_log,
+                tracking_iters_used=_tracking_iters_used,
+                tracking_iters_config=self.config['tracking']['iter'],
+                best_loss=best_sdf_loss,
+                last_loss=loss.cpu().item(),
+                loss_components={
+                    'rgb': br.get('rgb_loss'),
+                    'depth': br.get('depth_loss'),
+                    'sdf': br.get('sdf_loss'),
+                    'fs': br.get('fs_loss'),
+                    'edge_semantic': br.get('edge_semantic_loss'),
+                },
+                psnr=br.get('psnr'),
+                depth_valid_frac=_dvalid,
+                depth_mean=_dmean,
+                rgb_mean=batch['rgb'].mean().item(),
+                sdf_stats=br.get('sdf_stats'),
+            )
+        except Exception as _e:
+            print(f'[DebugLogger] frame {frame_id} log failed: {_e}')
     
     def convert_relative_pose(self):
         poses = {}
@@ -619,6 +723,7 @@ class DDSSLAM():
                     pose_evaluation(self.pose_gt, self.est_c2w_data, 1, out_dir, i)
                     pose_evaluation(self.pose_gt, pose_relative, 1, out_dir, i, img='pose_r', name='output_relative.txt')
                     pose_evaluation(self.pose_gt_identity, self.est_c2w_data, 1, out_dir, i, img='pose_id', name='output_identity.txt')
+                    self.debug_logger.save_pose_snapshot(self.est_c2w_data, tag=f'frame_{i:05d}')
 
         model_savepath = os.path.join(self.config['data']['output'], self.config['data']['exp_name'], 'checkpoint{}.pt'.format(i))
 
