@@ -24,8 +24,9 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
-# Ensure DDS-SLAM root is on path (works when called from root or Addons/)
-root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Ensure DDS-SLAM root is on path. File lives at Addons/viz/render_all_frames.py,
+# so repo root is three levels up.
+root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if root not in sys.path:
     sys.path.insert(0, root)
 
