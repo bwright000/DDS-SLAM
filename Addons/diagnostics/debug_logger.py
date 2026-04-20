@@ -84,10 +84,14 @@ COLUMNS = [
     'est_tx', 'est_ty', 'est_tz', 'est_qw', 'est_qx', 'est_qy', 'est_qz',
     # GT pose
     'gt_tx', 'gt_ty', 'gt_tz', 'gt_qw', 'gt_qx', 'gt_qy', 'gt_qz',
-    # errors
+    # RAW per-frame error — ONLY meaningful if est and GT share a coord frame.
+    # On StereoMIS they don't (dataset.py y/z-flips est but not GT). Use
+    # rpe_trans_m / rpe_rot_rad below, or reanalyse_debug_csv.py for aligned ATE.
     'trans_err_m', 'rot_err_rad',
-    # const-velocity initialization error (before tracking optimization)
+    # const-velocity initialization error (same caveat as trans_err_m)
     'init_trans_err_m', 'init_rot_err_rad',
+    # Relative pose error (body-frame, Sturm TUM RGB-D convention) — alignment-invariant
+    'rpe_trans_m', 'rpe_rot_rad',
     # tracking optimization stats
     'tracking_iters_used', 'tracking_iters_config',
     'best_loss', 'last_loss',
@@ -100,7 +104,7 @@ COLUMNS = [
     'target_d_min', 'target_d_max', 'target_d_n_valid',
     # input stats
     'depth_valid_frac', 'depth_mean', 'rgb_mean',
-    # delta from previous frame (computed by logger)
+    # delta from previous frame (est only; for RPE use rpe_* columns)
     'trans_delta_m', 'rot_delta_rad',
 ]
 
@@ -116,6 +120,7 @@ class DebugLogger:
         self._poses_dir = os.path.join(out_dir, 'pose_snapshots')
         os.makedirs(self._poses_dir, exist_ok=True)
         self._prev_est = None
+        self._prev_gt = None
         self._start = time.time()
         print(f'[DebugLogger] writing to {self.csv_path}')
 
@@ -151,7 +156,28 @@ class DebugLogger:
         if self._prev_est is not None:
             a, b = _pose_error(est_c2w, self._prev_est)
             trans_delta, rot_delta = a, b
+
+        # RPE (body-frame, alignment-invariant): E = (gt_prev^-1 gt_curr)^-1 (est_prev^-1 est_curr)
+        rpe_trans, rpe_rot = ('', '')
+        if self._prev_est is not None and self._prev_gt is not None:
+            ec = _to_np(est_c2w)
+            ep = _to_np(self._prev_est)
+            gc = _to_np(gt_c2w)
+            gp = _to_np(self._prev_gt)
+            eR_p, eR_c = ep[:3, :3], ec[:3, :3]
+            gR_p, gR_c = gp[:3, :3], gc[:3, :3]
+            dR_est = eR_p.T @ eR_c
+            dt_est = eR_p.T @ (ec[:3, 3] - ep[:3, 3])
+            dR_gt = gR_p.T @ gR_c
+            dt_gt = gR_p.T @ (gc[:3, 3] - gp[:3, 3])
+            E_R = dR_gt.T @ dR_est
+            E_t = dR_gt.T @ (dt_est - dt_gt)
+            rpe_trans = float(np.linalg.norm(E_t))
+            ct = np.clip((np.trace(E_R) - 1) / 2, -1.0, 1.0)
+            rpe_rot = float(np.arccos(ct))
+
         self._prev_est = _to_np(est_c2w).copy()
+        self._prev_gt = _to_np(gt_c2w).copy()
 
         lc = loss_components or {}
         st = sdf_stats or {}
@@ -163,6 +189,7 @@ class DebugLogger:
             *gt_t,
             trans_err, rot_err,
             init_trans_err, init_rot_err,
+            rpe_trans, rpe_rot,
             '' if tracking_iters_used is None else int(tracking_iters_used),
             '' if tracking_iters_config is None else int(tracking_iters_config),
             '' if best_loss is None else float(best_loss),
