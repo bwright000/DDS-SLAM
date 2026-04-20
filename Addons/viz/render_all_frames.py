@@ -60,8 +60,9 @@ def main():
     dataset = get_dataset(config)
     data_loader = DataLoader(dataset, num_workers=0)
 
-    # Load model
-    model = JointEncoding(config, dataset.H, dataset.W, device).to(device)
+    # Load model — must match ddsslam.py:40 signature JointEncoding(config, bounding_box)
+    bounding_box = torch.from_numpy(np.array(config['mapping']['bound'])).to(device)
+    model = JointEncoding(config, bounding_box).to(device)
 
     # Load checkpoint
     ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
