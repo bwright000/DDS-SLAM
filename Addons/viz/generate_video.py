@@ -261,6 +261,12 @@ def main():
     parser.add_argument('--trajectory_gt', type=str, help='Path to groundtruth.txt')
     parser.add_argument('--gt_frame_slice', type=str, default=None,
                         help='Slice GT frames, e.g. "-4000:" or ":4000"')
+    parser.add_argument('--input_frame_slice', type=str, default=None,
+                        help='Slice ALL input-image dirs (rgb/depth/seg) with same Python slice, '
+                             'e.g. "-4000:" for back-4000, "::2" for masks at half rate')
+    parser.add_argument('--seg_frame_slice', type=str, default=None,
+                        help='Override slice just for segmentation (StereoMIS masks run at half rate). '
+                             'e.g. "-2000:"')
 
     # Output
     parser.add_argument('--output', type=str, default='output_video.mp4', help='Output video path')
@@ -276,12 +282,18 @@ def main():
 
     panel_size = (args.panel_height, args.panel_width)
 
+    def _slice(paths, expr):
+        if not expr:
+            return paths
+        return eval(f"paths[{expr}]")
+
     # Discover panels
     panels = []
     panel_data = {}
 
     if args.rgb_input_dir:
         paths = sorted(glob.glob(os.path.join(args.rgb_input_dir, args.rgb_input_pattern)))
+        paths = _slice(paths, args.input_frame_slice)
         if paths:
             panels.append('Input RGB')
             panel_data['Input RGB'] = paths
@@ -299,13 +311,15 @@ def main():
 
     if args.depth_input_dir:
         paths = load_sorted_images(args.depth_input_dir)
+        paths = _slice(paths, args.input_frame_slice)
         if paths:
             panels.append('Input Depth')
             panel_data['Input Depth'] = paths
             print(f"Input Depth: {len(paths)} frames")
 
     if args.depth_output_dir:
-        paths = load_sorted_images(args.depth_output_dir)
+        paths = sorted(p for p in glob.glob(os.path.join(args.depth_output_dir, '*.png'))
+                       if '_gt' not in os.path.basename(p))
         if paths:
             panels.append('Output Depth')
             panel_data['Output Depth'] = paths
@@ -313,6 +327,7 @@ def main():
 
     if args.seg_dir:
         paths = load_sorted_images(args.seg_dir)
+        paths = _slice(paths, args.seg_frame_slice or args.input_frame_slice)
         if paths:
             panels.append('Segmentation')
             panel_data['Segmentation'] = paths
@@ -331,13 +346,15 @@ def main():
         print("ERROR: No panels specified. Provide at least one input.")
         return
 
-    # Determine frame count
-    frame_counts = []
+    # Determine master frame count. Use the LONGEST panel so shorter panels
+    # (e.g. half-rate StereoMIS masks) are remapped via stride rather than
+    # truncating the whole video down to the shortest panel's length.
+    panel_lengths = {}
     for k, v in panel_data.items():
         if k == 'Seg Overlay':
-            frame_counts.append(min(len(v[0]), len(v[1])))
+            panel_lengths[k] = min(len(v[0]), len(v[1]))
         else:
-            frame_counts.append(len(v))
+            panel_lengths[k] = len(v)
     if args.trajectory_est:
         est_xyz, gt_xyz = load_trajectory(args.trajectory_est, args.trajectory_gt)
         if args.gt_frame_slice:
@@ -351,9 +368,14 @@ def main():
                         gt_all.append(vals[1:4])
             gt_all = np.array(gt_all)
             gt_xyz = eval(f"gt_all[{args.gt_frame_slice}]")[:len(est_xyz)]
-        frame_counts.append(len(est_xyz))
+        panel_lengths['Trajectory'] = len(est_xyz)
 
-    n_frames = min(frame_counts) if frame_counts else 0
+    n_frames = max(panel_lengths.values()) if panel_lengths else 0
+    # Per-panel stride: panels shorter than master advance slower (floor-div mapping).
+    panel_stride = {k: max(1, n_frames // max(1, L)) for k, L in panel_lengths.items()}
+    for k, s in panel_stride.items():
+        if s > 1:
+            print(f"  panel '{k}': {panel_lengths[k]} frames -> stride {s} against master {n_frames}")
     if args.max_frames:
         n_frames = min(n_frames, args.max_frames)
     print(f"\nTotal frames: {n_frames}, Panels: {len(panels)}")
@@ -403,7 +425,7 @@ def main():
             elif panel_name == 'Seg Overlay':
                 rgb_paths, seg_paths = panel_data[panel_name]
                 ri = min(frame_idx, len(rgb_paths) - 1)
-                si = min(frame_idx, len(seg_paths) - 1)
+                si = min(frame_idx // panel_stride.get('Segmentation', 1), len(seg_paths) - 1)
                 rgb = load_image(rgb_paths[ri], panel_size)
                 seg = load_image(seg_paths[si], panel_size)
                 if rgb is not None and seg is not None:
@@ -412,11 +434,11 @@ def main():
                     img = rgb if rgb is not None else seg
             elif panel_name in ('Input Depth', 'Output Depth'):
                 paths = panel_data[panel_name]
-                idx = min(frame_idx, len(paths) - 1)
+                idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
                 img = colormap_depth(paths[idx], panel_size, args.png_depth_scale)
             else:
                 paths = panel_data[panel_name]
-                idx = min(frame_idx, len(paths) - 1)
+                idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
                 img = load_image(paths[idx], panel_size)
 
             if img is not None:
