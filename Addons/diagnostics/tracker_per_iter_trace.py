@@ -157,13 +157,14 @@ def main():
         est_prev_np = est_prev.cpu().numpy()
         gt_prev_np = (dataset.gt_poses[frame_id - 1] if dataset.gt_poses is not None else saved_poses[frame_id - 1]).cpu().numpy()
 
-        # fix sampled ray indices ONCE per frame (matches tracking_render)
+        # fix sampled ray indices ONCE per frame (matches tracking_render at ddsslam.py:475)
         import random
-        indice = random.sample(range(dataset.H * dataset.W - (iH * 2) * (dataset.W - iW * 2)),
-                               sample_N)
+        H_eff = dataset.H - iH * 2
+        W_eff = dataset.W - iW * 2
+        indice = random.sample(range(H_eff * W_eff), sample_N)
         indice = torch.tensor(indice)
-        indice_h = indice % (dataset.H - iH * 2)
-        indice_w = indice // (dataset.H - iH * 2)
+        indice_h = indice % H_eff
+        indice_w = indice // H_eff
 
         target_s = rgb_hw3[iH:-iH, iW:-iW, :][indice_h, indice_w, :]
         target_d = depth_hw[iH:-iH, iW:-iW][indice_h, indice_w].unsqueeze(-1)
