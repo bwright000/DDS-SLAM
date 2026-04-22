@@ -79,8 +79,12 @@ cam:
   png_depth_scale: 10000
   crop_edge: 0
   near: 0
-  far: 1
-  depth_trunc: 10.
+  # Run 2 tuning: CRCD scene tops out at ~0.14 m depth; uniform sampling to
+  # far=1 m was wasting 30/32 samples in empty space (verified zval_max=1.0
+  # in apr22 debug CSV). depth_trunc likewise never fired on close-range
+  # scene; tightening rejects RAFT outliers.
+  far: 0.1
+  depth_trunc: 0.1
 
 training:
   rgb_weight: 5.0
@@ -96,12 +100,16 @@ training:
   smooth_vox: 0.1
   smooth_margin: 0.05
   n_samples_d: 32
-  range_d: 0.05
+  # Run 2 tuning: scene depth range is only 25 mm (18-43 mm), so
+  # range_d 0.05 -> 0.005 keeps the 16 surface-adjacent samples inside
+  # the scene. trunc 0.1 -> 0.005 activates fs_loss (was dead, n_fs=0
+  # on 267/271 frames in apr22 CSV) and tightens SDF band.
+  range_d: 0.005
   n_range_d: 16
   n_importance: 0
   perturb: 1
   white_bkgd: False
-  trunc: 0.1
+  trunc: 0.005
   rot_rep: 'axis_angle'
   rgb_missing: 0.05
 
