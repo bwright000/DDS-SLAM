@@ -11,9 +11,7 @@ data:
 mapping:
   sample: 2048
   first_mesh: True
-  # Run 3B (2026-04-22): iters 10 -> 50 to give the finer hash grid
-  # (hash_size=19, voxel_sdf=0.001) more per-pass iterations to converge.
-  iters: 50
+  iters: 10
   cur_frame_iters: 0
   lr_embed: 0.01
   lr_decoder: 0.01
@@ -22,9 +20,7 @@ mapping:
   keyframe_every: 5
   map_every: 5
   n_pixels: 0.05
-  # Run 3B: first_iters 200 -> 1000 (5x more) to build a strong canonical
-  # scene at frame 0 before the tracker starts relying on it.
-  first_iters: 1000
+  first_iters: 200
   optim_cur: True
   min_pixels_cur: 1024
   map_accum_step: 1
@@ -48,12 +44,13 @@ tracking:
 grid:
   enc: 'HashGrid'
   tcnn_encoding: True
-  # Run 3B (2026-04-22): re-apply Run 2 capacity (8x hash + 2x finest voxel)
-  # AND bump training budget (mapping.first_iters 200 -> 1000, mapping.iters
-  # 10 -> 50) to give the bigger grid enough iters to converge. Tests whether
-  # capacity bump is net-good when training budget scales with it.
-  hash_size: 19
+  hash_size: 16
   voxel_color: 0.08
+  # Run 4 (2026-04-22): voxel_sdf 0.002 -> 0.001 in isolation (only this
+  # change vs Run 1). Doubles linear scene resolution (12 -> 25 voxels
+  # across 25 mm CRCD scene). Leaves hash_size, all sampling params, and
+  # training budget at Run 1 defaults. Tests whether finer representation
+  # alone helps when the sampling-regulariser params are preserved.
   voxel_sdf: 0.001
   oneGrid: True
   resolution: [64, 64, 64, 100]
@@ -83,12 +80,8 @@ cam:
   png_depth_scale: 10000
   crop_edge: 0
   near: 0
-  # Run 2 tuning: CRCD scene tops out at ~0.14 m depth; uniform sampling to
-  # far=1 m was wasting 30/32 samples in empty space (verified zval_max=1.0
-  # in apr22 debug CSV). depth_trunc likewise never fired on close-range
-  # scene; tightening rejects RAFT outliers.
-  far: 0.1
-  depth_trunc: 0.1
+  far: 1
+  depth_trunc: 10.
 
 training:
   rgb_weight: 5.0
@@ -104,16 +97,12 @@ training:
   smooth_vox: 0.1
   smooth_margin: 0.05
   n_samples_d: 32
-  # Run 2 tuning: scene depth range is only 25 mm (18-43 mm), so
-  # range_d 0.05 -> 0.005 keeps the 16 surface-adjacent samples inside
-  # the scene. trunc 0.1 -> 0.005 activates fs_loss (was dead, n_fs=0
-  # on 267/271 frames in apr22 CSV) and tightens SDF band.
-  range_d: 0.005
+  range_d: 0.05
   n_range_d: 16
   n_importance: 0
   perturb: 1
   white_bkgd: False
-  trunc: 0.005
+  trunc: 0.1
   rot_rep: 'axis_angle'
   rgb_missing: 0.05
 
