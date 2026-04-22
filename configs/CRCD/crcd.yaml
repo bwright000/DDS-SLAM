@@ -44,13 +44,14 @@ tracking:
 grid:
   enc: 'HashGrid'
   tcnn_encoding: True
-  # Run 2 tuning (2026-04-22): scale grid to CRCD close-range scene (25 mm).
-  # hash_size 16 -> 19 gives 8x hash capacity (65K -> 524K entries/level);
-  # voxel_sdf 0.002 -> 0.001 halves finest voxel (12 -> 25 voxels across
-  # scene). Cells-per-entry ratio stays at 20x (same collision pressure).
-  hash_size: 19
+  # Run 3A (2026-04-22): reverted to stock capacity after Run 2's catastrophic
+  # PSNR collapse (11.94 dB). The 8x hash + 2x finest-voxel bump outpaced the
+  # 200 first_iters training budget -> under-converged canonical scene with
+  # visible black holes in render. 4 sampling-param changes (far/depth_trunc/
+  # trunc/range_d) kept.
+  hash_size: 16
   voxel_color: 0.08
-  voxel_sdf: 0.001
+  voxel_sdf: 0.002
   oneGrid: True
   resolution: [64, 64, 64, 100]
 
