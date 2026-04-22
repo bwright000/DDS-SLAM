@@ -91,8 +91,14 @@ def load_poses(snippet_dir):
     return lines
 
 
-def rasterize_masks(results_json, output_dir, n_frames):
-    """Convert SAM3 COCO polygon masks to multi-class PNG images."""
+def rasterize_masks(results_json, output_dir, n_frames, calib=None, rectify=True):
+    """Convert SAM3 COCO polygon masks to multi-class PNG images.
+
+    SAM3 polygons are in the ORIGINAL (un-rectified) left-camera frame. The
+    RGB+depth pipeline rectifies via cv2.remap, so masks must be remapped
+    with the same left-camera map to stay geometrically aligned. Without
+    this step, masks appear shifted against the rectified RGB/depth.
+    """
     with open(results_json) as f:
         data = json.load(f)
 
@@ -108,9 +114,15 @@ def rasterize_masks(results_json, output_dir, n_frames):
     masks_dir = os.path.join(output_dir, "masks")
     os.makedirs(masks_dir, exist_ok=True)
 
-    n_masks = (n_frames + 1) // 2
+    do_rectify = rectify and calib is not None and "map_left_x" in calib and "map_left_y" in calib
+
+    # Write one mask per frame (1:1). StereoMIS historically used half-rate
+    # annotations, but SAM3 produces a label for every frame — don't throw
+    # the other half away. The dataset loader (datasets/dataset.py) auto-
+    # detects 1:1 vs 2:1 from the mask-to-image count ratio.
+    n_masks = n_frames
     for mask_idx in range(n_masks):
-        frame_idx = min(mask_idx * 2, len(frames) - 1)
+        frame_idx = min(mask_idx, len(frames) - 1)
         frame = frames[frame_idx]
         canvas = np.zeros((H, W, 3), dtype=np.uint8)
 
@@ -125,6 +137,11 @@ def rasterize_masks(results_json, output_dir, n_frames):
                 for polygon in inst.get("segmentation", []):
                     pts = np.array(polygon, dtype=np.int32).reshape(-1, 2)
                     cv2.fillPoly(canvas, [pts], color)
+
+        if do_rectify:
+            canvas = cv2.remap(canvas, calib["map_left_x"], calib["map_left_y"],
+                               interpolation=cv2.INTER_NEAREST,
+                               borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
 
         cv2.imwrite(os.path.join(masks_dir, f"{mask_idx + 1:06d}.png"), canvas)
 
@@ -182,10 +199,11 @@ def process_snippet(snippet_dir, calib, output_dir, results_json=None, rectify=T
         f.write(f"bf: {calib['bf']}\n")
         f.write(f"img_size: (1280, 720)\n")
 
-    # Rasterize semantic masks
+    # Rasterize semantic masks (rectify with same map as RGB/depth when rectify=True)
     n_masks = 0
     if results_json and os.path.exists(results_json):
-        n_masks = rasterize_masks(results_json, output_dir, n)
+        n_masks = rasterize_masks(results_json, output_dir, n,
+                                  calib=calib, rectify=rectify)
 
     return n
 

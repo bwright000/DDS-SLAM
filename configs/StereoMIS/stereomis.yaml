@@ -68,10 +68,6 @@ decoder:
 cam:
   H: 512
   W: 640
-  # Intrinsics fixed 2026-04-15: yaml had raw-scaled (pre-rectification) values
-  # but video_frames/ + depth/ are both in the RECTIFIED frame (computed via
-  # cv2.stereoRectify in preprocess_stereomis.py and used in flow2depth).
-  # Mismatch was ~8% on fx/fy/cx, causing systematic warp.
   # Rectified values computed locally from StereoCalibration.ini.
   fx: 560.0741
   fy: 560.0741

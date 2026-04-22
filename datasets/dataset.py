@@ -142,7 +142,12 @@ class StereoMISDataset(BaseDataset):
     def __getitem__(self, index):
         color_path = self.img_files[index]
         depth_path = self.depth_paths[index]
-        semantic_path = self.semantic_paths[index//2]
+        # Masks may be 1:1 (CRCD / SAM3-style, one label per frame) or half-rate
+        # (StereoMIS native, one mask per two frames). Pick pairing by ratio.
+        if len(self.semantic_paths) >= len(self.img_files):
+            semantic_path = self.semantic_paths[min(index, len(self.semantic_paths) - 1)]
+        else:
+            semantic_path = self.semantic_paths[index // 2]
 
         color_data = cv2.imread(color_path)
         if '.png' in depth_path:

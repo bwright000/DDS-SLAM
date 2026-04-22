@@ -259,6 +259,9 @@ def main():
     parser.add_argument('--seg_dir', type=str, help='Directory of segmentation masks')
     parser.add_argument('--trajectory_est', type=str, help='Path to est_c2w_data.txt')
     parser.add_argument('--trajectory_gt', type=str, help='Path to groundtruth.txt')
+    parser.add_argument('--trajectory_raw', action='store_true',
+                        help='Add a second trajectory panel with NO Horn alignment '
+                             '(shows raw est vs GT in their native coord frames)')
     parser.add_argument('--gt_frame_slice', type=str, default=None,
                         help='Slice GT frames, e.g. "-4000:" or ":4000"')
     parser.add_argument('--input_frame_slice', type=str, default=None,
@@ -339,8 +342,11 @@ def main():
                 print(f"Seg Overlay: enabled (rendered RGB + seg)")
 
     if args.trajectory_est:
-        panels.append('Trajectory')
-        print("Trajectory: enabled")
+        panels.append('Trajectory (Horn-aligned)')
+        print("Trajectory: enabled (Horn-aligned)")
+        if args.trajectory_raw:
+            panels.append('Trajectory Raw')
+            print("Trajectory Raw: enabled (no alignment)")
 
     if not panels:
         print("ERROR: No panels specified. Provide at least one input.")
@@ -368,7 +374,9 @@ def main():
                         gt_all.append(vals[1:4])
             gt_all = np.array(gt_all)
             gt_xyz = eval(f"gt_all[{args.gt_frame_slice}]")[:len(est_xyz)]
-        panel_lengths['Trajectory'] = len(est_xyz)
+        panel_lengths['Trajectory (Horn-aligned)'] = len(est_xyz)
+        if args.trajectory_raw:
+            panel_lengths['Trajectory Raw'] = len(est_xyz)
 
     n_frames = max(panel_lengths.values()) if panel_lengths else 0
     # Per-panel stride: panels shorter than master advance slower (floor-div mapping).
@@ -417,11 +425,18 @@ def main():
             y0 = row * panel_size[0]
             x0 = col * panel_size[1]
 
-            if panel_name == 'Trajectory':
+            if panel_name == 'Trajectory (Horn-aligned)':
                 pose_idx = min(frame_idx * trajectory_stride, len(est_xyz) - 1)
                 azim = frame_idx * args.rotation_speed
                 img = render_trajectory_frame(est_xyz, gt_xyz, pose_idx,
-                                              panel_size, azim_offset=azim)
+                                              panel_size, azim_offset=azim,
+                                              align=True)
+            elif panel_name == 'Trajectory Raw':
+                pose_idx = min(frame_idx * trajectory_stride, len(est_xyz) - 1)
+                azim = frame_idx * args.rotation_speed
+                img = render_trajectory_frame(est_xyz, gt_xyz, pose_idx,
+                                              panel_size, azim_offset=azim,
+                                              align=False)
             elif panel_name == 'Seg Overlay':
                 rgb_paths, seg_paths = panel_data[panel_name]
                 ri = min(frame_idx, len(rgb_paths) - 1)

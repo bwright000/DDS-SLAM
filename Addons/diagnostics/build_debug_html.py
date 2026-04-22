@@ -28,6 +28,37 @@ import numpy as np
 import pandas as pd
 
 
+def umeyama(src, dst, with_scale=False):
+    """Umeyama (1991) least-squares similarity/rigid alignment.
+
+    src, dst: (N, 3). Returns (R, t, s) such that  s*R @ src.T + t ≈ dst.T.
+    When with_scale=False, s is fixed to 1 (pure rigid SE(3) alignment).
+    """
+    src = np.asarray(src, dtype=np.float64)
+    dst = np.asarray(dst, dtype=np.float64)
+    mu_s = src.mean(axis=0)
+    mu_d = dst.mean(axis=0)
+    sc = src - mu_s
+    dc = dst - mu_d
+    cov = dc.T @ sc / len(src)
+    U, S, Vt = np.linalg.svd(cov)
+    D = np.eye(3)
+    if np.linalg.det(U) * np.linalg.det(Vt) < 0:
+        D[2, 2] = -1
+    R = U @ D @ Vt
+    if with_scale:
+        var_s = (sc ** 2).sum() / len(src)
+        s = (S * np.diag(D)).sum() / var_s if var_s > 0 else 1.0
+    else:
+        s = 1.0
+    t = mu_d - s * R @ mu_s
+    return R, t, s
+
+
+def apply_sim3(src, R, t, s):
+    return (s * (R @ np.asarray(src).T)).T + t
+
+
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -82,7 +113,17 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <section class="section" id="sec-trajectory">
   <h2>Trajectory</h2>
-  <p class="note">Est vs GT in 3D and projected to XY. Raw values (no Umeyama alignment). Hover to see frame_id.</p>
+  <div class="note" style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px;line-height:1.5;">
+    <b>How SLAM trajectories are compared (TUM / Sturm convention):</b>
+    <ol style="margin:6px 0 0 20px;padding:0;">
+      <li>SLAM outputs trajectory in its own arbitrary frame (first pose = identity).</li>
+      <li>Evaluation script runs <b>Horn / Umeyama alignment</b> against GT before computing ATE.</li>
+      <li>Alignment finds the best rigid <code>(R, t)</code> (for SE(3) ATE) or <code>(R, t, s)</code> (for Sim(3) ATE) that maps est &rarr; GT.</li>
+      <li>ATE is computed on the <b>aligned</b> trajectory.</li>
+    </ol>
+    <div style="margin-top:8px;">All plots show: <span style="color:#56d364">GT</span>, <span style="color:#8b949e">raw est (unaligned)</span>, <span style="color:#f85149">SE(3)-aligned est (R+t)</span>, <span style="color:#ffa657">Sim(3)-aligned est (R+t+s)</span>. The ATE in the Overview tab is computed on the SE(3)-aligned curve. Note: raw est is ~3&times; larger in extent than GT, so the aligned curves may appear compressed in the 3D view.</div>
+    <div id="align-stats" style="margin-top:8px;color:#8b949e;"></div>
+  </div>
   <div class="chart"><div id="chart-traj-3d" style="height: 600px;"></div></div>
   <div class="two-col">
     <div class="chart"><div id="chart-traj-xy"></div></div>
@@ -247,19 +288,59 @@ Plotly.newPlot('chart-motion-inflation', [
 ], { ...DARK, title: 'Per-frame motion magnitude (est vs GT)', xaxis: { ...DARK.xaxis, title: 'frame' }, yaxis: { ...DARK.yaxis, title: 'mm' }, height: 350 });
 
 // ========= TRAJECTORY =========
-Plotly.newPlot('chart-traj-3d', [
-  { x: df.est_tx, y: df.est_ty, z: df.est_tz, type: 'scatter3d', mode: 'lines', name: 'est', line: { color: '#f85149', width: 3 } },
-  { x: df.gt_tx,  y: df.gt_ty,  z: df.gt_tz,  type: 'scatter3d', mode: 'lines', name: 'GT',  line: { color: '#56d364', width: 3 } }
-], { ...DARK, title: 'Trajectory 3D', scene: { xaxis: { color: '#c9d1d9' }, yaxis: { color: '#c9d1d9' }, zaxis: { color: '#c9d1d9' }, bgcolor: '#0d1117' }, height: 580 });
+const aligned = DATA.aligned;   // { est_rt: {x,y,z}, est_rts: {x,y,z}, stats: {...} } or null
+const hasAlign = aligned && aligned.est_rt;
 
-Plotly.newPlot('chart-traj-xy', [
-  { x: df.est_tx, y: df.est_ty, type: 'scatter', mode: 'lines', name: 'est', line: { color: '#f85149' } },
-  { x: df.gt_tx,  y: df.gt_ty,  type: 'scatter', mode: 'lines', name: 'GT',  line: { color: '#56d364' } }
-], { ...DARK, title: 'XY projection', xaxis: { ...DARK.xaxis, title: 'x (m)', scaleanchor: 'y', scaleratio: 1 }, yaxis: { ...DARK.yaxis, title: 'y (m)' }, height: 400 });
-Plotly.newPlot('chart-traj-xz', [
-  { x: df.est_tx, y: df.est_tz, type: 'scatter', mode: 'lines', name: 'est', line: { color: '#f85149' } },
-  { x: df.gt_tx,  y: df.gt_tz,  type: 'scatter', mode: 'lines', name: 'GT',  line: { color: '#56d364' } }
-], { ...DARK, title: 'XZ projection', xaxis: { ...DARK.xaxis, title: 'x (m)' }, yaxis: { ...DARK.yaxis, title: 'z (m)' }, height: 400 });
+const traj3d = [
+  { x: df.gt_tx,  y: df.gt_ty,  z: df.gt_tz,  type: 'scatter3d', mode: 'lines',
+    name: 'GT',                     line: { color: '#56d364', width: 4, dash: 'solid' } },
+  { x: df.est_tx, y: df.est_ty, z: df.est_tz, type: 'scatter3d', mode: 'lines',
+    name: 'est (raw)',              line: { color: '#8b949e', width: 2, dash: 'solid' } },
+];
+if (hasAlign) {
+  traj3d.push({ x: aligned.est_rt.x,  y: aligned.est_rt.y,  z: aligned.est_rt.z,
+    type: 'scatter3d', mode: 'lines', name: 'est (R,t aligned)',
+    line: { color: '#f85149', width: 3, dash: 'solid' } });
+  traj3d.push({ x: aligned.est_rts.x, y: aligned.est_rts.y, z: aligned.est_rts.z,
+    type: 'scatter3d', mode: 'lines', name: 'est (R,t,s aligned)',
+    line: { color: '#ffa657', width: 3, dash: 'solid' } });
+}
+Plotly.newPlot('chart-traj-3d', traj3d,
+  { ...DARK, title: 'Trajectory 3D',
+    scene: { xaxis: { color: '#c9d1d9' }, yaxis: { color: '#c9d1d9' }, zaxis: { color: '#c9d1d9' }, bgcolor: '#0d1117' },
+    height: 580 });
+
+function projTraces(ax1, ax2) {
+  const out = [
+    { x: df['gt_t' + ax1],  y: df['gt_t' + ax2],  type: 'scatter', mode: 'lines',
+      name: 'GT',        line: { color: '#56d364', width: 3, dash: 'solid' } },
+    { x: df['est_t' + ax1], y: df['est_t' + ax2], type: 'scatter', mode: 'lines',
+      name: 'est (raw)', line: { color: '#8b949e' } },
+  ];
+  if (hasAlign) {
+    out.push({ x: aligned.est_rt[ax1],  y: aligned.est_rt[ax2],  type: 'scatter', mode: 'lines',
+               name: 'est (R,t)',   line: { color: '#f85149' } });
+    out.push({ x: aligned.est_rts[ax1], y: aligned.est_rts[ax2], type: 'scatter', mode: 'lines',
+               name: 'est (R,t,s)', line: { color: '#ffa657' } });
+  }
+  return out;
+}
+Plotly.newPlot('chart-traj-xy', projTraces('x', 'y'),
+  { ...DARK, title: 'XY projection', xaxis: { ...DARK.xaxis, title: 'x (m)', scaleanchor: 'y', scaleratio: 1 },
+    yaxis: { ...DARK.yaxis, title: 'y (m)' }, height: 400 });
+Plotly.newPlot('chart-traj-xz', projTraces('x', 'z'),
+  { ...DARK, title: 'XZ projection', xaxis: { ...DARK.xaxis, title: 'x (m)' },
+    yaxis: { ...DARK.yaxis, title: 'z (m)' }, height: 400 });
+
+if (hasAlign) {
+  const st = aligned.stats;
+  document.getElementById('align-stats').innerHTML =
+    '<b>Alignment fit:</b> ' +
+    'Sim(3) scale s = ' + st.scale.toFixed(4) +
+    '  (&rarr; est trajectory is ' + (1 / st.scale).toFixed(2) + '&times; too large)' +
+    '  &bull; ATE(R,t) = '   + (st.ate_rt_m  * 1000).toFixed(2) + ' mm' +
+    '  &bull; ATE(R,t,s) = ' + (st.ate_rts_m * 1000).toFixed(2) + ' mm';
+}
 
 // ========= ERRORS =========
 const trans_err_mm = df.trans_err_m.map(v => v * 1000);
@@ -493,7 +574,13 @@ def main():
     snap_dir = debug_dir / 'pose_snapshots'
     if snap_dir.exists():
         for f in sorted(snap_dir.glob('poses_frame_*.npz')):
-            tag = int(f.stem.replace('poses_frame_', ''))
+            # Strip 'poses_frame_' prefix; Co-SLAM writes 'poses_frame_NNN_final.npz'
+            # for its last snapshot, so keep only the numeric head.
+            stem = f.stem.replace('poses_frame_', '')
+            digits = ''.join(c for c in stem.split('_')[0] if c.isdigit())
+            if not digits:
+                continue
+            tag = int(digits)
             d = np.load(f)
             snaps[tag] = {
                 'ids': d['ids'].astype(int).tolist(),
@@ -503,9 +590,38 @@ def main():
     else:
         print(f'no pose_snapshots/ dir — snapshots section will be empty')
 
+    # --- Umeyama alignments (SE(3) and Sim(3)) for the trajectory plots ---
+    aligned_payload = None
+    try:
+        est = df[['est_tx', 'est_ty', 'est_tz']].to_numpy(dtype=np.float64)
+        gt  = df[['gt_tx',  'gt_ty',  'gt_tz' ]].to_numpy(dtype=np.float64)
+        valid = np.isfinite(est).all(1) & np.isfinite(gt).all(1)
+        if valid.sum() >= 3:
+            est_v, gt_v = est[valid], gt[valid]
+            R_rt, t_rt, _      = umeyama(est_v, gt_v, with_scale=False)
+            R_rts, t_rts, s_rts = umeyama(est_v, gt_v, with_scale=True)
+
+            est_rt  = apply_sim3(est, R_rt,  t_rt,  1.0)
+            est_rts = apply_sim3(est, R_rts, t_rts, s_rts)
+
+            resid_rt  = np.linalg.norm(est_rt[valid]  - gt_v, axis=1)
+            resid_rts = np.linalg.norm(est_rts[valid] - gt_v, axis=1)
+            ate_rt  = float(np.sqrt((resid_rt  ** 2).mean()))
+            ate_rts = float(np.sqrt((resid_rts ** 2).mean()))
+
+            aligned_payload = {
+                'est_rt':  {'x': est_rt[:, 0].tolist(),  'y': est_rt[:, 1].tolist(),  'z': est_rt[:, 2].tolist()},
+                'est_rts': {'x': est_rts[:, 0].tolist(), 'y': est_rts[:, 1].tolist(), 'z': est_rts[:, 2].tolist()},
+                'stats': {'scale': float(s_rts), 'ate_rt_m': ate_rt, 'ate_rts_m': ate_rts},
+            }
+            print(f'alignment: scale={s_rts:.4f}  ATE(R,t)={ate_rt*1000:.2f}mm  ATE(R,t,s)={ate_rts*1000:.2f}mm')
+    except Exception as e:
+        print(f'alignment failed: {e}')
+
     data = {
         'df': df.to_dict(orient='list'),
         'snapshots': snaps,
+        'aligned': aligned_payload,
         'meta': {
             'n_frames': int(len(df)),
             'kf_count': int(df['is_keyframe'].sum()),
