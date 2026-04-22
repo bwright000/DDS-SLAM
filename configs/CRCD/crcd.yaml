@@ -44,9 +44,13 @@ tracking:
 grid:
   enc: 'HashGrid'
   tcnn_encoding: True
-  hash_size: 16
+  # Run 2 tuning (2026-04-22): scale grid to CRCD close-range scene (25 mm).
+  # hash_size 16 -> 19 gives 8x hash capacity (65K -> 524K entries/level);
+  # voxel_sdf 0.002 -> 0.001 halves finest voxel (12 -> 25 voxels across
+  # scene). Cells-per-entry ratio stays at 20x (same collision pressure).
+  hash_size: 19
   voxel_color: 0.08
-  voxel_sdf: 0.002
+  voxel_sdf: 0.001
   oneGrid: True
   resolution: [64, 64, 64, 100]
 
@@ -75,15 +79,8 @@ cam:
   png_depth_scale: 10000
   crop_edge: 0
   near: 0
-  # far was 1.0 — 22x too large for CRCD scene (max depth ~0.14 m). Tightening
-  # to 0.1 m concentrates the 32 uniform ray samples inside the actual scene
-  # region instead of spreading 30/32 of them into empty space. Verified
-  # against apr22 CRCD debug_log.csv (zval_max=1.000, target_d_max=0.045).
-  far: 0.1
-  # depth_trunc was 10 — never filtered anything on a scene whose valid depth
-  # tops out at ~0.15 m. Tightening to 0.1 m rejects any RAFT-Stereo outliers
-  # beyond the real scene.
-  depth_trunc: 0.1
+  far: 1
+  depth_trunc: 10.
 
 training:
   rgb_weight: 5.0
@@ -99,18 +96,12 @@ training:
   smooth_vox: 0.1
   smooth_margin: 0.05
   n_samples_d: 32
-  # range_d was 0.05 — 2x the scene depth variation (25 mm). Scaling to
-  # 0.005 keeps all n_range_d=16 adaptive samples inside the actual scene.
-  range_d: 0.005
+  range_d: 0.05
   n_range_d: 16
   n_importance: 0
   perturb: 1
   white_bkgd: False
-  # trunc was 0.1 (100 mm) — 4x larger than mean scene depth (26 mm). Free-
-  # space loss was dead on 267/271 frames (n_fs_samples=0 in apr22 debug).
-  # Scaling to 0.005 activates fs_loss and gives SDF supervision geometric
-  # meaning (surface band ±5 mm, not ±100 mm).
-  trunc: 0.005
+  trunc: 0.1
   rot_rep: 'axis_angle'
   rgb_missing: 0.05
 
