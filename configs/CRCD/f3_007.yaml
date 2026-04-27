@@ -1,0 +1,11 @@
+inherit_from: configs/CRCD/crcd.yaml
+timesteps: 300
+mapping:
+  bound: [[-0.108,0.133],[-0.046,0.197],[0.747,0.99]]
+  marching_cubes_bound: [[-0.108,0.133],[-0.046,0.197],[0.747,0.99]]
+
+data:
+  datadir: data/CRCD/F3_007
+  trainskip: 1
+  output: output/CRCD/F3_007
+  exp_name: demo

@@ -91,52 +91,121 @@ def load_poses(snippet_dir):
     return lines
 
 
-def rasterize_masks(results_json, output_dir, n_frames, calib=None, rectify=True):
-    """Convert SAM3 COCO polygon masks to multi-class PNG images.
+COLOR_MAP = {
+    "liver": (0, 255, 0),
+    "gallbladder": (255, 0, 0),
+    "tool": (0, 0, 255),
+}
 
-    SAM3 polygons are in the ORIGINAL (un-rectified) left-camera frame. The
-    RGB+depth pipeline rectifies via cv2.remap, so masks must be remapped
-    with the same left-camera map to stay geometrically aligned. Without
-    this step, masks appear shifted against the rectified RGB/depth.
+
+def _load_legacy_masks(data, frame_pairs):
+    """Legacy SAM3 results format: data["frames"][i]["masks"][cat]["segmentation"].
+
+    Returns (H, W, per_frame_polys) where per_frame_polys is a list (length =
+    len(frame_pairs)) of {cat_lower: [poly1, poly2, ...]} in pixel-space.
     """
-    with open(results_json) as f:
-        data = json.load(f)
-
     frames = data["frames"]
     H, W = frames[0]["height"], frames[0]["width"]
 
-    COLOR_MAP = {
-        "liver": (0, 255, 0),
-        "gallbladder": (255, 0, 0),
-        "tool": (0, 0, 255),
-    }
+    per_frame = []
+    n = min(len(frame_pairs), len(frames))
+    for i in range(n):
+        polys = {}
+        for cat in COLOR_MAP:
+            cat_data = frames[i]["masks"].get(cat)
+            if not isinstance(cat_data, list):
+                continue
+            cat_polys = []
+            for inst in cat_data:
+                cat_polys.extend(inst.get("segmentation", []))
+            if cat_polys:
+                polys[cat] = cat_polys
+        per_frame.append(polys)
+    # pad if frames < frame_pairs (use last frame)
+    while len(per_frame) < len(frame_pairs):
+        per_frame.append(per_frame[-1] if per_frame else {})
+    return H, W, per_frame
+
+
+def _load_coco_masks(data, frame_pairs):
+    """COCO format: data["images"], data["annotations"], data["categories"].
+
+    image_id is the video-global frame index (matches frame_NNNNNN.webp).
+    Multiple annotations per image (one per category). segmentation is
+    [[x1,y1,...], ...] (multiple polygons = disconnected components).
+    """
+    H = data["images"][0]["height"]
+    W = data["images"][0]["width"]
+    cat_id_to_name = {c["id"]: c["name"].lower() for c in data["categories"]}
+
+    # group annotations by image_id, then category-name
+    by_image = {}
+    for a in data["annotations"]:
+        cat_name = cat_id_to_name.get(a["category_id"], "")
+        if cat_name not in COLOR_MAP:
+            continue
+        seg = a["segmentation"]
+        if not isinstance(seg, list) or not seg:
+            continue
+        by_image.setdefault(a["image_id"], {}).setdefault(cat_name, []).extend(seg)
+
+    # Map snippet frame index → image_id by extracting digits from the left filename
+    import re
+    per_frame = []
+    for left_path, _ in frame_pairs:
+        base = os.path.splitext(os.path.basename(left_path))[0]
+        digits = re.sub(r"[^0-9]", "", base)
+        image_id = int(digits) if digits else -1
+        per_frame.append(by_image.get(image_id, {}))
+    return H, W, per_frame
+
+
+def rasterize_masks(annotations_json, output_dir, frame_pairs, calib=None, rectify=True):
+    """Rasterize semantic polygons to multi-class PNG masks, one per frame.
+
+    Auto-detects legacy SAM3 results format vs COCO format. Polygons are in
+    the ORIGINAL (un-rectified) left-camera frame; we apply the same left-
+    camera rectification map as RGB/depth so masks stay geometrically aligned.
+
+    Args:
+        annotations_json: path to either snippet_NNN_results.json (legacy) or
+            snippet_annotations.json (COCO).
+        output_dir: where {output_dir}/masks/NNNNNN.png will be written.
+        frame_pairs: list of (left_path, right_path) ordered to match the
+            output frame numbering. len(masks) == len(frame_pairs) (1:1).
+        calib: dict with map_left_x/y (optional).
+        rectify: if True and calib provided, apply remap to the canvas.
+    """
+    with open(annotations_json) as f:
+        data = json.load(f)
+
+    if "annotations" in data and "images" in data and "categories" in data:
+        fmt = "coco"
+        H, W, per_frame = _load_coco_masks(data, frame_pairs)
+    elif "frames" in data:
+        fmt = "legacy"
+        H, W, per_frame = _load_legacy_masks(data, frame_pairs)
+    else:
+        raise ValueError(f"Unrecognised annotation format in {annotations_json}; "
+                         f"keys={list(data.keys())[:5]}")
 
     masks_dir = os.path.join(output_dir, "masks")
     os.makedirs(masks_dir, exist_ok=True)
 
     do_rectify = rectify and calib is not None and "map_left_x" in calib and "map_left_y" in calib
 
-    # Write one mask per frame (1:1). StereoMIS historically used half-rate
-    # annotations, but SAM3 produces a label for every frame — don't throw
-    # the other half away. The dataset loader (datasets/dataset.py) auto-
-    # detects 1:1 vs 2:1 from the mask-to-image count ratio.
-    n_masks = n_frames
+    # 1:1 mask:frame mapping. dataset.py auto-detects ratio at load time.
+    n_masks = len(frame_pairs)
+    n_with_any = 0
     for mask_idx in range(n_masks):
-        frame_idx = min(mask_idx, len(frames) - 1)
-        frame = frames[frame_idx]
+        polys = per_frame[mask_idx]
         canvas = np.zeros((H, W, 3), dtype=np.uint8)
-
-        for cat in ["liver", "gallbladder", "tool"]:
-            if cat not in frame["masks"]:
-                continue
-            instances = frame["masks"][cat]
-            if not isinstance(instances, list):
-                continue
-            color = COLOR_MAP.get(cat, (128, 128, 128))
-            for inst in instances:
-                for polygon in inst.get("segmentation", []):
-                    pts = np.array(polygon, dtype=np.int32).reshape(-1, 2)
-                    cv2.fillPoly(canvas, [pts], color)
+        if polys:
+            n_with_any += 1
+        for cat, color in COLOR_MAP.items():
+            for polygon in polys.get(cat, []):
+                pts = np.array(polygon, dtype=np.int32).reshape(-1, 2)
+                cv2.fillPoly(canvas, [pts], color)
 
         if do_rectify:
             canvas = cv2.remap(canvas, calib["map_left_x"], calib["map_left_y"],
@@ -145,6 +214,7 @@ def rasterize_masks(results_json, output_dir, n_frames, calib=None, rectify=True
 
         cv2.imwrite(os.path.join(masks_dir, f"{mask_idx + 1:06d}.png"), canvas)
 
+    print(f"  masks: format={fmt}  total={n_masks}  with-content={n_with_any}  empty={n_masks - n_with_any}")
     return n_masks
 
 
@@ -199,10 +269,14 @@ def process_snippet(snippet_dir, calib, output_dir, results_json=None, rectify=T
         f.write(f"bf: {calib['bf']}\n")
         f.write(f"img_size: (1280, 720)\n")
 
-    # Rasterize semantic masks (rectify with same map as RGB/depth when rectify=True)
+    # Rasterize semantic masks. Auto-prefer COCO-format snippet_annotations.json
+    # over legacy SAM3 results JSON if both are present in the snippet dir.
     n_masks = 0
+    coco_local = os.path.join(snippet_dir, "snippet_annotations.json")
+    if os.path.isfile(coco_local) and not (results_json and os.path.exists(results_json)):
+        results_json = coco_local
     if results_json and os.path.exists(results_json):
-        n_masks = rasterize_masks(results_json, output_dir, n,
+        n_masks = rasterize_masks(results_json, output_dir, pairs,
                                   calib=calib, rectify=rectify)
 
     return n
@@ -214,13 +288,19 @@ def main():
 
     # Batch mode
     parser.add_argument("--batch", action="store_true",
-                        help="Process all snippets with SAM3 results")
+                        help="Process all snippets found under segments_root")
     parser.add_argument("--segments_root", type=str,
-                        help="Root of CRCD segments (contains C_1/, E_3/, F_3/)")
-    parser.add_argument("--results_root", type=str,
-                        help="Root of SAM3 results (contains C_1/, E_3/, F_3/)")
+                        help="Root of CRCD segments (contains C_1/, E_3/, F_3/, ...)")
+    parser.add_argument("--results_root", type=str, default=None,
+                        help="Optional separate root of legacy SAM3 results "
+                             "(snippet_NNN_results.json). If snippet_annotations.json "
+                             "is in the snippet dir it takes priority.")
     parser.add_argument("--output_root", type=str,
                         help="Output root directory (e.g., data/CRCD)")
+    parser.add_argument("--snippets", type=str, default=None,
+                        help="Comma-separated list of EP/snippet selectors, e.g. "
+                             "'E_3/snippet_001,F_3/snippet_007'. Default: all snippets "
+                             "found under segments_root.")
 
     # Single mode
     parser.add_argument("--snippet_dir", type=str,
@@ -243,37 +323,59 @@ def main():
           f"baseline={calib['baseline_mm']:.4f}mm")
 
     if args.batch:
-        if not all([args.segments_root, args.results_root, args.output_root]):
-            parser.error("--batch requires --segments_root, --results_root, --output_root")
+        if not all([args.segments_root, args.output_root]):
+            parser.error("--batch requires --segments_root and --output_root")
 
-        # Discover all snippets with SAM3 results
+        # Build the list of (ep, snp) pairs to process
+        targets = []
+        if args.snippets:
+            for sel in args.snippets.split(","):
+                sel = sel.strip().strip("/")
+                if "/" not in sel:
+                    print(f"  skip {sel} (expected EP/snippet_NNN)")
+                    continue
+                ep, snp = sel.split("/", 1)
+                targets.append((ep, snp))
+        else:
+            for ep in sorted(os.listdir(args.segments_root)):
+                ep_segments = os.path.join(args.segments_root, ep)
+                if not os.path.isdir(ep_segments):
+                    continue
+                for snp in sorted(os.listdir(ep_segments)):
+                    if snp.startswith("snippet_") and "tbd" not in snp.lower():
+                        targets.append((ep, snp))
+
         summary = []
-        for ep in sorted(os.listdir(args.results_root)):
-            ep_results = os.path.join(args.results_root, ep)
-            ep_segments = os.path.join(args.segments_root, ep)
-            if not os.path.isdir(ep_results) or not os.path.isdir(ep_segments):
-                continue
+        for ep, snp in targets:
+            snippet_dir = os.path.join(args.segments_root, ep, snp)
+            if not os.path.isdir(snippet_dir):
+                print(f"  skip {ep}/{snp} (missing dir)"); continue
 
-            for snp in sorted(os.listdir(ep_results)):
-                if not snp.startswith("snippet_"):
-                    continue
-                results_json = os.path.join(ep_results, snp, f"{snp}_results.json")
-                snippet_dir = os.path.join(ep_segments, snp)
-                if not os.path.exists(results_json) or not os.path.isdir(snippet_dir):
-                    continue
+            # Annotation source: snippet_annotations.json (COCO) takes priority
+            # over legacy {snp}_results.json from --results_root.
+            ann_json = None
+            coco_local = os.path.join(snippet_dir, "snippet_annotations.json")
+            if os.path.isfile(coco_local):
+                ann_json = coco_local
+            elif args.results_root:
+                legacy = os.path.join(args.results_root, ep, snp, f"{snp}_results.json")
+                if os.path.isfile(legacy):
+                    ann_json = legacy
+            # ann_json may still be None — process_snippet handles that gracefully.
 
-                # e.g., C_1/snippet_001 -> C1_001
-                ep_short = ep.replace("_", "")
-                snp_num = snp.replace("snippet_", "")
-                out_name = f"{ep_short}_{snp_num}"
-                output_dir = os.path.join(args.output_root, out_name)
+            # e.g., E_3/snippet_001 -> E3_001
+            ep_short = ep.replace("_", "")
+            snp_num = snp.replace("snippet_", "")
+            out_name = f"{ep_short}_{snp_num}"
+            output_dir = os.path.join(args.output_root, out_name)
 
-                print(f"\n{'='*60}")
-                print(f"Processing {ep}/{snp} -> {out_name}")
-                n = process_snippet(snippet_dir, calib, output_dir,
-                                    results_json, rectify=not args.no_rectify)
-                summary.append((out_name, n))
-                print(f"  {n} frames processed")
+            print(f"\n{'='*60}")
+            print(f"Processing {ep}/{snp} -> {out_name}")
+            print(f"  annotations: {ann_json or '<none>'}")
+            n = process_snippet(snippet_dir, calib, output_dir,
+                                ann_json, rectify=not args.no_rectify)
+            summary.append((out_name, n))
+            print(f"  {n} frames processed")
 
         # Print summary
         print(f"\n{'='*60}")
