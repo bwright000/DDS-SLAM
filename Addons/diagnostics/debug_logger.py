@@ -97,6 +97,12 @@ COLUMNS = [
     # tracking optimization stats
     'tracking_iters_used', 'tracking_iters_config',
     'best_loss', 'last_loss',
+    # iter-0 loss (post-const-velocity init, BEFORE any optimiser step). Required
+    # to disambiguate the agent's 3 tracker-failure signatures: const-speed-only
+    # (loss_iter0 ~= last_loss), sub-SNR descent (loss drops but Pearson stays 0),
+    # lr-bound descent (loss drops + Pearson rises with lower lr). See memory:
+    # project_pearson_decoupling_finding.md
+    'loss_iter0',
     # loss components at the BEST-iter pose (the one stored in est_c2w_data)
     'loss_rgb', 'loss_depth', 'loss_sdf', 'loss_fs', 'loss_edge_semantic',
     'psnr',
@@ -142,6 +148,7 @@ class DebugLogger:
         tracking_iters_config=None,
         best_loss=None,
         last_loss=None,
+        loss_iter0=None,
         loss_components=None,
         psnr=None,
         depth_valid_frac=None,
@@ -201,6 +208,7 @@ class DebugLogger:
             '' if tracking_iters_config is None else int(tracking_iters_config),
             '' if best_loss is None else float(best_loss),
             '' if last_loss is None else float(last_loss),
+            '' if loss_iter0 is None else float(loss_iter0),
             lc.get('rgb', ''),
             lc.get('depth', ''),
             lc.get('sdf', ''),

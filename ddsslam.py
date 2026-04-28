@@ -533,6 +533,7 @@ class DDSSLAM():
 
         # capture init pose (const-velocity prediction) for debug
         _init_c2w_for_log = cur_c2w.detach().clone()
+        loss_iter0 = None    # loss at iter 0, post-const-velocity init, BEFORE any optimiser step
 
         # Start tracking
         for i in range(self.config['tracking']['iter']):
@@ -561,6 +562,8 @@ class DDSSLAM():
 
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, border=border, UseBorder=True)
             loss = self.get_loss_from_ret(ret)
+            if i == 0:
+                loss_iter0 = float(loss.cpu().item())
 
             if best_sdf_loss is None:
                 best_sdf_loss = loss.cpu().item()
@@ -619,6 +622,7 @@ class DDSSLAM():
                 tracking_iters_config=self.config['tracking']['iter'],
                 best_loss=best_sdf_loss,
                 last_loss=loss.cpu().item(),
+                loss_iter0=loss_iter0,
                 loss_components={
                     'rgb': br.get('rgb_loss'),
                     'depth': br.get('depth_loss'),

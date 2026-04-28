@@ -257,19 +257,77 @@ const ate_sim_mm = has_aligned ? rmse(df.trans_err_sim_m.map(v => v * 1000)) : N
 const rpe_trans_mm = has_aligned ? rmse(df.rpe_trans_m.map(v => v === null || v === '' ? null : v * 1000).filter(v => v !== null)) : NaN;
 const rpe_rot_deg = has_aligned ? rmse(df.rpe_rot_rad.filter(v => v !== null && v !== '')) * 180 / Math.PI : NaN;
 
+// === Tracker-health metrics (added 2026-04-28) ===
+// Pearson(est_rate, gt_rate) — primary tracker-health stat. ATE alone is misleading
+// when GT motion is below the tracker's per-frame precision floor (~lr_trans*iters).
+// See memory: project_pearson_decoupling_finding.md for the empirical basis.
+function _pearson(xs, ys) {
+  const N = Math.min(xs.length, ys.length);
+  if (N < 2) return NaN;
+  let mx = 0, my = 0;
+  for (let i = 0; i < N; i++) { mx += xs[i]; my += ys[i]; }
+  mx /= N; my /= N;
+  let num = 0, dx2 = 0, dy2 = 0;
+  for (let i = 0; i < N; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    num += dx*dy; dx2 += dx*dx; dy2 += dy*dy;
+  }
+  if (dx2 === 0 || dy2 === 0) return NaN;
+  return num / Math.sqrt(dx2 * dy2);
+}
+const pearson_rate  = _pearson(trans_delta_mm, gt_delta_mm);
+const PRECISION_FLOOR_MM = 1.0;  // observed empirical floor with lr_trans=1e-3 x iters=10
+const gt_above_floor = mean_gt_delta > PRECISION_FLOOR_MM * 0.5;
+let tracker_verdict;
+if (!gt_above_floor) tracker_verdict = 'BELOW-FLOOR';
+else if (pearson_rate > 0.5)  tracker_verdict = 'TRACKING';
+else if (pearson_rate > 0.2)  tracker_verdict = 'PARTIAL';
+else                          tracker_verdict = 'DECOUPLED';
+
+// Optimiser-descent proxy: best_loss vs last_loss (no iter-0 loss yet).
+// best_loss < last_loss => tracker overshoots a minimum then is rolled back by tracking.best=True
+//   (= optimiser IS finding minima; loss surface is not flat)
+// best_loss == last_loss => either monotone descent or completely flat
+let best_lt_last_pct = NaN;
+if (df.best_loss && df.last_loss) {
+  let lt = 0, total = 0;
+  for (let i = 0; i < n; i++) {
+    if (df.best_loss[i] != null && df.last_loss[i] != null) {
+      total++; if (df.best_loss[i] < df.last_loss[i]) lt++;
+    }
+  }
+  best_lt_last_pct = total ? (100 * lt / total) : NaN;
+}
+
+// Verdict colour for the stat card
+const verdict_color = {
+  'TRACKING':    '#56d364',
+  'PARTIAL':     '#e3b341',
+  'DECOUPLED':   '#f85149',
+  'BELOW-FLOOR': '#8b949e'
+}[tracker_verdict];
+
 const stats = [
   { label: 'Frames', value: n, subvalue: DATA.meta.kf_count + ' keyframes' },
   { label: 'Run duration', value: (df.wall_s[n-1] / 60).toFixed(1) + ' min' },
+  // Tracker-health card: Pearson + verdict
+  { label: 'Tracker health', value: tracker_verdict,
+    subvalue: 'Pearson(est,gt rate) = ' + (isNaN(pearson_rate) ? 'n/a' : pearson_rate.toFixed(3)),
+    color: verdict_color },
   has_aligned
-    ? { label: 'ATE (R,t) — paper', value: ate_rt_mm.toFixed(1) + ' mm', subvalue: 'Umeyama-aligned RMSE' }
+    ? { label: 'ATE (R,t) — paper', value: ate_rt_mm.toFixed(1) + ' mm', subvalue: 'Umeyama SE(3) RMSE' }
     : { label: 'Final raw trans err', value: final_trans_err_mm.toFixed(1) + ' mm', subvalue: 'unaligned — run reanalyse_csv' },
   has_aligned
-    ? { label: 'ATE (R,t,s) — scaled', value: ate_sim_mm.toFixed(1) + ' mm', subvalue: 'with scale correction' }
+    ? { label: 'ATE (R,t,s) — scaled', value: ate_sim_mm.toFixed(1) + ' mm', subvalue: 'Umeyama Sim(3) RMSE' }
     : { label: 'Per-frame motion (est)', value: median(trans_delta_mm).toFixed(3) + ' mm', subvalue: 'median, ' + p95(trans_delta_mm).toFixed(3) + ' mm p95' },
   has_aligned
     ? { label: 'RPE trans / frame', value: rpe_trans_mm.toFixed(3) + ' mm', subvalue: 'alignment-invariant' }
     : { label: 'Per-frame motion (GT)', value: median(gt_delta_mm).toFixed(3) + ' mm', subvalue: 'median, ' + p95(gt_delta_mm).toFixed(3) + ' mm p95' },
   { label: 'Motion inflation', value: (mean_est_delta / mean_gt_delta).toFixed(2) + 'x', subvalue: 'est_mean / gt_mean' },
+  { label: 'GT mean motion', value: mean_gt_delta.toFixed(3) + ' mm/f',
+    subvalue: gt_above_floor ? 'above tracker floor (' + PRECISION_FLOOR_MM + ' mm)' : 'BELOW tracker floor (' + PRECISION_FLOOR_MM + ' mm) — Pearson uninformative' },
+  { label: 'best<last loss', value: isNaN(best_lt_last_pct) ? 'n/a' : best_lt_last_pct.toFixed(1) + '%',
+    subvalue: 'frames where optimiser overshoots a minimum (descent active)' },
   { label: 'Final PSNR', value: df.psnr[n-1] ? df.psnr[n-1].toFixed(2) : 'n/a', subvalue: 'mean: ' + mean(df.psnr.filter(v => v !== null && v !== '')).toFixed(2) },
   { label: 'Total time', value: df.wall_s[n-1].toFixed(0) + ' s' }
 ];
@@ -277,7 +335,8 @@ const grid = document.getElementById('stats-grid');
 stats.forEach(s => {
   const d = document.createElement('div');
   d.className = 'stat-card';
-  d.innerHTML = `<div class="label">${s.label}</div><div class="value">${s.value}</div>${s.subvalue ? `<div class="subvalue">${s.subvalue}</div>` : ''}`;
+  const valueStyle = s.color ? ` style="color:${s.color}"` : '';
+  d.innerHTML = `<div class="label">${s.label}</div><div class="value"${valueStyle}>${s.value}</div>${s.subvalue ? `<div class="subvalue">${s.subvalue}</div>` : ''}`;
   grid.appendChild(d);
 });
 
