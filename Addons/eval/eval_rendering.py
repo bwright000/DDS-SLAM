@@ -71,8 +71,13 @@ def main():
                              'looking up GT. Use 4465 for StereoMIS [-4000:] runs.')
     args = parser.parse_args()
 
-    # Find rendered images
-    rendered = sorted(glob.glob(os.path.join(args.render_dir, '*.jpg')))
+    # Find rendered images — accept .png (DDS-SLAM render_all_frames default) or .jpg.
+    # Exclude *_gt.* (those are the GT references saved next to renders by --save_gt).
+    rendered = []
+    for ext in ('*.png', '*.jpg'):
+        rendered.extend(p for p in sorted(glob.glob(os.path.join(args.render_dir, ext)))
+                         if '_gt' not in os.path.basename(p))
+    rendered = sorted(rendered)
     if not rendered:
         print(f"No rendered images found in {args.render_dir}")
         return
