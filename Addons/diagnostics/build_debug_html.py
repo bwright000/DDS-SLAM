@@ -121,8 +121,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <li>Alignment finds the best rigid <code>(R, t)</code> (for SE(3) ATE) or <code>(R, t, s)</code> (for Sim(3) ATE) that maps est &rarr; GT.</li>
       <li>ATE is computed on the <b>aligned</b> trajectory.</li>
     </ol>
-    <div style="margin-top:8px;">All plots show: <span style="color:#56d364">GT</span>, <span style="color:#8b949e">raw est (unaligned)</span>, <span style="color:#f85149">SE(3)-aligned est (R+t)</span>, <span style="color:#ffa657">Sim(3)-aligned est (R+t+s)</span>. The ATE in the Overview tab is computed on the SE(3)-aligned curve. Note: raw est is ~3&times; larger in extent than GT, so the aligned curves may appear compressed in the 3D view.</div>
+    <div style="margin-top:8px;">All plots show: <span style="color:#56d364">GT</span>, <span style="color:#8b949e">raw est (unaligned)</span>, <span style="color:#f85149">SE(3)-aligned est (R+t)</span>, <span style="color:#ffa657">Sim(3)-aligned est (R+t+s)</span>. The ATE in the Overview tab is computed on the SE(3)-aligned curve.</div>
     <div id="align-stats" style="margin-top:8px;color:#8b949e;"></div>
+    <div id="align-extent" style="margin-top:6px;color:#8b949e;"></div>
   </div>
   <div class="chart"><div id="chart-traj-3d" style="height: 600px;"></div></div>
   <div class="two-col">
@@ -145,7 +146,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <section class="section" id="sec-motion">
   <h2>Per-frame motion delta</h2>
-  <p class="note">Translation magnitude between consecutive est poses vs. the equivalent GT motion. 5x inflation is the signature of our current failure mode.</p>
+  <p class="note">Translation magnitude between consecutive est poses vs. the equivalent GT motion. The mean-est / mean-GT ratio is on the Overview "Motion inflation" card.</p>
   <div class="chart"><div id="chart-delta-time"></div></div>
   <div class="two-col">
     <div class="chart"><div id="chart-delta-hist"></div></div>
@@ -340,6 +341,31 @@ if (hasAlign) {
     '  (&rarr; est trajectory is ' + (1 / st.scale).toFixed(2) + '&times; too large)' +
     '  &bull; ATE(R,t) = '   + (st.ate_rt_m  * 1000).toFixed(2) + ' mm' +
     '  &bull; ATE(R,t,s) = ' + (st.ate_rts_m * 1000).toFixed(2) + ' mm';
+
+  // Runtime-computed trajectory extent and total path length (replaces hardcoded "~3x" copy).
+  function _range(arr) {
+    const v = arr.filter(x => x !== null && x !== '' && !isNaN(x));
+    return Math.max(...v) - Math.min(...v);
+  }
+  function _path(xs, ys, zs) {
+    let p = 0;
+    for (let i = 1; i < xs.length; i++) {
+      const dx = xs[i]-xs[i-1], dy = ys[i]-ys[i-1], dz = zs[i]-zs[i-1];
+      p += Math.sqrt(dx*dx + dy*dy + dz*dz);
+    }
+    return p;
+  }
+  const rx = _range(df.est_tx) / _range(df.gt_tx);
+  const ry = _range(df.est_ty) / _range(df.gt_ty);
+  const rz = _range(df.est_tz) / _range(df.gt_tz);
+  const path_est = _path(df.est_tx, df.est_ty, df.est_tz);
+  const path_gt  = _path(df.gt_tx,  df.gt_ty,  df.gt_tz);
+  document.getElementById('align-extent').innerHTML =
+    '<b>Extent ratio est/GT:</b> ' +
+    'x = ' + rx.toFixed(2) + '&times;, ' +
+    'y = ' + ry.toFixed(2) + '&times;, ' +
+    'z = ' + rz.toFixed(2) + '&times; ' +
+    '&bull; total path est/GT = ' + (path_est / path_gt).toFixed(2) + '&times;';
 }
 
 // ========= ERRORS =========
@@ -438,9 +464,19 @@ Plotly.newPlot('chart-psnr', [
 ], { ...DARK, title: 'Rendering PSNR', xaxis: { ...DARK.xaxis, title: 'frame' }, yaxis: { ...DARK.yaxis, title: 'dB' }, height: 350 });
 
 // ========= TRACKER =========
+// Tracker iters histogram. The iters_config column is per-frame and may vary
+// (e.g. Co-SLAM logs a different value at frame 0). Show the unique configured
+// max(es) rather than reading an arbitrary index.
+const _cfgs = (df.tracking_iters_config || []).filter(v => v !== null && v !== '');
+const _cfg_uniq = Array.from(new Set(_cfgs)).sort((a,b)=>a-b);
+const _used_max = Math.max(...df.tracking_iters_used.filter(v => v !== null && v !== ''));
+const _iters_title = 'Tracker iters used per frame ' +
+  '(config: ' + (_cfg_uniq.length === 1 ? _cfg_uniq[0]
+                : '[' + _cfg_uniq.join(', ') + ']') +
+  ', observed max iters_used: ' + _used_max + ')';
 Plotly.newPlot('chart-iters-used', [
   { x: df.tracking_iters_used, type: 'histogram', marker: { color: '#58a6ff' }, name: 'iters_used', nbinsx: 15 }
-], { ...DARK, title: 'Tracker iters used per frame (max: ' + df.tracking_iters_config[1] + ')', xaxis: { ...DARK.xaxis, title: 'iters' }, yaxis: { ...DARK.yaxis, title: 'frame count' }, height: 350 });
+], { ...DARK, title: _iters_title, xaxis: { ...DARK.xaxis, title: 'iters' }, yaxis: { ...DARK.yaxis, title: 'frame count' }, height: 350 });
 
 // init vs final scatter
 const init_final_gap = trans_err_mm.map((v, i) => v - (init_trans_err_mm[i] || v));
@@ -484,10 +520,12 @@ if (snapTimes.length === 0) {
   availDiv.textContent = '(snapshots at frames: ' + snapTimes.join(', ') + ')';
 
   function pose_delta(A, B) {
+    // Translation: ||t_A - t_B||, last column of the 4x4 c2w matrix.
     const dx = A[0][3] - B[0][3], dy = A[1][3] - B[1][3], dz = A[2][3] - B[2][3];
     const trans = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    // Relative rotation R_rel = R_A @ R_B^T;  tr(R_rel) = sum_{i,j} A[i][j]*B[i][j].
     let tr = 0;
-    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) tr += A[i][j] * B[j][i];
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) tr += A[i][j] * B[i][j];
     const ct = Math.max(-1, Math.min(1, (tr - 1) / 2));
     const rot = Math.acos(ct) * 180 / Math.PI;
     return [trans * 1000, rot];
@@ -574,13 +612,15 @@ def main():
     snap_dir = debug_dir / 'pose_snapshots'
     if snap_dir.exists():
         for f in sorted(snap_dir.glob('poses_frame_*.npz')):
-            # Strip 'poses_frame_' prefix; Co-SLAM writes 'poses_frame_NNN_final.npz'
-            # for its last snapshot, so keep only the numeric head.
             stem = f.stem.replace('poses_frame_', '')
-            digits = ''.join(c for c in stem.split('_')[0] if c.isdigit())
-            if not digits:
+            # Co-SLAM also writes a 'NNNNNN_final' snapshot at end of run; treat
+            # that as the same frame number (overwrites the in-flight snapshot).
+            stem = stem.replace('_final', '')
+            try:
+                tag = int(stem)
+            except ValueError:
+                print(f'  skipping unparseable snapshot {f.name}')
                 continue
-            tag = int(digits)
             d = np.load(f)
             snaps[tag] = {
                 'ids': d['ids'].astype(int).tolist(),
