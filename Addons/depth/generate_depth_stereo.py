@@ -259,18 +259,11 @@ def main():
             depth_np = depth.squeeze().cpu().numpy().astype(np.float32)
             depth_np = depth_np * depth_clip_max_mm / 1000.0  # to meters
 
-            # Clamp to valid range
-            depth_np = np.clip(depth_np, 0.0, 10.0)
+            # Build combined valid mask in RPE's exact order
+            # (stereo_dataset.py:31-34 + mask_specularities). All True = valid.
+            valid_mask = np.ones(depth_np.shape, dtype=bool)
 
-            # Apply masking (matching robust-pose-estimator pipeline)
-            # 1. Specularity mask: pixels where sum(RGB) >= 3*255*0.96 = 734
-            spec_mask = left_img.sum(axis=-1) >= (3 * 255 * 0.96)
-            # Erode mask by 11px to expand exclusion zone
-            spec_mask_eroded = cv2.dilate(spec_mask.astype(np.uint8),
-                                          kernel=np.ones((11, 11))) > 0
-            depth_np[spec_mask_eroded] = 0.0
-
-            # 2. Instrument mask from masks/ directory
+            # 1. Instrument mask from masks/ directory (mask>0 == valid tissue)
             frame_name = os.path.splitext(os.path.basename(left_path))[0]
             if frame_name.endswith('l'):
                 frame_name = frame_name[:-1]
@@ -278,17 +271,27 @@ def main():
             if mask_key in instrument_masks:
                 inst_mask = cv2.imread(instrument_masks[mask_key], cv2.IMREAD_GRAYSCALE)
                 if inst_mask is not None:
-                    # In StereoMIS masks: 0 = instrument/invalid, >0 = valid tissue
-                    inst_invalid = inst_mask == 0
                     if inst_mask.shape != depth_np.shape:
-                        inst_invalid = cv2.resize(inst_invalid.astype(np.uint8),
-                                                  (depth_np.shape[1], depth_np.shape[0]),
-                                                  interpolation=cv2.INTER_NEAREST) > 0
-                    depth_np[inst_invalid] = 0.0
+                        inst_mask = cv2.resize(inst_mask,
+                                               (depth_np.shape[1], depth_np.shape[0]),
+                                               interpolation=cv2.INTER_NEAREST)
+                    valid_mask &= (inst_mask > 0)
 
-            # 3. flow2depth valid mask (depth <= 0 or > 1.0 normalized)
-            valid_np = valid.squeeze().cpu().numpy()
-            depth_np[~valid_np] = 0.0
+            # 2. Specularity: True where pixel is NOT saturated
+            valid_mask &= (left_img.sum(axis=-1) < (3 * 255 * 0.96))
+
+            # 3. Erode the COMBINED mask 11x11 — this propagates to BOTH
+            # instrument and specular boundaries (RPE behavior).
+            # Match RPE's mask_specularities: kernel is float64 (np.ones default).
+            valid_mask = cv2.erode(valid_mask.astype(np.uint8),
+                                   kernel=np.ones((11, 11))).astype(bool)
+
+            # 4. AND with flow2depth's intrinsic valid (disparity > 0, depth <= 1.0)
+            valid_np = valid.squeeze().cpu().numpy().astype(bool)
+            valid_mask &= valid_np
+
+            # Apply: invalid pixels -> 0 in output PNG
+            depth_np[~valid_mask] = 0.0
 
             zero_pct = (depth_np == 0).sum() / depth_np.size * 100
             if zero_pct > 0:
