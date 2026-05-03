@@ -2,6 +2,7 @@ dataset: 'stereomis'
 multiscale_res: [1, 2, 4]
 dynamic: True
 render_freq: 100
+
 data:
   downsample: 1
   sc_factor: 1
