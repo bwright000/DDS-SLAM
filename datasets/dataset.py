@@ -279,8 +279,13 @@ class SuperDataset(BaseDataset):
         self.crop = crop
 
         self.img_files = sorted(glob.glob(f'{self.basedir}/rgb/*left.png'))
+        # depth_subdir lets us A/B different depth sources (Monodepth2 mono /
+        # stereo / AF-SfM / etc.) without duplicating rgb+seg. Defaults to 'rgb'
+        # for back-compat with the upstream Semantic-SuPer layout where depth
+        # .npys live alongside the RGB pngs.
+        depth_subdir = cfg.get('data', {}).get('depth_subdir', 'rgb')
         self.depth_paths = sorted(
-            glob.glob(f'{self.basedir}/rgb/*left_depth.npy'))
+            glob.glob(f'{self.basedir}/{depth_subdir}/*left_depth.npy'))
         self.semantic_paths=sorted(glob.glob(f'{self.basedir}/seg/png_masks/*left.png'))
 
         self.load_poses(os.path.join(self.basedir, 'pose'))
