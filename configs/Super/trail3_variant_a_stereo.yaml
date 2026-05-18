@@ -8,4 +8,4 @@ data:
   trainskip: 1
   output: output/trail3_variant_a_stereo
   exp_name: demo
-  depth_subdir: depth_variant_a_stereo
+  depth_subdir: depth/variant_a_stereo

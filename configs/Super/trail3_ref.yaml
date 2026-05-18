@@ -8,4 +8,4 @@ data:
   trainskip: 1
   output: output/trail3_ref
   exp_name: demo
-  depth_subdir: depth_ref
+  depth_subdir: depth/ref

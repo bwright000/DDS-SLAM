@@ -8,4 +8,4 @@ data:
   trainskip: 1
   output: output/trail3_variant_b_afsfm
   exp_name: demo
-  depth_subdir: depth_variant_b_afsfm
+  depth_subdir: depth/variant_b_afsfm
