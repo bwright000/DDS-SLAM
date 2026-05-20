@@ -257,6 +257,9 @@ def main():
     parser.add_argument('--depth_input_dir', type=str, help='Directory of input depth maps')
     parser.add_argument('--depth_output_dir', type=str, help='Directory of output depth maps')
     parser.add_argument('--seg_dir', type=str, help='Directory of segmentation masks')
+    parser.add_argument('--seg_pattern', type=str, default='*.png',
+                        help='Glob pattern inside --seg_dir (default *.png). Use e.g. '
+                             '"*-left.png" if the dir has both -left and -right files.')
     parser.add_argument('--trajectory_est', type=str, help='Path to est_c2w_data.txt')
     parser.add_argument('--trajectory_gt', type=str, help='Path to groundtruth.txt')
     parser.add_argument('--trajectory_raw', action='store_true',
@@ -281,6 +284,8 @@ def main():
     parser.add_argument('--max_frames', type=int, default=None)
     parser.add_argument('--rotation_speed', type=float, default=0.05,
                         help='Trajectory rotation speed (degrees per frame)')
+    parser.add_argument('--seg_alpha', type=float, default=0.5,
+                        help='Alpha for the Seg Overlay panel (0..1). Default 0.5.')
     args = parser.parse_args()
 
     panel_size = (args.panel_height, args.panel_width)
@@ -329,7 +334,7 @@ def main():
             print(f"Output Depth: {len(paths)} frames")
 
     if args.seg_dir:
-        paths = load_sorted_images(args.seg_dir)
+        paths = load_sorted_images(args.seg_dir, pattern=args.seg_pattern)
         paths = _slice(paths, args.seg_frame_slice or args.input_frame_slice)
         if paths:
             panels.append('Segmentation')
@@ -444,7 +449,7 @@ def main():
                 rgb = load_image(rgb_paths[ri], panel_size)
                 seg = load_image(seg_paths[si], panel_size)
                 if rgb is not None and seg is not None:
-                    img = overlay_mask_on_rgb(rgb, seg, alpha=0.5)
+                    img = overlay_mask_on_rgb(rgb, seg, alpha=args.seg_alpha)
                 else:
                     img = rgb if rgb is not None else seg
             elif panel_name in ('Input Depth', 'Output Depth'):
