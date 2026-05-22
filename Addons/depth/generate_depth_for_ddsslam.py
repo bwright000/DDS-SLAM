@@ -144,18 +144,30 @@ def main():
         sys.exit(1)
     print(f"Found {len(rgb_files)} frames")
 
+    def _ref_path_for(fid):
+        """Return existing REF .npy path under args.ref, trying both naming
+        conventions in order: '<fid>.npy' (raw v2_data02 distribution) then
+        '<fid>-left_depth.npy' (DDS-SLAM-format dir, e.g. depth/ref/)."""
+        for name in (f"{fid}.npy", f"{fid}-left_depth.npy"):
+            p = os.path.join(args.ref, name)
+            if os.path.isfile(p):
+                return p
+        return None
+
     # ---------- REF variant: copy/rename, no inference ----------
     if args.variant == "ref":
+        n_copied = 0
         for rgb_path in tqdm(rgb_files, desc="copying REF"):
             fid = os.path.basename(rgb_path).split("-")[0]
-            src = os.path.join(args.ref, f"{fid}.npy")
-            dst = os.path.join(args.out, f"{fid}-left_depth.npy")
-            if not os.path.isfile(src):
-                print(f"  skip frame {fid}: no REF .npy at {src}")
+            src = _ref_path_for(fid)
+            if src is None:
+                print(f"  skip frame {fid}: no REF .npy in {args.ref}")
                 continue
+            dst = os.path.join(args.out, f"{fid}-left_depth.npy")
             ref = np.load(src).astype(np.float32).squeeze()
             np.save(dst, ref)
-        print(f"Wrote {len(rgb_files)} REF depth files to {args.out}")
+            n_copied += 1
+        print(f"Wrote {n_copied}/{len(rgb_files)} REF depth files to {args.out}")
         return
 
     # ---------- Trained-variant: load model and infer ----------
@@ -189,11 +201,12 @@ def main():
     depth_decoder.to(device).eval()
 
     scales = []
+    n_written = 0
     for rgb_path in tqdm(rgb_files, desc=args.variant):
         fid = os.path.basename(rgb_path).split("-")[0]
-        ref_path = os.path.join(args.ref, f"{fid}.npy")
-        if not os.path.isfile(ref_path):
-            print(f"  skip frame {fid}: no REF for scale match")
+        ref_path = _ref_path_for(fid)
+        if ref_path is None:
+            print(f"  skip frame {fid}: no REF for scale match in {args.ref}")
             continue
         ref = np.load(ref_path).astype(np.float32).squeeze()
 
@@ -205,8 +218,9 @@ def main():
         scales.append(scale)
         np.save(os.path.join(args.out, f"{fid}-left_depth.npy"),
                 pred_scaled.astype(np.float32))
+        n_written += 1
 
-    print(f"\nWrote {len(rgb_files)} depth maps to {args.out}")
+    print(f"\nWrote {n_written}/{len(rgb_files)} depth maps to {args.out}")
     if scales:
         print(f"Per-frame scale: min={min(scales):.3f}  "
               f"median={np.median(scales):.3f}  max={max(scales):.3f}  "
