@@ -39,7 +39,6 @@ from PIL import Image
 from tqdm import tqdm
 
 
-H, W = 192, 320
 MIN_DEPTH = 0.1
 MAX_DEPTH = 100.0
 
@@ -94,8 +93,8 @@ def load_md2(weights_dir, networks_module):
     return encoder, depth_decoder
 
 
-def predict(rgb_path, encoder, depth_decoder, device):
-    img = Image.open(rgb_path).convert("RGB").resize((W, H), Image.LANCZOS)
+def predict(rgb_path, encoder, depth_decoder, device, h, w):
+    img = Image.open(rgb_path).convert("RGB").resize((w, h), Image.LANCZOS)
     arr = np.array(img).astype(np.float32) / 255.0
 
     def _fwd(np_img):
@@ -125,7 +124,18 @@ def main():
     ap.add_argument("--networks", default=None,
                     help="path to a Monodepth2 networks/ module (defaults to a "
                          "sparse-cloned copy if present in cwd)")
+    ap.add_argument("--inference_height", type=int, default=192,
+                    help="network input height in pixels. Set to match the "
+                         "model's training resolution: 192 for variant_a/c, "
+                         "256 for variant_b/b_afsfm default, 240 for aspect-correct "
+                         "variant_b_h240. Default 192 preserves legacy behaviour.")
+    ap.add_argument("--inference_width", type=int, default=320,
+                    help="network input width in pixels. Default 320 — typical for "
+                         "all current SemSup variants.")
     args = ap.parse_args()
+    H, W = args.inference_height, args.inference_width
+    print(f"Inference resolution: {H}×{W} (aspect W/H={W/H:.3f}, "
+          f"native 640×480 = 1.333; mismatch causes train-time stretch)")
 
     os.makedirs(args.out, exist_ok=True)
     rgb_files = sorted(glob.glob(os.path.join(args.rgb, "*-left.png")))
@@ -187,7 +197,7 @@ def main():
             continue
         ref = np.load(ref_path).astype(np.float32).squeeze()
 
-        pred = predict(rgb_path, encoder, depth_decoder, device)
+        pred = predict(rgb_path, encoder, depth_decoder, device, H, W)
         pred_full = np.array(
             Image.fromarray(pred).resize((ref.shape[1], ref.shape[0]), Image.LANCZOS)
         )
