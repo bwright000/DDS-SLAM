@@ -196,16 +196,27 @@ def main():
 
     # -------- Stage 3: global scale-match + save --------
     print(f"\n[3/3] Global scale-match + save...")
-    scale = 1.0
+    # Two cases:
+    #   A) --ref provided: REF is already stored at (meters * depth_scale).
+    #      scale = ref_median / pred_median already absorbs the depth_scale
+    #      factor. Output = pred * scale (NO additional * depth_scale).
+    #   B) --ref not provided: convert pred meters -> on-disk units directly
+    #      via * depth_scale. Output = pred * depth_scale.
     if args.ref is not None and os.path.isdir(args.ref):
         scale = compute_global_scale(depths_sm, args.ref, rgb_files)
+        final_multiplier = scale          # scale already includes depth_scale
+        mode = "ref-anchored"
     else:
-        print("  No --ref provided; using MoGe's native metric depth (no scale-match)")
+        scale = 1.0
+        final_multiplier = args.depth_scale  # raw metric -> on-disk units
+        mode = "metric-direct"
+        print(f"  No --ref provided; using MoGe's native metric depth")
+    print(f"  mode: {mode}, final multiplier on m: {final_multiplier:.4f}")
 
     n_written = 0
     for t, rgb_path in enumerate(tqdm(rgb_files, desc="save")):
         fid = os.path.basename(rgb_path).split("-")[0]
-        d = depths_sm[t] * scale * args.depth_scale
+        d = depths_sm[t] * final_multiplier
         out_path = os.path.join(args.out, f"{fid}-left_depth.npy")
         np.save(out_path, d.astype(np.float32))
         n_written += 1
@@ -214,12 +225,12 @@ def main():
     valid = depths_sm > 0
     if valid.any():
         meters = depths_sm[valid]
-        print(f"Final stats (post-scale, pre-storage-multiplier):")
-        print(f"  meters range: [{meters.min():.4f}, {meters.max():.4f}] m")
-        print(f"  meters median: {np.median(meters):.4f} m")
-        print(f"  on-disk (values = m * scale * depth_scale = m * {scale * args.depth_scale:.3f}):")
-        print(f"    range: [{meters.min() * scale * args.depth_scale:.3f}, "
-              f"{meters.max() * scale * args.depth_scale:.3f}]")
+        on_disk = meters * final_multiplier
+        print(f"Stats:")
+        print(f"  meters    range: [{meters.min():.4f}, {meters.max():.4f}] m, median {np.median(meters):.4f}")
+        print(f"  on-disk   range: [{on_disk.min():.3f}, {on_disk.max():.3f}], median {np.median(on_disk):.3f}")
+        print(f"  recovered meters (on-disk / {args.depth_scale}):")
+        print(f"            median: {np.median(on_disk) / args.depth_scale:.4f} m  (expected ~0.18 m for SemSup endoscope)")
 
 
 if __name__ == "__main__":
