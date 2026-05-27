@@ -116,10 +116,12 @@ def main():
                     depth_chunks.append(ret['depth'].cpu())
 
             color = torch.cat(rgb_chunks, dim=0).reshape(H, W, 3).numpy()
+            # Plain clip to [0,1]. Previously this also applied a per-frame
+            # min-max stretch which amplified contrast asymmetrically (GT
+            # below at f'{i:04d}_gt.png' uses clip only, not stretch). The
+            # asymmetry disproportionately inflated LPIPS while leaving
+            # PSNR/SSIM intact.
             color = np.clip(color, 0, 1)
-            # Normalize if needed
-            if color.max() > 0:
-                color = (color - color.min()) / (color.max() - color.min() + 1e-8)
 
             plt.imsave(os.path.join(args.output_dir, f'{i:04d}.png'), color)
 

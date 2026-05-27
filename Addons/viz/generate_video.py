@@ -41,11 +41,12 @@ from tqdm import tqdm
 
 
 def load_sorted_images(directory, pattern="*.png"):
-    """Load sorted image paths from a directory."""
+    """Load sorted image paths from a directory. Falls back to jpg then npy."""
     paths = sorted(glob.glob(os.path.join(directory, pattern)))
     if not paths:
-        # Try jpg
         paths = sorted(glob.glob(os.path.join(directory, "*.jpg")))
+    if not paths:
+        paths = sorted(glob.glob(os.path.join(directory, "*.npy")))
     return paths
 
 
@@ -71,8 +72,13 @@ def load_image(path, target_size=None):
 
 
 def colormap_depth(depth_path, target_size=None, png_depth_scale=None):
-    """Load a depth map and apply colormap."""
-    depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
+    """Load a depth map and apply colormap. Supports PNG (uint16/uint8) and NPY (float32)."""
+    if depth_path.endswith('.npy'):
+        depth = np.load(depth_path)
+        # squeeze any trailing singleton (e.g., shape (1, H, W) -> (H, W))
+        depth = np.squeeze(depth)
+    else:
+        depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
     if depth is None:
         return None
     depth_f = depth.astype(np.float32)
@@ -286,6 +292,10 @@ def main():
                         help='Trajectory rotation speed (degrees per frame)')
     parser.add_argument('--seg_alpha', type=float, default=0.5,
                         help='Alpha for the Seg Overlay panel (0..1). Default 0.5.')
+    parser.add_argument('--skip_raw_seg', action='store_true',
+                        help='Suppress the raw Segmentation panel; show only the Seg Overlay. '
+                             'Use when --seg_dir contains rich semantic maps you only want '
+                             'compositted on the rendered RGB, not displayed separately.')
     args = parser.parse_args()
 
     panel_size = (args.panel_height, args.panel_width)
@@ -328,6 +338,8 @@ def main():
     if args.depth_output_dir:
         paths = sorted(p for p in glob.glob(os.path.join(args.depth_output_dir, '*.png'))
                        if '_gt' not in os.path.basename(p))
+        if not paths:
+            paths = sorted(glob.glob(os.path.join(args.depth_output_dir, '*.npy')))
         if paths:
             panels.append('Output Depth')
             panel_data['Output Depth'] = paths
@@ -337,9 +349,12 @@ def main():
         paths = load_sorted_images(args.seg_dir, pattern=args.seg_pattern)
         paths = _slice(paths, args.seg_frame_slice or args.input_frame_slice)
         if paths:
-            panels.append('Segmentation')
-            panel_data['Segmentation'] = paths
-            print(f"Segmentation: {len(paths)} frames")
+            if not args.skip_raw_seg:
+                panels.append('Segmentation')
+                panel_data['Segmentation'] = paths
+                print(f"Segmentation: {len(paths)} frames")
+            else:
+                print(f"Segmentation: {len(paths)} frames (raw panel skipped via --skip_raw_seg)")
             # Also add overlay panel if we have rendered RGB
             if 'Rendered RGB' in panel_data:
                 panels.append('Seg Overlay')

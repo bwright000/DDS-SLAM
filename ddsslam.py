@@ -796,9 +796,15 @@ class DDSSLAM():
         color_np = color.detach().cpu().numpy()
 
 
-        color_np = (color_np - np.min(color_np)) / (np.max(color_np) - np.min(color_np))
-        color_path = os.path.join(self.config['data']['output'],'{:0>4d}.jpg'.format(frame_id)) 
-       
+        # Removed per-frame min-max contrast stretch that was here previously.
+        # The stretch was: color_np = (color_np - np.min(color_np)) / (np.max(color_np) - np.min(color_np))
+        # It amplified contrast asymmetrically between rendered and GT (GT was never
+        # stretched), disproportionately hurting LPIPS while leaving PSNR/SSIM mostly
+        # intact. Replaced with plain clip to [0,1] which preserves the SDF renderer's
+        # natural sigmoid output range.
+        color_np = np.clip(color_np, 0, 1)
+        color_path = os.path.join(self.config['data']['output'],'{:0>4d}.jpg'.format(frame_id))
+
         plt.imsave(color_path, color_np)
 
 
