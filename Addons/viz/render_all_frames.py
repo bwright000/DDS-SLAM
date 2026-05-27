@@ -46,6 +46,10 @@ def main():
     parser.add_argument('--save_depth', action='store_true',
                         help='Also render + save depth. Rendered depth -> <output_dir>/depth/NNNN.png (uint16, '
                              'scaled by config[data][png_depth_scale]). GT depth saved too if --save_gt is set.')
+    parser.add_argument('--save_stretch', action='store_true',
+                        help='Also save the OLD per-frame min-max contrast stretch into <output_dir>/stretch/ '
+                             '(same checkpoint + pose as the clipped renders, so a clip-vs-stretch LPIPS '
+                             'comparison has zero pose confound). GT is copied in unstretched for paired eval.')
     args = parser.parse_args()
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -54,6 +58,9 @@ def main():
     depth_dir = os.path.join(args.output_dir, 'depth')
     if args.save_depth:
         os.makedirs(depth_dir, exist_ok=True)
+    stretch_dir = os.path.join(args.output_dir, 'stretch')
+    if args.save_stretch:
+        os.makedirs(stretch_dir, exist_ok=True)
     png_depth_scale = float(config['cam'].get('png_depth_scale', 1000.0))
 
     # Load dataset
@@ -115,15 +122,22 @@ def main():
                 if args.save_depth:
                     depth_chunks.append(ret['depth'].cpu())
 
-            color = torch.cat(rgb_chunks, dim=0).reshape(H, W, 3).numpy()
+            color_raw = torch.cat(rgb_chunks, dim=0).reshape(H, W, 3).numpy()
             # Plain clip to [0,1]. Previously this also applied a per-frame
             # min-max stretch which amplified contrast asymmetrically (GT
             # below at f'{i:04d}_gt.png' uses clip only, not stretch). The
             # asymmetry disproportionately inflated LPIPS while leaving
             # PSNR/SSIM intact.
-            color = np.clip(color, 0, 1)
+            color = np.clip(color_raw, 0, 1)
 
             plt.imsave(os.path.join(args.output_dir, f'{i:04d}.png'), color)
+
+            # Optional: reproduce the OLD per-frame min-max stretch from the
+            # SAME raw render, so clip-vs-stretch differ only in normalization.
+            if args.save_stretch:
+                cmin, cmax = float(color_raw.min()), float(color_raw.max())
+                stretched = np.clip((color_raw - cmin) / (cmax - cmin + 1e-8), 0, 1)
+                plt.imsave(os.path.join(stretch_dir, f'{i:04d}.png'), stretched)
 
             if args.save_depth:
                 depth = torch.cat(depth_chunks, dim=0).reshape(H, W).numpy()
@@ -134,6 +148,10 @@ def main():
                 gt_color = batch['rgb'].squeeze(0).numpy()
                 gt_color = np.clip(gt_color, 0, 1)
                 plt.imsave(os.path.join(args.output_dir, f'{i:04d}_gt.png'), gt_color)
+                if args.save_stretch:
+                    # Same unstretched GT, so the stretch/ dir is self-contained
+                    # for paired eval (GT is never stretched — that is the point).
+                    plt.imsave(os.path.join(stretch_dir, f'{i:04d}_gt.png'), gt_color)
                 if args.save_depth:
                     gt_depth = batch['depth'].squeeze(0).numpy()
                     gt_depth_uint16 = np.clip(gt_depth * png_depth_scale, 0, 65535).astype(np.uint16)
