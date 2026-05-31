@@ -772,9 +772,7 @@ class DDSSLAM():
         rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1).view(-1, 3)
 
         rgb = []
-        edge = []
-        depth = []
-        edge_semantic = []
+        depth_chunks = []
         ray_batch_size = 240
 
         for i in range(0, rays_d.shape[0], ray_batch_size):
@@ -787,9 +785,11 @@ class DDSSLAM():
                 timestamps = cur_id.to(self.device) #/ self.n_imgs #*2 -1
                 rays_o1 = torch.cat([rays_o1,timestamps.unsqueeze(-1)],dim=1)
             # ret = self.model.render_rays(rays_o1, rays_d1, target_d1)
-            ret = self.model.forward(rays_o1, rays_d1, target_s, target_d1, 
+            ret = self.model.forward(rays_o1, rays_d1, target_s, target_d1,
                                      target_edge_semantic=target_edge_semantic, notFirstMap=False,render_only=True)
             rgb.append(ret['rgb'].detach().clone().cpu())
+            if 'depth' in ret:
+                depth_chunks.append(ret['depth'].detach().clone().cpu())
 
         color = torch.cat(rgb, dim=0)
         color = color.reshape(H, W, 3)
@@ -806,6 +806,18 @@ class DDSSLAM():
         color_path = os.path.join(self.config['data']['output'],'{:0>4d}.jpg'.format(frame_id))
 
         plt.imsave(color_path, color_np)
+
+        # Always save the model's rendered DEPTH alongside the rendered RGB.
+        # The depth subdir mirrors the convention of render_all_frames.py:
+        # uint16 PNG, values = depth_m * png_depth_scale (8 for Super.yaml).
+        # Future experiments comparing depth sources need this for every run.
+        if depth_chunks:
+            depth_dir = os.path.join(self.config['data']['output'], 'depth')
+            os.makedirs(depth_dir, exist_ok=True)
+            depth_render = torch.cat(depth_chunks, dim=0).reshape(H, W).numpy()
+            png_depth_scale = float(self.config.get('cam', {}).get('png_depth_scale', 8.0))
+            depth_uint16 = np.clip(depth_render * png_depth_scale, 0, 65535).astype(np.uint16)
+            cv2.imwrite(os.path.join(depth_dir, '{:04d}.png'.format(frame_id)), depth_uint16)
 
 
 if __name__ == '__main__':
