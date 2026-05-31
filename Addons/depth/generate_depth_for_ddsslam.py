@@ -73,21 +73,23 @@ def load_md2(weights_dir, networks_module):
     depth_decoder = networks_module.DepthDecoder(
         num_ch_enc=encoder.num_ch_enc, scales=range(4)
     )
-    enc_sd = torch.load(
-        os.path.join(weights_dir, "encoder.pth"),
-        map_location="cpu",
-        weights_only=False,
-    )
+    # torch.load's `weights_only` kwarg landed in torch 1.13. dds_env (paper-faithful
+    # build) is on torch 1.10 → passing it unconditionally is a TypeError. Pass it
+    # only when supported so the same script works on both stacks.
+    load_kwargs = {"map_location": "cpu"}
+    try:
+        from packaging.version import parse as _parse_ver
+        if _parse_ver(torch.__version__.split("+")[0]) >= _parse_ver("1.13"):
+            load_kwargs["weights_only"] = False
+    except Exception:
+        pass
+    enc_sd = torch.load(os.path.join(weights_dir, "encoder.pth"), **load_kwargs)
     encoder.load_state_dict(
         {k: v for k, v in enc_sd.items() if k in encoder.state_dict().keys()},
         strict=False,
     )
     depth_decoder.load_state_dict(
-        torch.load(
-            os.path.join(weights_dir, "depth.pth"),
-            map_location="cpu",
-            weights_only=False,
-        ),
+        torch.load(os.path.join(weights_dir, "depth.pth"), **load_kwargs),
         strict=False,
     )
     return encoder, depth_decoder
