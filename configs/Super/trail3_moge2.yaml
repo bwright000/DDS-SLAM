@@ -1,0 +1,11 @@
+inherit_from: configs/Super/Super.yaml
+timesteps:  151
+mapping:
+  bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+  marching_cubes_bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+data:
+  datadir: data/Super/trail_3
+  trainskip: 1
+  output: output/trail3_moge2
+  exp_name: demo
+  depth_subdir: depth/moge2

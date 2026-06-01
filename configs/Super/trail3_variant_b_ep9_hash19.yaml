@@ -1,0 +1,21 @@
+inherit_from: configs/Super/Super.yaml
+timesteps:  151
+mapping:
+  bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+  marching_cubes_bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+data:
+  datadir: data/Super/trail_3
+  trainskip: 1
+  output: output/trail3_variant_b_ep9_hash19
+  exp_name: demo
+  depth_subdir: depth/variant_b_ep9
+
+# Override the grid encoding's hash_size from Super.yaml's default 16.
+# This is the LPIPS-gap-closer hypothesis test:
+#  - T = 2^16 = 65k entries -> aggressive hash collisions on 151 keyframes * 4000 px/iter
+#  - T = 2^19 = 524k entries (Co-SLAM canon, 8x larger)
+# Lit (HollowNeRF, "How Far Can We Compress Instant-NGP") predicts collisions hurt
+# LPIPS disproportionately over PSNR -- matching our asymmetric gap signature
+# (PSNR 1.3% off paper, SSIM 4% off, LPIPS 52% off). Predicted dLPIPS = 0.02-0.05.
+grid:
+  hash_size: 19
