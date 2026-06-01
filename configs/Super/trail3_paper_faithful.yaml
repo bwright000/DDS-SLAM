@@ -1,0 +1,35 @@
+inherit_from: configs/Super/Super.yaml
+timesteps:  151
+mapping:
+  bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+  marching_cubes_bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+data:
+  datadir: data/Super/trail_3
+  trainskip: 1
+  output: output/trail3_paper_faithful
+  exp_name: demo
+  # Closest depth source available to the DDS-SLAM paper's actual setup:
+  # Paper Section IV: "we utilize the pre-trained depth estimation models
+  # provided by each dataset" -- for SemSup that's Hamlyn-pretrained
+  # Monodepth2 stereo (no SemSup fine-tune). We don't have those raw NPYs,
+  # so variant_a_stereo (Hamlyn-init MD2 + stereo SemSup fine-tune) is the
+  # nearest neighbour.
+  depth_subdir: depth/variant_a_stereo
+
+# Two paper-faithful corrections to Super.yaml's defaults, both per
+# "DDS-SLAM: Dense Semantic Neural SLAM for Deformable Endoscopic Scenes"
+# (Shan et al., IROS 2024), Section IV Implementation Details:
+#
+#   1. hash_size: Super.yaml defaults to 16 (T = 2^16 = 65k entries/level),
+#      but encodings.py:9's own default is 19 (T = 2^19 = 524k, 8x larger,
+#      matching standard Instant-NGP / Co-SLAM). Paper doesn't state T
+#      explicitly. Lit (HollowNeRF, "How Far Can We Compress Instant-NGP")
+#      shows hash collisions disproportionately hurt LPIPS over PSNR --
+#      matching our asymmetric gap signature (PSNR 1.3% off, LPIPS 52% off).
+#
+#   2. n_range_d: paper says "an additional 16 points near the estimated
+#      depth"; Super.yaml has 11. 31% fewer surface-region samples.
+grid:
+  hash_size: 19
+training:
+  n_range_d: 16
