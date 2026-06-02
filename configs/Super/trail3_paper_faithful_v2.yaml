@@ -1,0 +1,35 @@
+inherit_from: configs/Super/Super.yaml
+timesteps:  151
+mapping:
+  bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+  marching_cubes_bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+data:
+  datadir: data/Super/trail_3
+  trainskip: 1
+  output: output/trail3_paper_faithful_v2
+  exp_name: demo
+  depth_subdir: depth/variant_a_stereo
+
+# v2 paper-faithful: previous v1 corrections PLUS the freq-encoding L values
+# from paper Section III-A Eq 2 (L=10 for spatial x, L=4 for time t).
+#
+# v1 (already deployed, produced 30.148/0.804/0.311):
+#   - grid.hash_size 16 -> 19         (8x bigger hash table; matches encodings.py default; closes ~28% of LPIPS gap)
+#   - training.n_range_d 11 -> 16     (paper "additional 16 points near estimated depth")
+#
+# v2 adds:
+#   - decoder.freq_n_xyz 12 -> 10     (paper L=10 for spatial coord in deformation network's freq encoding)
+#   - decoder.freq_n_t   12 ->  4     (paper L=4 for time t in deformation network's freq encoding)
+#
+# Both were hardcoded as get_encoder('freq', ...) defaults in scene_rep.py until
+# this commit. The t over-encoding (12 vs 4 = 3x over paper) is particularly
+# suspicious -- gives the deformation network 3x more temporal frequency bands
+# than the paper specifies, which could over-fit to high-frequency temporal
+# noise and inflate LPIPS.
+grid:
+  hash_size: 19
+training:
+  n_range_d: 16
+decoder:
+  freq_n_xyz: 10
+  freq_n_t: 4

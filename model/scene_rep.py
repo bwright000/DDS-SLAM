@@ -49,9 +49,16 @@ class JointEncoding(nn.Module):
         # Sparse parametric encoding (SDF)
         self.embed_fn, self.input_ch = get_encoder(config['grid']['enc'], log2_hashmap_size=config['grid']['hash_size'], desired_resolution=self.resolution_sdf)
         
-        #time encoding
-        self.embed_time,self.input_ch_time = get_encoder('freq',input_dim=1)
-        self.embed_fre_pos, self.input_ch_fre = get_encoder('freq',input_dim=3)
+        # Frequency encodings for the 4D deformation network.
+        # Paper Section III-A Eq 2 specifies: L=10 for spatial coord x, L=4 for time t.
+        # encodings.py:get_encoder default is n_frequencies=12 for both -- i.e. 20% over
+        # paper for x and 3x over paper for t. We expose both as config knobs (under
+        # decoder.freq_n_xyz / decoder.freq_n_t) so existing runs default to the 12/12
+        # behaviour while a paper-faithful config can override to 10/4.
+        _n_freq_t   = self.config.get('decoder', {}).get('freq_n_t',   12)
+        _n_freq_xyz = self.config.get('decoder', {}).get('freq_n_xyz', 12)
+        self.embed_time,    self.input_ch_time = get_encoder('freq', input_dim=1, n_frequencies=_n_freq_t)
+        self.embed_fre_pos, self.input_ch_fre  = get_encoder('freq', input_dim=3, n_frequencies=_n_freq_xyz)
         # Sparse parametric encoding (Color)
         if not self.config['grid']['oneGrid']:
             print('Color resolution:', self.resolution_color)

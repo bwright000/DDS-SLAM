@@ -28,7 +28,7 @@ cd "$REPO_ROOT"
 # four depth-source comparisons, (c) the targeted hash_size experiment on
 # variant_b_ep9, (d) the paper-faithful run that corrects two Super.yaml
 # discrepancies vs the paper (Implementation Details Sec IV).
-CONFIGS_DEFAULT="trail3_variant_b_ep9 trail3_variant_a_stereo trail3_variant_c_stereo trail3_moge2 trail3_variant_b_ep9_hash19 trail3_paper_faithful"
+CONFIGS_DEFAULT="trail3_variant_b_ep9 trail3_variant_a_stereo trail3_variant_c_stereo trail3_moge2 trail3_variant_b_ep9_hash19 trail3_paper_faithful trail3_paper_faithful_v2"
 CONFIGS=${CONFIGS:-$CONFIGS_DEFAULT}
 
 DRIVE_OUT=/content/drive/MyDrive/Outputs/ddsslam_super_depthsweep_$(date +%Y%m%d)
