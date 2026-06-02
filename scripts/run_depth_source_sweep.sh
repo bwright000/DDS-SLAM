@@ -149,7 +149,12 @@ for cfg_name in $CONFIGS; do
   if run_complete "$local_out"; then
     log "  DONE  $cfg_name (rc=$rc, ${h}h${m}m) -- shipping to Drive..."
     mkdir -p "$drive_scene_out"
-    cp -r "$local_out/"* "$drive_scene_out/" 2>>"$MASTER_LOG"
+    # ddsslam.py writes:
+    #   - <output_root>/0000.jpg ... 0150.jpg + <output_root>/depth/*.png at TOP LEVEL
+    #   - <output_root>/<exp_name>/checkpoint150.pt + traj + meta in /demo/ subdir
+    # So we need to ship from $output_root (the parent of $local_out), not just
+    # $local_out itself. Otherwise the .jpg renders + depth output are missed.
+    cp -r "$output_root/"* "$drive_scene_out/" 2>>"$MASTER_LOG"
     log "  SAVED -> $drive_scene_out"
   else
     log "  FAIL  $cfg_name (rc=$rc, ${h}h${m}m) -- no complete checkpoint150.pt"
