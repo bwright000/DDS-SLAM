@@ -808,14 +808,18 @@ class DDSSLAM():
         plt.imsave(color_path, color_np)
 
         # Always save the model's rendered DEPTH alongside the rendered RGB.
-        # The depth subdir mirrors the convention of render_all_frames.py:
-        # uint16 PNG, values = depth_m * png_depth_scale (8 for Super.yaml).
-        # Future experiments comparing depth sources need this for every run.
+        # uint16 PNG, values = depth_m * png_depth_scale.
+        # NOTE: prior default of 8.0 was a bug. Endoscopic depths (0.05-0.5 m
+        # for SemSup/CRCD) cast to uint16(depth*8) become 0-4 -- effectively
+        # binary. Output Depth panels in 6-panel comparison videos rendered as
+        # uniform dark purple because >99% of pixels collapsed to the same
+        # value. 10000.0 maps 0.5 m -> 5000 uint16 (~5000 distinct levels in
+        # the typical range), well under uint16 max even at 5 m far-plane.
         if depth_chunks:
             depth_dir = os.path.join(self.config['data']['output'], 'depth')
             os.makedirs(depth_dir, exist_ok=True)
             depth_render = torch.cat(depth_chunks, dim=0).reshape(H, W).numpy()
-            png_depth_scale = float(self.config.get('cam', {}).get('png_depth_scale', 8.0))
+            png_depth_scale = float(self.config.get('cam', {}).get('png_depth_scale', 10000.0))
             depth_uint16 = np.clip(depth_render * png_depth_scale, 0, 65535).astype(np.uint16)
             cv2.imwrite(os.path.join(depth_dir, '{:04d}.png'.format(frame_id)), depth_uint16)
 
