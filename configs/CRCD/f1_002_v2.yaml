@@ -1,0 +1,26 @@
+inherit_from: configs/CRCD/crcd.yaml
+timesteps: 1287
+mapping:
+  bound: [[-0.08,0.13],[-0.03,0.18],[0.75,0.96]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.03,0.18],[0.75,0.96]]
+
+data:
+  datadir: data/CRCD/F1_002
+  trainskip: 1
+  output: output/CRCD/F1_002_paper_faithful_v2
+  exp_name: demo
+
+# v2 = paper-faithful PLUS freq-encoding L corrections from paper Section
+# III-A Eq 2 (deformation network's positional encoding):
+#   - decoder.freq_n_xyz: 12 -> 10 (paper L=10 for spatial x)
+#   - decoder.freq_n_t:   12 ->  4 (paper L=4  for time t, 3x over before)
+# Both were hardcoded as get_encoder defaults in scene_rep.py until the
+# patch (see project_paper_audit_v2_20260602). NEVER TESTED ON ANY DATASET
+# YET — this is its first run. Risky vs paper-faithful but worth the
+# ablation because the t over-encoding (12 vs 4 = 3x over) is the kind of
+# silently-wrong default that catches us elsewhere.
+grid:
+  hash_size: 19
+decoder:
+  freq_n_xyz: 10
+  freq_n_t: 4

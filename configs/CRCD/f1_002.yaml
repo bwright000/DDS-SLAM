@@ -1,0 +1,22 @@
+inherit_from: configs/CRCD/crcd.yaml
+timesteps: 1287
+mapping:
+  bound: [[-0.08,0.13],[-0.03,0.18],[0.75,0.96]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.03,0.18],[0.75,0.96]]
+
+data:
+  datadir: data/CRCD/F1_002
+  trainskip: 1
+  output: output/CRCD/F1_002_paper_faithful
+  exp_name: demo
+
+# Paper-faithful corrections from the SemSup recreation breakthrough
+# (project_paper_recreation_breakthrough_20260602):
+#   - grid.hash_size 16 -> 19 (8x bigger hash table; matches encodings.py default)
+# Inherits training.n_range_d: 16 from crcd.yaml (already paper-correct, no
+# change vs. SemSup which had n_range_d: 11). Paper-faithful on SemSup
+# produced PSNR 30.148 / SSIM 0.804 / LPIPS 0.311 vs paper 28.649 / 0.797 / 0.231
+# (beats paper on PSNR + SSIM). Applying the same hash-size correction to
+# CRCD with MoGe-2 depth on the F_1/002 surgical snippet.
+grid:
+  hash_size: 19
