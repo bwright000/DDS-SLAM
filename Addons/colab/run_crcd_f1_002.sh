@@ -77,7 +77,9 @@ else
     cp -r /content/drive/MyDrive/Datasets/SemSup/v2_data/trial_3 data/Super/trail_3
   }
   python ddsslam.py --config configs/Super/trail3_paper_faithful_v2.yaml
-  ship_to_drive output/trail3_paper_faithful_v2/demo "$DRIVE_ROOT/semsup_v2"
+  # Ship from output ROOT (not demo/) so per-frame jpgs + depth/*.png saved
+  # by the ddsslam.py render-save path are captured alongside demo/* ckpt + traj.
+  ship_to_drive output/trail3_paper_faithful_v2 "$DRIVE_ROOT/semsup_v2"
 fi
 
 # ============================================================================
@@ -217,7 +219,9 @@ PYEOF
 fi
 
 # ============================================================================
-# PHASE 4 -- CRCD paper_faithful run (~45-60 min A100)
+# PHASE 4 -- CRCD paper_faithful run (~45-60 min A100, ~16 min T4)
+# Ship from output ROOT (not demo/) so per-frame jpgs + depth/*.png from
+# ddsslam.py's render-save path are captured alongside the demo/* ckpt + traj.
 # ============================================================================
 phase 4 "CRCD F1_002 paper_faithful"
 if done_marker "$DRIVE_ROOT/paper_faithful"; then
@@ -225,7 +229,7 @@ if done_marker "$DRIVE_ROOT/paper_faithful"; then
 else
   cd /content/DDS-SLAM
   python ddsslam.py --config configs/CRCD/f1_002.yaml
-  ship_to_drive output/CRCD/F1_002_paper_faithful/demo "$DRIVE_ROOT/paper_faithful"
+  ship_to_drive output/CRCD/F1_002_paper_faithful "$DRIVE_ROOT/paper_faithful"
 fi
 
 # ============================================================================
@@ -237,7 +241,25 @@ if done_marker "$DRIVE_ROOT/paper_faithful_v2"; then
 else
   cd /content/DDS-SLAM
   python ddsslam.py --config configs/CRCD/f1_002_v2.yaml
-  ship_to_drive output/CRCD/F1_002_paper_faithful_v2/demo "$DRIVE_ROOT/paper_faithful_v2"
+  ship_to_drive output/CRCD/F1_002_paper_faithful_v2 "$DRIVE_ROOT/paper_faithful_v2"
+fi
+
+# ============================================================================
+# PHASE 6 -- CRCD with SemSup-style schedule (~80 min T4)
+# "Best of both worlds": SemSup PF training schedule + CRCD scene params +
+# paper-faithful hash_size 19. The first-attempt PSNR 18.6 was compute-budget
+# starved (CRCD inherits 10 iters vs SemSup PF's 200); this raises iters to 50
+# (Recipe A x 2.5), bumps first_iters to 1000, matches SemSup LRs (Co-SLAM BC0
+# finding), and saves renders every 10th frame for visual inspection.
+# ============================================================================
+phase 6 "CRCD F1_002 SemSup-style schedule"
+if done_marker "$DRIVE_ROOT/semsup_sched"; then
+  echo "  already shipped -- skip"
+else
+  mkdir -p "$DRIVE_ROOT/semsup_sched"
+  cd /content/DDS-SLAM
+  python ddsslam.py --config configs/CRCD/f1_002_semsup_sched.yaml
+  ship_to_drive output/CRCD/F1_002_semsup_sched "$DRIVE_ROOT/semsup_sched"
 fi
 
 echo ""
