@@ -187,15 +187,21 @@ def main():
             if d.shape != (H_ref, W_ref):
                 d = cv2.resize(d, (W_ref, H_ref), interpolation=cv2.INTER_LINEAR)
             depths[idx] = d
-    print(f"  Raw depth stack: shape={depths.shape}, range=[{depths[depths>0].min():.4f}, {depths.max():.4f}]m")
+    # MEMORY: don't compute `depths[depths>0].min()` here — boolean mask on
+    # the full [T,H,W] array allocates ~1.2 GB and the indexed array
+    # ~3.8 GB on top of the 4.7 GB depths buffer -> ~9.7 GB peak -> OOM on
+    # T4 12 GB. Cheap shape-only print suffices.
+    print(f"  Raw depth stack: shape={depths.shape}, dtype={depths.dtype}")
 
     # -------- Stage 2: temporal median smoothing --------
     print(f"\n[2/3] Temporal median filter (window={args.temporal_window})...")
     if args.temporal_window > 1:
         depths_sm = temporal_median_filter(depths, args.temporal_window)
-        valid = depths_sm > 0
-        if valid.any():
-            print(f"  Smoothed range: [{depths_sm[valid].min():.4f}, {depths_sm.max():.4f}]m")
+        # diagnostic print on just frame 0 to avoid the same boolean-mask OOM
+        v0 = depths_sm[0]
+        v0nz = v0[v0 > 0]
+        if v0nz.size:
+            print(f"  Smoothed frame-0 range: [{v0nz.min():.4f}, {depths_sm[0].max():.4f}]m")
     else:
         depths_sm = depths
         print("  (window=1, skipped)")
