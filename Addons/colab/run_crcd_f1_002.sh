@@ -124,9 +124,19 @@ fi
 # env mutations cannot leak into dds_env. Atomic PNG writes + count-matched sentinel.
 # ============================================================================
 phase 3 "MoGe-2 depth gen (isolated venv, resumable)"
-# Robust counts that survive missing dirs without `set -e` killing the script
-EXPECTED=$(find "$STAGED/video_frames" -maxdepth 1 -name '*l.png' 2>/dev/null | wc -l)
-ACTUAL=$(find "$STAGED/depth"        -maxdepth 1 -name '*.png'  2>/dev/null | wc -l)
+# Robust counts that survive missing dirs without `set -e` killing the script.
+# NOTE: `find $DIR | wc -l` UNDER set -o pipefail EXITS NON-ZERO if $DIR doesn't
+# exist (find errors out; pipefail propagates; set -e kills). 2>/dev/null only
+# mutes stderr -- the exit code still propagates. Use an explicit dir-exists
+# guard so missing dirs default the count to 0 without killing the script.
+EXPECTED=0
+ACTUAL=0
+if [ -d "$STAGED/video_frames" ]; then
+  EXPECTED=$(find "$STAGED/video_frames" -maxdepth 1 -name '*l.png' | wc -l)
+fi
+if [ -d "$STAGED/depth" ]; then
+  ACTUAL=$(find "$STAGED/depth" -maxdepth 1 -name '*.png' | wc -l)
+fi
 if [ -f "$STAGED/depth/.DONE" ] && [ "$ACTUAL" -eq "$EXPECTED" ]; then
   echo "  depth/ complete ($ACTUAL/$EXPECTED) -- skip MoGe"
 else
