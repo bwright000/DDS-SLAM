@@ -173,7 +173,8 @@ for p in n_in:
     if os.path.exists(out):
         continue
     d = np.load(p).astype(np.float32)
-    tmp = out + '.part'
+    # cv2.imwrite picks encoder by extension — temp MUST end in .png too.
+    tmp = f'depth.tmp/.{fid}.tmp.png'
     cv2.imwrite(tmp, np.clip(d, 0, 65535).astype(np.uint16))
     os.replace(tmp, out)
 print('npy_in', len(n_in), 'png_out', len(glob.glob('depth.tmp/*.png')))

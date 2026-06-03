@@ -34,7 +34,10 @@ for i, p in enumerate(n_in):
         done_count += 1
         continue
     d = np.load(p).astype(np.float32)
-    tmp = out + '.part'
+    # Atomic write needs the SAME extension as the final file (cv2.imwrite
+    # picks the encoder by extension). Use a hidden temp filename ending
+    # in .png, then os.replace to the final visible name.
+    tmp = f'depth.tmp/.{fid}.tmp.png'
     cv2.imwrite(tmp, np.clip(d, 0, 65535).astype(np.uint16))
     os.replace(tmp, out)
     done_count += 1
