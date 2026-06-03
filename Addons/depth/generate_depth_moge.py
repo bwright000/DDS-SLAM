@@ -163,14 +163,21 @@ def main():
 
     # -------- Stage 1: per-frame inference --------
     print(f"\n[1/3] Running MoGe-2 inference on {len(rgb_files)} frames...")
+    # MEMORY: don't build a list and then np.stack — that doubles peak memory
+    # (the list of [H,W] arrays + the stacked [T,H,W] array are both live
+    # momentarily). Pre-allocate the [T,H,W] buffer and write per-frame in
+    # place. For 1287x720x1280 float32 that's 4.7 GB; the old code peaked at
+    # ~9.4 GB which OOMs on T4 Colab (12 GB RAM).
     H_ref, W_ref = None, None
-    depths = []
+    n_frames = len(rgb_files)
+    depths = None  # allocated after H_ref/W_ref are known
     with torch.no_grad():
-        for rgb_path in tqdm(rgb_files, desc="MoGe-2"):
+        for idx, rgb_path in enumerate(tqdm(rgb_files, desc="MoGe-2")):
             img = cv2.imread(rgb_path)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             if H_ref is None:
                 H_ref, W_ref = img.shape[:2]
+                depths = np.empty((n_frames, H_ref, W_ref), dtype=np.float32)
             t = torch.tensor(img / 255.0, dtype=torch.float32, device=device).permute(2, 0, 1)
             out = model.infer(t, resolution_level=args.resolution_level)
             d = out["depth"].cpu().numpy().astype(np.float32)
@@ -179,8 +186,7 @@ def main():
             # ensure HxW shape (model may return at a different resolution)
             if d.shape != (H_ref, W_ref):
                 d = cv2.resize(d, (W_ref, H_ref), interpolation=cv2.INTER_LINEAR)
-            depths.append(d)
-    depths = np.stack(depths, axis=0)  # [T, H, W]
+            depths[idx] = d
     print(f"  Raw depth stack: shape={depths.shape}, range=[{depths[depths>0].min():.4f}, {depths.max():.4f}]m")
 
     # -------- Stage 2: temporal median smoothing --------

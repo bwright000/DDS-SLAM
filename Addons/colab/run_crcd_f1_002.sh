@@ -124,8 +124,9 @@ fi
 # env mutations cannot leak into dds_env. Atomic PNG writes + count-matched sentinel.
 # ============================================================================
 phase 3 "MoGe-2 depth gen (isolated venv, resumable)"
-EXPECTED=$(ls "$STAGED/video_frames"/*l.png | wc -l)
-ACTUAL=$(ls "$STAGED/depth"/*.png 2>/dev/null | wc -l)
+# Robust counts that survive missing dirs without `set -e` killing the script
+EXPECTED=$(find "$STAGED/video_frames" -maxdepth 1 -name '*l.png' 2>/dev/null | wc -l)
+ACTUAL=$(find "$STAGED/depth"        -maxdepth 1 -name '*.png'  2>/dev/null | wc -l)
 if [ -f "$STAGED/depth/.DONE" ] && [ "$ACTUAL" -eq "$EXPECTED" ]; then
   echo "  depth/ complete ($ACTUAL/$EXPECTED) -- skip MoGe"
 else
@@ -143,9 +144,14 @@ else
     [ -L "_moge_in/${fid}-left.png" ] || ln -sf "$PWD/$f" "_moge_in/${fid}-left.png"
   done
   echo "  symlinks: $(ls _moge_in/ 2>/dev/null | wc -l)"
+  # --temporal_window 1 disables temporal smoothing. Memory budget on T4 is
+  # ~12 GB RAM and the pre-allocated raw depth stack alone is ~4.7 GB for
+  # 1287 frames at 1280x720; smoothing would allocate a SECOND 4.7 GB buffer
+  # and OOM. Per memory project_minmax_results_20260531 temporal smoothing
+  # produced metric-neutral renders anyway (DeltaPSNR < 0.1).
   python3 /content/DDS-SLAM/Addons/depth/generate_depth_moge.py \
     --rgb _moge_in --out _moge_npy \
-    --temporal_window 5 --depth_scale 10000 --max_depth_m 5.0
+    --temporal_window 1 --depth_scale 10000 --max_depth_m 5.0
   (
     cd "$STAGED"
     python3 - <<'PYEOF'
