@@ -57,9 +57,9 @@ fi
 nvidia-smi -L
 activate_dds_env
 
-INC_SYS=$(grep -E '^include-system-site-packages' /tmp/dds_env/pyvenv.cfg | awk '{print $3}')
-echo "  dds_env include-system-site-packages = $INC_SYS"
-[ "$INC_SYS" = "false" ] || echo "  WARN: system-site leakage possible; isolated MoGe venv mandatory"
+# Phase 3's MoGe install runs in /tmp/moge_env (its own venv inside a subshell)
+# so it can't contaminate the system-python torch stack regardless of where
+# dds-slam imports live. No pyvenv.cfg check needed for the modern stack.
 
 # ============================================================================
 # PHASE 1 -- SemSup trail_3 paper_faithful_v2 sanity run (~30 min A100)
