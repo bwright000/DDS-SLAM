@@ -234,15 +234,21 @@ def main():
         n_written += 1
 
     print(f"\nWrote {n_written}/{len(rgb_files)} depth maps to {args.out}")
-    valid = depths_sm > 0
-    if valid.any():
-        meters = depths_sm[valid]
-        on_disk = meters * final_multiplier
-        print(f"Stats:")
-        print(f"  meters    range: [{meters.min():.4f}, {meters.max():.4f}] m, median {np.median(meters):.4f}")
-        print(f"  on-disk   range: [{on_disk.min():.3f}, {on_disk.max():.3f}], median {np.median(on_disk):.3f}")
-        print(f"  recovered meters (on-disk / {args.depth_scale}):")
-        print(f"            median: {np.median(on_disk) / args.depth_scale:.4f} m  (expected ~0.18 m for SemSup endoscope)")
+    # MEMORY: same full-array boolean-mask trap as the [1/3] diagnostic.
+    # `depths_sm > 0` allocates ~1.2 GB and `depths_sm[valid]` ~3.8 GB on top
+    # of the 4.7 GB depths buffer -> ~9.7 GB peak -> OOM on T4 12 GB AFTER
+    # all 1287 NPYs are already safely saved to disk (the kill leaves the
+    # data intact but kills the runbook's set -e chain). Use frame-0 only
+    # for a cheap diagnostic; full stats are post-hoc on the saved NPYs if
+    # ever needed.
+    v0 = depths_sm[0]
+    v0nz = v0[v0 > 0]
+    if v0nz.size:
+        d0_on_disk = v0nz * final_multiplier
+        print(f"Stats (frame 0 only, full-stack stats avoided to save RAM):")
+        print(f"  meters    frame-0 range: [{v0nz.min():.4f}, {v0.max():.4f}] m")
+        print(f"  on-disk   frame-0 range: [{d0_on_disk.min():.3f}, {d0_on_disk.max():.3f}]")
+        print(f"  recovered frame-0 median: {np.median(d0_on_disk) / args.depth_scale:.4f} m")
 
 
 if __name__ == "__main__":
