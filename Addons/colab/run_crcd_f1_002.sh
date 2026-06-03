@@ -19,16 +19,20 @@ mark_done() { sync; touch "$1/.DONE"; sync; }
 STAGED=/content/DDS-SLAM/data/CRCD/F1_002
 
 activate_dds_env() {
-  if ! /tmp/dds_env/bin/python -c "import torch, tinycudann, marching_cubes" 2>/dev/null; then
-    echo "dds_env missing/broken -- full rebuild (~30 min)"
-    bash /content/DDS-SLAM/Addons/env/colab_setup.sh --skip-cache
+  # Modern stack: colab_setup.sh installs into the system Python 3.12 + torch 2.x.
+  # No /tmp/dds_env venv. Memory project_session_20260523_late confirmed the modern
+  # stack matches legacy LPIPS within 0.001 — numerically equivalent for paper recreation.
+  # The exact-paper env (colab_exact_env.sh -> /tmp/dds_env) is only needed if we
+  # want to track the paper's specific torch 1.10 / CUDA 11.3 stack.
+  if ! python -c "import torch, tinycudann, marching_cubes" 2>/dev/null; then
+    echo "modern stack missing -- full rebuild (~15 min on T4)"
+    # --skip-data: we have our own data; the bundled gdown download often 403s
+    bash /content/DDS-SLAM/Addons/env/colab_setup.sh --skip-data --skip-tunnel
   fi
-  export CUDA_HOME=/usr/local/cuda-11.3
-  export PATH=/usr/local/cuda-11.3/bin:$PATH
-  export LD_LIBRARY_PATH=/usr/lib64-nvidia:/usr/local/cuda-11.3/lib64:${LD_LIBRARY_PATH:-}
-  export CC=/usr/bin/gcc-10 CXX=/usr/bin/g++-10 CUDAHOSTCXX=/usr/bin/g++-10
-  source /tmp/dds_env/bin/activate
-  python -c "import torch, tinycudann, marching_cubes; assert torch.cuda.is_available()" || { echo "env check FAIL"; exit 1; }
+  python -c "import torch, tinycudann, marching_cubes; assert torch.cuda.is_available()" \
+    || { echo "env check FAIL"; exit 1; }
+  # Keep driver libs on LD_LIBRARY_PATH (Colab convention)
+  export LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
 }
 
 ship_to_drive() {  # $1=src_dir  $2=dst_dir_on_drive
