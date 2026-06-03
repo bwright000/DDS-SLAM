@@ -130,36 +130,25 @@ if [ -f "$STAGED/depth/.DONE" ] && [ "$ACTUAL" -eq "$EXPECTED" ]; then
   echo "  depth/ complete ($ACTUAL/$EXPECTED) -- skip MoGe"
 else
   echo "  depth/ incomplete ($ACTUAL/$EXPECTED) -- resuming MoGe"
+  # Modern stack: dds-slam imports already live in system python, so there's no
+  # /tmp/dds_env to protect. The earlier venv-isolation design (commit 6541845)
+  # was overkill and broke because Colab Python 3.12's `python3 -m venv` fails
+  # to bootstrap pip via ensurepip. Install MoGe directly into system python.
+  python3 -c 'import moge.model.v2' 2>/dev/null || \
+    python3 -m pip install -q git+https://github.com/microsoft/MoGe.git huggingface_hub
+  cd "$STAGED"
+  mkdir -p _moge_in depth.tmp
+  for f in video_frames/*l.png; do
+    fid=$(basename "$f" l.png)
+    [ -L "_moge_in/${fid}-left.png" ] || ln -sf "$PWD/$f" "_moge_in/${fid}-left.png"
+  done
+  echo "  symlinks: $(ls _moge_in/ 2>/dev/null | wc -l)"
+  python3 /content/DDS-SLAM/Addons/depth/generate_depth_moge.py \
+    --rgb _moge_in --out _moge_npy \
+    --temporal_window 5 --depth_scale 10000 --max_depth_m 5.0
   (
-    deactivate 2>/dev/null || true
-    hash -r
-    export PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/cuda/bin
-    export LD_LIBRARY_PATH=/usr/lib64-nvidia:/usr/local/cuda/lib64
-    export PYTHONNOUSERSITE=1
-    unset CUDA_HOME
-    which python3 pip || { echo "system python/pip missing from PATH"; exit 1; }
-    [ -d /tmp/moge_env ] || python3 -m venv /tmp/moge_env
-    /tmp/moge_env/bin/pip install -q --upgrade pip
-    MOGE_PIN="git+https://github.com/microsoft/MoGe.git@main"
-    /tmp/moge_env/bin/python -c 'import moge.model.v2' 2>/dev/null \
-      || /tmp/moge_env/bin/pip install -q "$MOGE_PIN" huggingface_hub
     cd "$STAGED"
-    mkdir -p _moge_in _raw depth.tmp
-    for f in video_frames/*l.png; do
-      fid=$(basename "$f" l.png)
-      [ -L "_moge_in/${fid}-left.png" ] || ln -sf "$PWD/$f" "_moge_in/${fid}-left.png"
-    done
-    if /tmp/moge_env/bin/python /content/DDS-SLAM/Addons/depth/generate_depth_moge.py --help 2>&1 | grep -q -- '--raw_dir'; then
-      /tmp/moge_env/bin/python /content/DDS-SLAM/Addons/depth/generate_depth_moge.py \
-        --rgb _moge_in --out _moge_npy --raw_dir _raw \
-        --temporal_window 5 --depth_scale 10000 --max_depth_m 5.0
-    else
-      echo "  WARN: generate_depth_moge.py lacks --raw_dir; running non-resumable"
-      /tmp/moge_env/bin/python /content/DDS-SLAM/Addons/depth/generate_depth_moge.py \
-        --rgb _moge_in --out _moge_npy \
-        --temporal_window 5 --depth_scale 10000 --max_depth_m 5.0
-    fi
-    /tmp/moge_env/bin/python - <<'PYEOF'
+    python3 - <<'PYEOF'
 import numpy as np, cv2, glob, os
 n_in = sorted(glob.glob('_moge_npy/*-left_depth.npy'))
 for p in n_in:
@@ -179,9 +168,8 @@ PYEOF
       || { echo "depth count mismatch png=$PNG npy=$NPY expected=$EXPECTED -- keep intermediates, abort"; exit 1; }
     rm -rf depth && mv depth.tmp depth
     sync; touch depth/.DONE; sync
-    rm -rf _moge_in _moge_npy _raw
+    rm -rf _moge_in _moge_npy
   )
-  python -c "import torch, tinycudann" || activate_dds_env
 
   # ----- Persist depth back to the canonical CRCD-Published snippet -----
   # CRCD ships snippet_002/depth/ empty (depth_placeholder: true). Fill it with
@@ -189,7 +177,7 @@ PYEOF
   # Re-map our staged 000000..001286.png back to the snippet's frame_NNNNNN.png
   # naming (frame_011159..012445 for F_1/002) by listing the snippet's rgb/.
   echo "  syncing depth back to CRCD-Published snippet on Drive..."
-  /tmp/dds_env/bin/python - <<'PYEOF'
+  python3 - <<'PYEOF'
 import os, shutil
 STAGED = '/content/DDS-SLAM/data/CRCD/F1_002'
 SRC_SNIPPET = '/content/drive/MyDrive/Datasets/CRCD-Published/F_1/snippet_002'
