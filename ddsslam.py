@@ -807,20 +807,24 @@ class DDSSLAM():
 
         plt.imsave(color_path, color_np)
 
-        # Always save the model's rendered DEPTH alongside the rendered RGB.
-        # uint16 PNG, values = depth_m * png_depth_scale.
-        # NOTE: prior default of 8.0 was a bug. Endoscopic depths (0.05-0.5 m
-        # for SemSup/CRCD) cast to uint16(depth*8) become 0-4 -- effectively
-        # binary. Output Depth panels in 6-panel comparison videos rendered as
-        # uniform dark purple because >99% of pixels collapsed to the same
-        # value. 10000.0 maps 0.5 m -> 5000 uint16 (~5000 distinct levels in
-        # the typical range), well under uint16 max even at 5 m far-plane.
+        # Save the model's rendered DEPTH as uint16 PNG for visualization.
+        # IMPORTANT: this uses cam.output_depth_scale (NOT png_depth_scale).
+        # png_depth_scale is the INPUT-data convention -- e.g. SemSup NPYs are
+        # stored as depth_m*8, so SuperDataset divides loaded depth by 8 to
+        # recover metres. Changing png_depth_scale to make output PNGs prettier
+        # would break the INPUT loader. So we use a separate output_depth_scale
+        # for save-only purposes; defaults to 10000 (gives 0.05-5m depth ->
+        # uint16 500-50000, plenty of dynamic range for endoscopic scenes).
+        # Falls back to png_depth_scale -> 10000 to keep old behaviour for
+        # configs that haven't migrated.
         if depth_chunks:
             depth_dir = os.path.join(self.config['data']['output'], 'depth')
             os.makedirs(depth_dir, exist_ok=True)
             depth_render = torch.cat(depth_chunks, dim=0).reshape(H, W).numpy()
-            png_depth_scale = float(self.config.get('cam', {}).get('png_depth_scale', 10000.0))
-            depth_uint16 = np.clip(depth_render * png_depth_scale, 0, 65535).astype(np.uint16)
+            cam_cfg = self.config.get('cam', {})
+            output_depth_scale = float(cam_cfg.get('output_depth_scale',
+                                                   cam_cfg.get('png_depth_scale', 10000.0)))
+            depth_uint16 = np.clip(depth_render * output_depth_scale, 0, 65535).astype(np.uint16)
             cv2.imwrite(os.path.join(depth_dir, '{:04d}.png'.format(frame_id)), depth_uint16)
 
 

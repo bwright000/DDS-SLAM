@@ -74,7 +74,8 @@ cam:
   fy: 768.98551924
   cx: 292.8861567
   cy: 291.61479526
-  png_depth_scale: 10000.0 # uint16 PNG scale for rendered depth output; was 8.0 — that collapsed endoscopic 0.05-0.5 m depths into uint16 values 0-4 (essentially binary) and made the Output Depth panel render blank in 6-panel comparison videos. 10000 gives ~5000 distinct levels in the typical range; matches the established standard (Addons/RESULTS_LOG.md row 13)
+  png_depth_scale: 8.0          # INPUT-data convention: SemSup NPYs are stored as depth_m*8 (see Addons/depth/generate_depth_for_ddsslam.py). SuperDataset divides loaded depth by this. DO NOT change without regenerating the NPY corpus.
+  output_depth_scale: 10000.0   # SAVE-only scale for rendered depth visualisation PNGs (ddsslam.py). Decoupled from png_depth_scale so save can be visualisation-friendly without breaking the input loader.
   crop_edge: 0
   near: 0
   far: 5
