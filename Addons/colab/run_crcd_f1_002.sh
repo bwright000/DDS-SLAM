@@ -69,7 +69,13 @@ if done_marker "$DRIVE_ROOT/semsup_v2"; then
   echo "  already shipped -- skip"
 else
   cd /content/DDS-SLAM
-  [ -d data/Super/trail_3 ] || { mkdir -p data/Super && cp -r /content/drive/MyDrive/Datasets/Super/trail_3 data/Super/; }
+  # Drive canonical path: MyDrive/Datasets/SemSup/v2_data/trial_3 (i — correct spelling)
+  # Repo config wants: data/Super/trail_3 (a — repo typo perpetuated through codebase)
+  # Copy renames at destination so DDS-SLAM's globs hit.
+  [ -d data/Super/trail_3 ] || {
+    mkdir -p data/Super
+    cp -r /content/drive/MyDrive/Datasets/SemSup/v2_data/trial_3 data/Super/trail_3
+  }
   python ddsslam.py --config configs/Super/trail3_paper_faithful_v2.yaml
   ship_to_drive output/trail3_paper_faithful_v2/demo "$DRIVE_ROOT/semsup_v2"
 fi
