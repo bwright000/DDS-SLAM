@@ -472,15 +472,21 @@ case "$T0_RC" in
 esac
 
 # ============================================================================
-# PHASE 4 -- T1_hash19 SLAM
+# PHASE 4 -- T1_hash19 SLAM  (env var SKIP_T1=1 skips this phase)
 # ============================================================================
-phase 4 "T1_hash19 (T0 + grid.hash_size 16->19 only)"
-T1_RC=0
-run_variant T1_hash19 output/StereoMIS/P2_1_T1_hash19 "$DRIVE_ROOT/T1_hash19" || T1_RC=$?
-case "$T1_RC" in
-  2) echo "FAILED_SLAM" > "$DRIVE_ROOT/T1_hash19/.FAILED" ;;
-  3) echo "FAILED_SHIP" > "$DRIVE_ROOT/T1_hash19/.FAILED" ;;
-esac
+if [ "${SKIP_T1:-0}" = "1" ]; then
+  phase 4 "T1_hash19 SKIPPED (SKIP_T1=1)"
+  mkdir -p "$DRIVE_ROOT/T1_hash19"
+  echo "SKIPPED" > "$DRIVE_ROOT/T1_hash19/.SKIPPED"
+else
+  phase 4 "T1_hash19 (T0 + grid.hash_size 16->19 only)"
+  T1_RC=0
+  run_variant T1_hash19 output/StereoMIS/P2_1_T1_hash19 "$DRIVE_ROOT/T1_hash19" || T1_RC=$?
+  case "$T1_RC" in
+    2) echo "FAILED_SLAM" > "$DRIVE_ROOT/T1_hash19/.FAILED" ;;
+    3) echo "FAILED_SHIP" > "$DRIVE_ROOT/T1_hash19/.FAILED" ;;
+  esac
+fi
 
 # ============================================================================
 # PHASE 5 -- PSNR/SSIM/LPIPS eval on both
