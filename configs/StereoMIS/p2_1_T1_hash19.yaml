@@ -1,0 +1,35 @@
+# StereoMIS P2_1 last-4000 — T0_literal + hash_size 16->19 ONLY.
+#
+# Single change vs T0_literal: grid.hash_size 16 -> 19.
+#
+# voxel_sdf is INTENTIONALLY kept at 0.002 (NOT 0.001 as SemSup paper-faithful
+# used).  Reason: StereoMIS bound (3.9 x 3.2 x 2.8 m) is ~14x larger than
+# SemSup's (1.4 x 1.4 x 0.5 m).  Voxel_sdf=0.001 would give top-level
+# resolution 3900 voxels/axis = ~5.9e10 / 524k hash buckets = ~113k collisions
+# per bucket.  Far beyond useful — collision soup.
+#
+# At hash=19 + voxel_sdf=0.002:
+#   res = 3.9/0.002 = 1950 voxels/axis = ~7.4e9 / 524k = ~14k collisions/bucket
+# Still high but ~10x better than hash=16 (which gave ~114k collisions/bucket).
+#
+# Tests: does the SemSup hash-bump breakthrough transfer to StereoMIS, given
+# we don't pair it with the (StereoMIS-impossible) finer voxel?
+# Expected: modest PSNR / LPIPS improvement, maybe minor ATE shift.
+# Per memory project_dds_slam_config_knob_deepdive_20260604 Rank-5, this is
+# exactly the "StereoMIS isolated hash-bump test" needed to gate propagating
+# hash=19 into the base stereomis.yaml.
+
+inherit_from: configs/StereoMIS/stereomis.yaml
+timesteps:  4000
+mapping:
+  bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+  marching_cubes_bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+
+grid:
+  hash_size: 19              # T1 CHANGE (was 16). voxel_sdf STAYS at 0.002.
+
+data:
+  datadir: data/P2_1
+  trainskip: 1
+  output: output/StereoMIS/P2_1_T1_hash19
+  exp_name: demo

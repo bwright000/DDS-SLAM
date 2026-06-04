@@ -1,0 +1,21 @@
+# StereoMIS P2_1 last-4000 — literal upstream control.
+# Inherits stereomis.yaml exactly (matches DDS-SLAM-Base verbatim).
+# Bound + intrinsics + schedule all upstream-literal.
+# NO Recipe A (designed for CRCD MoGe noise; StereoMIS has metric stereo depth).
+# NO paper-faithful representation correction (T1 variant tests that).
+#
+# Paper target on this benchmark: ATE 8.3 mm (Table II).
+# Our previous attempts hit ~50 mm — 5-6x gap.  This run + T1 will tell us
+# whether the gap is config-fixable.
+
+inherit_from: configs/StereoMIS/stereomis.yaml
+timesteps:  4000
+mapping:
+  bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+  marching_cubes_bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+
+data:
+  datadir: data/P2_1
+  trainskip: 1
+  output: output/StereoMIS/P2_1_T0_literal
+  exp_name: demo
