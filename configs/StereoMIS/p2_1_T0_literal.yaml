@@ -1,18 +1,33 @@
-# StereoMIS P2_1 last-4000 — literal upstream control.
-# Inherits stereomis.yaml exactly (matches DDS-SLAM-Base verbatim).
-# Bound + intrinsics + schedule all upstream-literal.
-# NO Recipe A (designed for CRCD MoGe noise; StereoMIS has metric stereo depth).
-# NO paper-faithful representation correction (T1 variant tests that).
+# StereoMIS P2_1 last-4000 — upstream KNOBS + MoGe-2 monocular depth.
 #
-# Paper target on this benchmark: ATE 8.3 mm (Table II).
-# Our previous attempts hit ~50 mm — 5-6x gap.  This run + T1 will tell us
-# whether the gap is config-fixable.
+# IMPORTANT: Paper used RAFT-Stereo (stereo, metric) per Sec IV.  We are
+# DELIBERATELY substituting MoGe-2 monocular depth here as an experiment —
+# testing whether the CRCD-style monocular pipeline extends to StereoMIS's
+# cm-scale motion regime (a more SNR-favourable benchmark than CRCD).
+#
+# Direct paper-target comparison (8.261 mm Table II) is NOT applicable
+# because paper depth source differs.  This is a "how much does monocular
+# cost vs stereo" probe on a benchmark with metric GT.
+#
+# Single deviation from upstream stereomis.yaml: cam.png_depth_scale 100 -> 10000
+# (matches MoGe-2 convention from Addons/depth/generate_depth_moge.py:
+# stored value = depth_m * 10000).
+#
+# Other knobs all match upstream:
+#   hash_size=16, voxel_sdf=0.002, iters=10, first_iters=200, lr=1e-3,
+#   tracking iter=10, n_range_d=16, trunc=0.1, far=2, depth_trunc=10.
+#
+# Semantic loss is already enabled via dataset.py + ddsslam.py:203
+# (rgb_weight * 0.1 = 0.5, matching paper lambda_m=0.5).
 
 inherit_from: configs/StereoMIS/stereomis.yaml
 timesteps:  4000
 mapping:
   bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
   marching_cubes_bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+
+cam:
+  png_depth_scale: 10000   # MoGe-2 convention (was 100 = RAFT-Stereo convention upstream)
 
 data:
   datadir: data/P2_1

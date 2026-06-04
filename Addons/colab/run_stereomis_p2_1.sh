@@ -102,30 +102,98 @@ fi
 activate_dds_env
 
 # ============================================================================
-# PHASE 1 -- stage StereoMIS P2_1 data from Drive to /content
+# PHASE 1 -- stage StereoMIS P2_1 rgb + masks + GT from Drive
+# (depth/ NOT expected — we generate via MoGe-2 in Phase 1.5)
 # ============================================================================
-phase 1 "stage StereoMIS P2_1 from Drive"
+phase 1 "stage StereoMIS P2_1 rgb + masks + GT from Drive (depth gen separately)"
 if [ -f "$STAGED/.STAGED" ]; then
   echo "  already staged"
 else
   [ -d "$DRIVE_DATA" ] || { echo "FATAL: $DRIVE_DATA not on Drive (per CLAUDE.local.md path: MyDrive/Datasets/StereoMisPP/P2_1/)"; exit 3; }
   mkdir -p "$STAGED"
   echo "  copying from $DRIVE_DATA ..."
-  # Use tar pipe for atomic + fast Drive read; copy what's needed
-  # (skip raw .mp4 if present — we just need the preprocessed frames + depth + GT)
-  (cd "$DRIVE_DATA" && tar cf - video_frames depth masks groundtruth.txt StereoCalibration.ini 2>/dev/null) \
+  # Stage rgb + masks + GT + calib.  DO NOT expect depth/ — we generate via MoGe.
+  (cd "$DRIVE_DATA" && tar cf - video_frames masks groundtruth.txt StereoCalibration.ini 2>/dev/null) \
     | (cd "$STAGED" && tar xf -) \
-    || { echo "FATAL: tar pipe failed (check $DRIVE_DATA contents)"; exit 3; }
+    || { echo "FATAL: tar pipe failed (check $DRIVE_DATA has video_frames/, masks/, groundtruth.txt)"; exit 3; }
   touch "$STAGED/.STAGED"
 fi
 N_L=$(find "$STAGED/video_frames" -maxdepth 1 -name '*l.png' 2>/dev/null | wc -l)
-N_D=$(find "$STAGED/depth" -maxdepth 1 -name '*.png' 2>/dev/null | wc -l)
+N_M=$(find "$STAGED/masks" -maxdepth 1 -name '*.png' 2>/dev/null | wc -l)
 N_G=$(grep -cv '^#' "$STAGED/groundtruth.txt" 2>/dev/null || echo 0)
-echo "  staged: left=$N_L  depth=$N_D  GT=$N_G"
-if [ "$N_L" -lt 4000 ] || [ "$N_D" -lt 4000 ] || [ "$N_G" -lt 4000 ]; then
-  echo "FATAL: insufficient frames staged (need >=4000 each, got L=$N_L D=$N_D G=$N_G)"
+echo "  staged: left=$N_L  masks=$N_M  GT=$N_G"
+if [ "$N_L" -lt 4000 ] || [ "$N_G" -lt 4000 ]; then
+  echo "FATAL: insufficient frames staged (need >=4000 rgb left + GT, got L=$N_L G=$N_G)"
   exit 3
 fi
+
+# ============================================================================
+# PHASE 1.5 -- generate MoGe-2 depth on the left rgb frames
+# ============================================================================
+phase 1.5 "MoGe-2 depth generation (4000 frames at 640x512, ~30-40 min on A100)"
+EXPECTED=$N_L
+ACTUAL_DEPTH=0
+[ -d "$STAGED/depth" ] && ACTUAL_DEPTH=$(find "$STAGED/depth" -maxdepth 1 -name '*.png' | wc -l)
+if [ -f "$STAGED/depth/.DONE" ] && [ "$ACTUAL_DEPTH" -ge "$EXPECTED" ]; then
+  echo "  depth/ complete ($ACTUAL_DEPTH/$EXPECTED) -- skip MoGe gen"
+else
+  echo "  depth/ incomplete ($ACTUAL_DEPTH/$EXPECTED) -- running MoGe-2"
+  # MoGe-2 requires torch>=2.0 (we have it via colab_setup.sh modern stack)
+  python3 -c 'from moge.model.v2 import MoGeModel' 2>/dev/null || {
+    echo "  installing MoGe-2..."
+    pip install -q git+https://github.com/microsoft/MoGe.git huggingface_hub 2>&1 | tail -5
+    python3 -c 'from moge.model.v2 import MoGeModel' \
+      || { echo "FATAL: MoGe-2 not importable after install"; exit 5; }
+  }
+  cd "$STAGED"
+  mkdir -p _moge_in _moge_npy depth.tmp
+  # Symlink: video_frames/NNNNNNl.png -> _moge_in/NNNNNN-left.png
+  for f in video_frames/*l.png; do
+    fid=$(basename "$f" l.png)
+    [ -L "_moge_in/${fid}-left.png" ] || ln -sf "$PWD/$f" "_moge_in/${fid}-left.png"
+  done
+  echo "  symlinks: $(ls _moge_in/ | wc -l)"
+  # Run MoGe-2 (no temporal smoothing — memory: 4000 frames at 640x512 float32
+  # = 5 GB peak; --temporal_window 1 keeps it under 4 GB).
+  # No --ref provided -> MoGe-2's native metric depth saved at scale 10000.
+  python3 /content/DDS-SLAM/Addons/depth/generate_depth_moge.py \
+    --rgb _moge_in --out _moge_npy \
+    --temporal_window 1 --depth_scale 10000 --max_depth_m 5.0 \
+    || { echo "FATAL: MoGe-2 generation failed"; exit 5; }
+  # Convert NPY -> uint16 PNG, named {fid}.png so dataset.py:121 glob hits
+  python3 - <<'PYEOF'
+import numpy as np, cv2, glob, os
+n_in = sorted(glob.glob('_moge_npy/*-left_depth.npy'))
+written = 0
+for p in n_in:
+    fid = os.path.basename(p).split('-')[0]
+    out = f'depth.tmp/{fid}.png'
+    if os.path.exists(out): continue
+    d = np.load(p).astype(np.float32)
+    tmp = f'depth.tmp/.{fid}.tmp.png'
+    cv2.imwrite(tmp, np.clip(d, 0, 65535).astype(np.uint16))
+    os.replace(tmp, out)
+    written += 1
+print(f'npy->png wrote {written} (of {len(n_in)} npy files)')
+PYEOF
+  NPY=$(ls _moge_npy/*-left_depth.npy 2>/dev/null | wc -l)
+  PNG=$(ls depth.tmp/*.png 2>/dev/null | wc -l)
+  if [ "$PNG" -ne "$NPY" ] || [ "$PNG" -lt "$EXPECTED" ]; then
+    echo "FATAL: depth count mismatch (png=$PNG npy=$NPY expected>=$EXPECTED). Keeping intermediates."
+    cd /content/DDS-SLAM
+    exit 5
+  fi
+  rm -rf depth && mv depth.tmp depth
+  sync; touch depth/.DONE; sync
+  rm -rf _moge_in _moge_npy
+  cd /content/DDS-SLAM
+  # Optional: persist depth back to Drive for future re-use
+  echo "  syncing depth back to Drive for future re-use"
+  mkdir -p "$DRIVE_DATA/depth"
+  cp -n "$STAGED/depth/"*.png "$DRIVE_DATA/depth/" 2>/dev/null || true
+fi
+N_D=$(find "$STAGED/depth" -maxdepth 1 -name '*.png' | wc -l)
+echo "  depth ready: $N_D files"
 
 # ============================================================================
 # PHASE 2 -- pre-flight GT motion sanity check

@@ -49,6 +49,11 @@ decoder:
   freq_n_xyz: 10             # Paper Sec III-A Eq (2): "L being 10 for x"
   freq_n_t: 4                # Paper Sec III-A Eq (2): "and 4 for t" (was 12 default = 3x over)
 
+cam:
+  png_depth_scale: 10000   # MoGe-2 convention (NOT paper's RAFT-Stereo at scale 100).
+                            # See T0_literal yaml for full caveat: this run uses
+                            # monocular MoGe-2 instead of paper's stereo depth.
+
 data:
   datadir: data/P2_1
   trainskip: 1
