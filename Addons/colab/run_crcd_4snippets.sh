@@ -138,13 +138,30 @@ for ROW in "${SNIPPETS[@]}"; do
 
   # --------------------------------------------------------------------------
   # PHASE 1 -- stage raw CRCD-Published from Drive
+  # Tarball-first (per StereoMIS lesson: per-item cp via Drive FUSE takes
+  # ~78 min for 8 GB; single sequential tar read is ~3-5 min).
   # --------------------------------------------------------------------------
   phase "1.$NAME" "stage raw CRCD-Published $EP/snippet_$SID from Drive"
+  DRIVE_TAR=$DRIVE_CRCD/${EP}_snippet_${SID}_staging.tar
   if [ -f "$RAW/.STAGED" ]; then
     echo "  raw already staged at $RAW"
+  elif [ -f "$DRIVE_TAR" ]; then
+    echo "  using tarball: $DRIVE_TAR ($(du -h "$DRIVE_TAR" | cut -f1))"
+    mkdir -p "$RAW"
+    T0=$(date +%s)
+    if ! tar xf "$DRIVE_TAR" -C "$RAW"; then
+      echo "FATAL: tarball extraction failed for $NAME"
+      rm -rf "$RAW"
+      exit 3
+    fi
+    echo "  tarball extracted in $(( ($(date +%s) - T0) / 60 )) min"
+    touch "$RAW/.STAGED"
   else
     DRIVE_SRC=$DRIVE_CRCD/$EP/snippet_$SID
     [ -d "$DRIVE_SRC" ] || { echo "FATAL: missing $DRIVE_SRC"; exit 3; }
+    echo "  WARN: no tarball at $DRIVE_TAR; using slow per-item cp"
+    echo "  TIP: build one-time tarball with:"
+    echo "       tar cf $DRIVE_TAR -C $DRIVE_SRC rgb rgbright semantic_instance groundtruth.txt intrinsics.yaml"
     mkdir -p "$RAW"
     copy_item "$DRIVE_SRC/rgb"               "$RAW/rgb"               "rgb"               || exit 3
     copy_item "$DRIVE_SRC/rgbright"          "$RAW/rgbright"          "rgbright"          || exit 3
