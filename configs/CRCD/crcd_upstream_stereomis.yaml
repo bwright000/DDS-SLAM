@@ -88,7 +88,7 @@ cam:
   png_depth_scale: 10000   # CRCD MoGe convention (upstream StereoMIS is 100)
   crop_edge: 0
   near: 0
-  far: 1                   # tighter than upstream's 2 (CRCD close-up)
+  far: 2                   # upstream StereoMIS (literal)
   depth_trunc: 10.
 
 training:

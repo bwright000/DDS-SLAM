@@ -8,17 +8,29 @@
 # buckets gives ~20x collision rate. May OOM or produce bad reconstruction. The
 # test point IS to see what literal-upstream-Super does on CRCD before edits.
 #
-# Every value taken verbatim from DDS-SLAM-Base/configs/Super/Super.yaml EXCEPT
-# cam.* (CRCD-rectified intrinsics).
+# Values are taken verbatim from DDS-SLAM-Base/configs/Super/Super.yaml EXCEPT
+# the following DATA-DRIVEN deviations (NOT knob deviations):
+#   * cam.{H,W,fx,fy,cx,cy} — CRCD ECM_STEREO 720x1280 rectified intrinsics
+#   * cam.png_depth_scale 8.0 -> 10000 — CRCD MoGe-2 PNG convention
+#   * dataset 'super' -> 'stereomis' — CRCD data ships in StereoMIS layout
+#     (video_frames/NNNNNNl.png + groundtruth.txt), not SemSup's NPY format.
+#   * use_semantic True -> False, semantic_weight 0.5 -> 0 — CRCD has no
+#     semantic annotations; with dataset='stereomis' the loader returns no
+#     'semantic' key, so use_semantic=True would crash on dict lookup. This
+#     is a data-availability deviation, not a knob choice.
+#   * render_freq 1 -> 10 — bumped to keep ablation symmetric with T0_SM and
+#     produce ~27 renders per run for PSNR/SSIM/LPIPS measurement.
 #
 # Do NOT inherit from configs/CRCD/crcd.yaml — see crcd_upstream_stereomis.yaml
 # comment for rationale.
 
 dataset: 'stereomis'         # CRCD uses StereoMIS dataset class (not 'super')
-use_semantic: True
+use_semantic: False          # CRCD has no semantic GT; StereoMIS loader returns
+                             # no 'semantic' key. use_semantic=True would crash.
 use_normal: False
 dynamic: True
 render_freq: 10              # bumped from upstream's 1 — keeps ablation symmetric
+                             # with T0_SM and enables ~27 renders for PSNR/SSIM/LPIPS
 data:
   downsample: 1
   sc_factor: 1
@@ -101,7 +113,7 @@ training:
   normal_weight: 0.000
   normal_loss: 0.000
   rgb_weight: 5
-  semantic_weight: 0.5
+  semantic_weight: 0           # was 0.5 upstream; CRCD has no semantic GT (see use_semantic above)
   angle_loss_weight: 0
   depth_weight: 0.1
   sdf_weight: 1000

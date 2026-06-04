@@ -117,7 +117,11 @@ PYEOF
 fi
 
 # ============================================================================
-# Helper: run one variant and ship
+# Helper: run one variant and ship.  Returns:
+#   0  = SLAM + ship both succeeded
+#   2  = SLAM crashed (likely OOM / config error / hash collision divergence)
+#   3  = SLAM succeeded but ship failed (rare; Drive issue or disk full)
+# Caller can distinguish by exit code.
 # ============================================================================
 run_variant() {
   local NAME=$1 OUT=$2 DST=$3
@@ -128,24 +132,48 @@ run_variant() {
   echo "=== run $NAME ==="
   T0=$(date +%s)
   cd /content/DDS-SLAM
-  python ddsslam.py --config "configs/CRCD/c1_001_ABL_${NAME}.yaml"
-  echo "  $NAME elapsed: $(( ($(date +%s) - T0) / 60 )) min"
-  ship_to_drive "$OUT" "$DST"
+  if ! python ddsslam.py --config "configs/CRCD/c1_001_ABL_${NAME}.yaml"; then
+    echo "  $NAME SLAM exited non-zero (rc=$?). Likely OOM or config issue."
+    return 2
+  fi
+  echo "  $NAME SLAM elapsed: $(( ($(date +%s) - T0) / 60 )) min"
+  if ! ship_to_drive "$OUT" "$DST"; then
+    echo "  $NAME ship_to_drive failed (Drive issue or disk full?). SLAM output kept at $OUT."
+    return 3
+  fi
+  return 0
 }
 
 # ============================================================================
 # PHASE 2 -- T0_SM: literal upstream StereoMIS
+# Distinguish SLAM failures (rc=2) from shipping failures (rc=3); only the
+# latter is recoverable from local /content/ output.
 # ============================================================================
 phase 2 "T0_SM (literal upstream StereoMIS p2_1)"
-run_variant T0_SM output/CRCD/C1_001_ABL_T0_SM "$DRIVE_ROOT/T0_SM"
+T0_SM_RC=0
+run_variant T0_SM output/CRCD/C1_001_ABL_T0_SM "$DRIVE_ROOT/T0_SM" || T0_SM_RC=$?
+if [ "$T0_SM_RC" -eq 2 ]; then
+  echo "  T0_SM SLAM crashed (rc=2). Marking FAILED but continuing to T0_SS."
+  echo "FAILED_SLAM" > "$DRIVE_ROOT/T0_SM/.FAILED"
+elif [ "$T0_SM_RC" -eq 3 ]; then
+  echo "  T0_SM ship failed (rc=3). SLAM output is at output/CRCD/C1_001_ABL_T0_SM ;"
+  echo "  metrics will still be computed from local /content/ output in Phases 4-5."
+  echo "FAILED_SHIP" > "$DRIVE_ROOT/T0_SM/.FAILED"
+fi
 
 # ============================================================================
 # PHASE 3 -- T0_SS: literal upstream Super (may OOM on T4)
 # ============================================================================
 phase 3 "T0_SS (literal upstream Super trail3)"
-if ! run_variant T0_SS output/CRCD/C1_001_ABL_T0_SS "$DRIVE_ROOT/T0_SS"; then
-  echo "  T0_SS FAILED (likely OOM on T4 from voxel_sdf=0.0002 + hash=16 + 1.4 m bound)."
-  echo "FAILED_OOM_OR_OTHER" > "$DRIVE_ROOT/T0_SS/.FAILED"
+T0_SS_RC=0
+run_variant T0_SS output/CRCD/C1_001_ABL_T0_SS "$DRIVE_ROOT/T0_SS" || T0_SS_RC=$?
+if [ "$T0_SS_RC" -eq 2 ]; then
+  echo "  T0_SS SLAM crashed (rc=2) -- likely OOM (voxel_sdf=0.0002 + hash=16 + 1.4 m bound)."
+  echo "FAILED_SLAM" > "$DRIVE_ROOT/T0_SS/.FAILED"
+elif [ "$T0_SS_RC" -eq 3 ]; then
+  echo "  T0_SS ship failed (rc=3). SLAM output kept at output/CRCD/C1_001_ABL_T0_SS ;"
+  echo "  metrics will still be computed from local /content/ output in Phases 4-5."
+  echo "FAILED_SHIP" > "$DRIVE_ROOT/T0_SS/.FAILED"
 fi
 
 # ============================================================================
@@ -157,8 +185,10 @@ for V in T0_SM T0_SS; do
   if [ ! -d "$LOCAL_OUT" ]; then
     echo "  $V: no local output -- skip"; continue
   fi
-  if [ -f "$DRIVE_ROOT/$V/.FAILED" ]; then
-    echo "  $V: marked FAILED -- skip"; continue
+  # Only skip if SLAM itself crashed (no usable renders). Ship-failure still
+  # produces a complete local output we can evaluate.
+  if [ -f "$DRIVE_ROOT/$V/.FAILED" ] && grep -q FAILED_SLAM "$DRIVE_ROOT/$V/.FAILED"; then
+    echo "  $V: SLAM crashed (per .FAILED) -- skip eval"; continue
   fi
   EVAL_OUT=$DRIVE_ROOT/_eval/${V}_render.txt
   EVAL_CSV=$DRIVE_ROOT/_eval/${V}_render.csv
@@ -176,12 +206,21 @@ done
 # PHASE 5 -- combined summary (Sim3 ATE + render metrics)
 # ============================================================================
 phase 5 "combined T0 summary"
+if [ ! -d "$DRIVE_ROOT/_eval" ]; then
+  echo "  FATAL: $DRIVE_ROOT/_eval missing -- Phase 0 mkdir failed silently?"
+  exit 1
+fi
 SUMMARY=$DRIVE_ROOT/summary.txt
 : > "$SUMMARY"
-python3 - >> "$SUMMARY" 2>&1 <<'PYEOF'
+python3 - >> "$SUMMARY" 2>&1 <<PYEOF
 import os, csv, glob, numpy as np
 GT = '/content/DDS-SLAM/data/CRCD/C1_001/groundtruth.txt'
-DR = sorted(glob.glob('/content/drive/MyDrive/Outputs/dds_crcd_c1_001_T0_*'))[-1]
+# Use the runbook's own DRIVE_ROOT (set by the parent shell) instead of a glob
+# pattern — the glob version would silently pick the wrong directory if there
+# are multiple T0 runs in the same day.
+DR = '$DRIVE_ROOT'
+if not os.path.isdir(DR):
+    raise FileNotFoundError(f"DRIVE_ROOT missing: {DR}")
 
 def parse_est(p):
     poses=[]
