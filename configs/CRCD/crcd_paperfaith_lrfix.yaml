@@ -1,0 +1,56 @@
+# CRCD preliminary batch config — paper-faithful + F1 lr-fix.
+#
+# Purpose: preliminary 4-snippet DDS-SLAM run (C_1/001, F_1/002, C_2/001,
+# F_3/007) for comparison against SNI-SLAM on the same snippets.
+#
+# Built from crcd.yaml (which has Recipe A iters=20/first_iters=1000 baked
+# in) by REVERTING Recipe A (per project_crcd_c1_001_SM_chain_results_20260604
+# — Recipe A showed slight tracker regression at depth ×1.0) and applying
+# the F1 catastrophic-flaw fix (lr_trans/lr_rot 1e-3 -> 1e-4 per
+# project_lr_fix_breakthrough_20260429 BC0 cut StereoMIS ATE 39%).
+#
+# Six deviations vs crcd.yaml:
+#   1. mapping.iters         20   -> 10   (REVERT Recipe A)
+#   2. mapping.first_iters   1000 -> 200  (REVERT Recipe A)
+#   3. mapping.lr_rot/trans  1e-3 -> 1e-4 (F1 fix)
+#   4. tracking.lr_rot/trans 1e-3 -> 1e-4 (F1 fix)
+#   5. decoder.freq_n_xyz    12   -> 10   (paper Sec III-A Eq (2))
+#      decoder.freq_n_t      12   -> 4    (paper Sec III-A Eq (2))
+#   6. render_freq           100  -> 1    (6-panel video needs all frames)
+#
+# Locked at user direction (2026-06-04):
+#   - tracking.const_speed: True (preliminary baseline; we discussed False
+#     as cheap F2 proxy but deferred)
+#   - data.sc_factor:       set per-snippet by stereo-anchor calibration
+#     (Phase 1.6 in runbook) — frame-0 SGBM on left+right rgb pair
+#
+# Already paper-faithful in crcd.yaml (preserved):
+#   - grid.hash_size: 19      (SemSup +0.888 dB; encodings.py default)
+#   - grid.voxel_sdf: 0.001   (paired with hash=19 per Recipe C constraint)
+#   - training.n_range_d: 16  (paper-correct)
+#   - cam intrinsics: fx=1096.70, cx=622.81 (CRCD da Vinci ECM rectified)
+#   - cam.png_depth_scale: 10000 (MoGe-2 convention)
+#
+# Semantic loss enabled via dataset.py + ddsslam.py:203 (rgb_weight * 0.1 = 0.5,
+# matches paper lambda_m=0.5).  CRCD semantic data is via CRCD-Published
+# semantic_instance — preprocessed mask path per per-snippet config.
+#
+# Per-snippet overrides (only): timesteps, bound, datadir, output, exp_name.
+# sc_factor written by Phase 1.6 stereo anchor at runbook time.
+
+inherit_from: configs/CRCD/crcd.yaml
+render_freq: 1   # 6-panel video — all frames rendered (was 100 in base)
+
+mapping:
+  iters: 10              # REVERT Recipe A (was 20)
+  first_iters: 200       # REVERT Recipe A (was 1000)
+  lr_rot: 0.0001         # F1 fix (was 1e-3)
+  lr_trans: 0.0001       # F1 fix (was 1e-3)
+
+tracking:
+  lr_rot: 0.0001         # F1 fix (was 1e-3)
+  lr_trans: 0.0001       # F1 fix (was 1e-3)
+
+decoder:
+  freq_n_xyz: 10         # Paper Sec III-A Eq (2): "L being 10 for x"
+  freq_n_t: 4            # Paper Sec III-A Eq (2): "and 4 for t" (was 12 default = 3x over)

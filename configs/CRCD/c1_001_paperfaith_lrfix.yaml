@@ -1,0 +1,25 @@
+# C_1/001 preliminary — paperfaith_lrfix base + per-snippet overrides
+#
+# Snippet stats:
+#   - GT poses        : 360  (authoritative from F:/Datasets/CRCD-Published)
+#                       NOT 271 — local data is stale per reference_crcd_local_data_stale_20260604
+#   - GT path         : 18.55 mm
+#   - GT extent (mm)  : 5.3 x 2.7 x 16.8
+#   - Active fraction : 41.8% (motion >1um); static 58.2%
+#   - Active median   : 0.115 mm/f (8.7x sub-SNR per feedback_sim3_ate_misleading_subsnr)
+#   - Sentinel verdict: REJECT for tracker benchmarking (sub-SNR + high-static)
+#                       Keep for render-quality + diagnostic comparison vs SNI-SLAM
+#
+# Bound: same as c1_001.yaml (validated on prior runs); covers GT extent + pad.
+
+inherit_from: configs/CRCD/crcd_paperfaith_lrfix.yaml
+timesteps: 360                                # full authoritative slice
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_paperfaith_lrfix
+  exp_name: demo

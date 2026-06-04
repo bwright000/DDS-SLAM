@@ -1,0 +1,28 @@
+# C_2/001 preliminary — paperfaith_lrfix base + per-snippet overrides
+#
+# Snippet stats:
+#   - GT poses        : 730  (mid-sized)
+#   - GT extent (mm)  : ~29 x 11 x 17  (LARGEST X-extent of the 4 — best
+#                       chance of cm-scale motion bursts)
+#   - Active median   : TBD (not yet characterised — Phase 2 sanity-check
+#                       will measure)
+#   - Sentinel verdict: BEST CANDIDATE of the 4 — 29 mm extent gives the
+#                       highest hope of crossing tracker noise floor at peak
+#                       motion.  Closest to SNI-SLAM benchmark interpretability.
+#                       If Pearson rises above 0.5 anywhere, here.
+#
+# Bound: hand-derived for 29x11x17 mm extent + ~10cm pad.  Wider in X than
+# C_1/001 to accommodate the larger motion range; same Z range since Z-extent
+# similar (17 vs 16.8 mm).  Verify by checking frame-0 depth post-staging.
+
+inherit_from: configs/CRCD/crcd_paperfaith_lrfix.yaml
+timesteps: 730
+mapping:
+  bound: [[-0.12,0.17],[-0.04,0.20],[0.68,0.92]]
+  marching_cubes_bound: [[-0.12,0.17],[-0.04,0.20],[0.68,0.92]]
+
+data:
+  datadir: data/CRCD/C2_001
+  trainskip: 1
+  output: output/CRCD/C2_001_paperfaith_lrfix
+  exp_name: demo

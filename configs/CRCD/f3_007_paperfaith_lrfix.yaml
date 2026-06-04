@@ -1,0 +1,23 @@
+# F_3/007 preliminary — paperfaith_lrfix base + per-snippet overrides
+#
+# Snippet stats:
+#   - GT poses        : 300  (smallest)
+#   - GT extent (mm)  : ~1 x 3 x 3  (smallest GT motion of the 4)
+#   - Active median   : ~0.010 mm/f (extreme sub-SNR estimate)
+#   - Sentinel verdict: REJECT — smallest motion of the 4; tracker has no
+#                       chance of recovering signal.  Useful only for render
+#                       quality + SNI-SLAM stability comparison.
+#
+# Bound: same as f3_007.yaml (validated on prior runs).
+
+inherit_from: configs/CRCD/crcd_paperfaith_lrfix.yaml
+timesteps: 300
+mapping:
+  bound: [[-0.108,0.133],[-0.046,0.197],[0.747,0.99]]
+  marching_cubes_bound: [[-0.108,0.133],[-0.046,0.197],[0.747,0.99]]
+
+data:
+  datadir: data/CRCD/F3_007
+  trainskip: 1
+  output: output/CRCD/F3_007_paperfaith_lrfix
+  exp_name: demo

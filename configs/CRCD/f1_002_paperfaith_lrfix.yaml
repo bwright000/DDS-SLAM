@@ -1,0 +1,28 @@
+# F_1/002 preliminary — paperfaith_lrfix base + per-snippet overrides
+#
+# Snippet stats:
+#   - GT poses        : 1287 (longest snippet of the 4)
+#   - GT path         : ~12 mm (estimated; need to re-measure on authoritative)
+#   - GT extent (mm)  : ~9 x 11 x 7
+#   - Active median   : ~0.009 mm/f (extreme sub-SNR per F_1/002 first-run finding)
+#   - Sentinel verdict: REJECT (most extreme sub-SNR of the 4)
+#                       Render-quality + comparison only
+#   - Prior result    : raw ATE 164 mm; Sim3 ATE 3.76 mm — Sim3 misleads here
+#                       per feedback_sim3_ate_misleading_subsnr
+#
+# MoGe-2 depth for this snippet was ALREADY generated and cached on Drive at
+# MyDrive/Datasets/CRCD-Published/F_1/snippet_002/depth/ (1287 PNGs at scale
+# 10000) from the 2026-06-03 SNI-SLAM preflight session.  Runbook should
+# detect and reuse rather than regenerate.
+
+inherit_from: configs/CRCD/crcd_paperfaith_lrfix.yaml
+timesteps: 1287
+mapping:
+  bound: [[-0.08,0.13],[-0.03,0.18],[0.75,0.96]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.03,0.18],[0.75,0.96]]
+
+data:
+  datadir: data/CRCD/F1_002
+  trainskip: 1
+  output: output/CRCD/F1_002_paperfaith_lrfix
+  exp_name: demo
