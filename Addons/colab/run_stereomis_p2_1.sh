@@ -227,6 +227,186 @@ N_D=$(find "$STAGED/depth" -maxdepth 1 -name '*.png' | wc -l)
 echo "  depth ready: $N_D files"
 
 # ============================================================================
+# PHASE 1.6 -- Frame-0 stereo anchor calibration
+#
+# MoGe-2 is monocular up-to-scale.  We use OpenCV SGBM on the matching
+# left+right rectified frames to get a metric depth anchor at frame 0,
+# then compute sc_factor = median(stereo_depth / moge_depth) over pixels
+# where stereo matching is reliable.
+#
+# StereoMIS calibration: baseline = 4.16 mm (Stryker 1488 surgical scope,
+# from StereoCalibration.ini T_0 = -4.159885).  Rectified fx = 560.07 px
+# at 640x512.  Expected disparities 1-10 px for surgical abdominal depths
+# 0.5-2 m.
+#
+# Sets cam.png_depth_scale_override which the SLAM picks up via sc_factor
+# (or regenerates MoGe with corrected scale if sc_factor far from 1).
+# ============================================================================
+phase 1.6 "Frame-0 stereo anchor calibration"
+CALIB_OUT="$STAGED/.sc_factor"
+if [ -f "$CALIB_OUT" ]; then
+  echo "  calibration cached: sc_factor = $(cat $CALIB_OUT)"
+  SC_FACTOR=$(cat "$CALIB_OUT")
+else
+  python3 - <<PYEOF
+import configparser, cv2, numpy as np, os, sys, glob
+
+STAGED = '$STAGED'
+
+# Parse calibration: baseline = |T_0| in mm -> metres
+calib_path = f'{STAGED}/StereoCalibration.ini'
+if not os.path.isfile(calib_path):
+    print(f'WARN: {calib_path} missing, falling back to baseline=4.16mm', file=sys.stderr)
+    baseline_m = 0.00416
+else:
+    cfg = configparser.ConfigParser()
+    cfg.read(calib_path)
+    T_x_mm = abs(float(cfg['StereoRight']['T_0']))
+    baseline_m = T_x_mm * 1e-3  # ini values are in mm
+
+# Rectified focal length (from p2_1.yaml comment / config)
+fx_rectified = 560.0741
+
+# Identify SLAM-relevant frame 0 (= dataset.py:120 last-4000 slice start)
+all_left = sorted(glob.glob(f'{STAGED}/video_frames/*l.png'))
+if len(all_left) < 4000:
+    print(f'FATAL: only {len(all_left)} left frames staged', file=sys.stderr)
+    sys.exit(1)
+slam_frame0_path = all_left[-4000]
+fid = os.path.basename(slam_frame0_path).replace('l.png', '')
+right_path = f'{STAGED}/video_frames/{fid}r.png'
+moge_path = f'{STAGED}/depth/{fid}.png'
+
+print(f'  baseline    : {baseline_m*1000:.3f} mm')
+print(f'  fx rectified: {fx_rectified:.2f} px')
+print(f'  SLAM frame 0: {fid} ({slam_frame0_path})')
+
+# Load left + right (rectified, 640x512)
+left  = cv2.imread(slam_frame0_path, cv2.IMREAD_GRAYSCALE)
+right = cv2.imread(right_path,       cv2.IMREAD_GRAYSCALE)
+if left is None or right is None:
+    print(f'FATAL: cannot read frame 0 left/right at {slam_frame0_path}', file=sys.stderr)
+    sys.exit(1)
+print(f'  rgb shape   : {left.shape}')
+
+# Load MoGe depth at the same frame (uint16 PNG at scale 10000)
+moge_png = cv2.imread(moge_path, cv2.IMREAD_UNCHANGED)
+if moge_png is None:
+    print(f'FATAL: MoGe depth not at {moge_path} -- did Phase 1.5 complete?', file=sys.stderr)
+    sys.exit(1)
+moge_depth_m = moge_png.astype(np.float32) / 10000.0
+print(f'  MoGe depth  : median={np.median(moge_depth_m[moge_depth_m>0]):.3f} m, '
+      f'p10={np.percentile(moge_depth_m[moge_depth_m>0], 10):.3f} m, '
+      f'p90={np.percentile(moge_depth_m[moge_depth_m>0], 90):.3f} m')
+
+# Run SGBM stereo (settings tuned for small surgical baselines)
+sgbm = cv2.StereoSGBM_create(
+    minDisparity=0,
+    numDisparities=64,
+    blockSize=7,
+    P1=8*1*7**2,
+    P2=32*1*7**2,
+    disp12MaxDiff=1,
+    uniquenessRatio=10,
+    speckleWindowSize=100,
+    speckleRange=32,
+    mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY,
+)
+disp = sgbm.compute(left, right).astype(np.float32) / 16.0  # 4-bit subpixel
+
+valid_stereo = disp > 0.5  # reject zero/negative disparities (invalid matches)
+n_valid = int(valid_stereo.sum())
+print(f'  stereo valid: {n_valid}/{disp.size} ({100*n_valid/disp.size:.1f}%)')
+if n_valid < 1000:
+    print(f'FATAL: too few valid stereo pixels ({n_valid} < 1000) -- check rectification', file=sys.stderr)
+    sys.exit(2)
+
+stereo_depth_m = np.zeros_like(disp)
+stereo_depth_m[valid_stereo] = baseline_m * fx_rectified / disp[valid_stereo]
+
+# Filter to plausible surgical depth range 0.05-3.0 m (excludes infinity-points and very-close outliers)
+valid_combined = valid_stereo & (stereo_depth_m > 0.05) & (stereo_depth_m < 3.0) & (moge_depth_m > 0.01)
+n_combined = int(valid_combined.sum())
+print(f'  joint valid : {n_combined} pixels (after 0.05-3.0m depth filter + MoGe>0.01m)')
+if n_combined < 500:
+    print(f'FATAL: too few joint-valid pixels for reliable sc_factor', file=sys.stderr)
+    sys.exit(2)
+
+s_d = stereo_depth_m[valid_combined]
+m_d = moge_depth_m[valid_combined]
+ratios = s_d / m_d
+
+sc_factor = float(np.median(ratios))
+print(f'  stereo depth median (valid): {np.median(s_d):.3f} m')
+print(f'  MoGe depth median (joint)  : {np.median(m_d):.3f} m')
+print(f'  ratio p25/median/p75       : {np.percentile(ratios,25):.3f} / {sc_factor:.3f} / {np.percentile(ratios,75):.3f}')
+print(f'')
+print(f'  sc_factor = stereo / MoGe  = {sc_factor:.4f}')
+
+# Save
+with open(f'{STAGED}/.sc_factor', 'w') as fh:
+    fh.write(f'{sc_factor:.6f}\n')
+print(f'  saved to {STAGED}/.sc_factor')
+PYEOF
+  if [ ! -f "$CALIB_OUT" ]; then
+    echo "FATAL: stereo anchor calibration failed"
+    exit 4
+  fi
+  SC_FACTOR=$(cat "$CALIB_OUT")
+fi
+
+# Decide whether to apply: skip if within sqrt(2)x of 1.0 (no significant rescale needed)
+APPLY=$(python3 -c "
+import math
+s = $SC_FACTOR
+print('1' if abs(math.log(s)) > 0.1 else '0')")
+if [ "$APPLY" = "1" ]; then
+  echo "  sc_factor $SC_FACTOR is > 10% off 1.0 -- patching configs/StereoMIS/p2_1_{T0_literal,T1_hash19}.yaml"
+  for V in T0_literal T1_hash19; do
+    Y="/content/DDS-SLAM/configs/StereoMIS/p2_1_${V}.yaml"
+    # Remove any prior data.sc_factor line, then insert one
+    python3 - <<PYEOF
+import yaml, sys
+path = '$Y'
+with open(path) as f:
+    text = f.read()
+# Use string manipulation to preserve comments — yaml.dump would strip them.
+# Find or insert under "data:" block.
+lines = text.splitlines()
+out = []
+in_data = False
+inserted = False
+for line in lines:
+    if line.startswith('data:'):
+        in_data = True
+        out.append(line)
+        continue
+    if in_data and not inserted and line and not line.startswith(' '):
+        # Exited data block without finding sc_factor -- insert before this top-level line
+        out.append(f'  sc_factor: $SC_FACTOR   # stereo-anchor calibrated, Phase 1.6')
+        inserted = True
+        in_data = False
+    if 'sc_factor:' in line and in_data:
+        out.append(f'  sc_factor: $SC_FACTOR   # stereo-anchor calibrated, Phase 1.6')
+        inserted = True
+        continue
+    out.append(line)
+if not inserted:
+    out.append('  sc_factor: $SC_FACTOR   # stereo-anchor calibrated, Phase 1.6')
+with open(path, 'w') as f:
+    f.write('\n'.join(out) + '\n')
+print(f'  patched {path}')
+PYEOF
+  done
+  INCONSISTENCY=$(python3 -c "print(round(abs(1-$SC_FACTOR)*100,1))")
+  echo "  WARN: F7 latent bug applies -- sc_factor only fully scales trunc at scene_rep.py:99,417;"
+  echo "        range_d, near, far, depth_trunc remain at raw values.  For sc_factor=$SC_FACTOR"
+  echo "        the inconsistency is ${INCONSISTENCY}% per threshold."
+else
+  echo "  sc_factor $SC_FACTOR is within 10% of 1.0 — no rescale needed, MoGe-2 is metric on this snippet"
+fi
+
+# ============================================================================
 # PHASE 2 -- pre-flight GT motion sanity check
 # ============================================================================
 phase 2 "GT motion profile sanity"
