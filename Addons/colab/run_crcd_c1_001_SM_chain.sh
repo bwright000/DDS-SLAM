@@ -54,10 +54,16 @@ activate_dds_env() {
   fi
   python -c "import torch, tinycudann, marching_cubes; assert torch.cuda.is_available()" \
     || { echo "env check FAIL"; exit 1; }
-  python -c "import lpips" 2>/dev/null || {
+  if ! python -c "import lpips" 2>/dev/null; then
     echo "  installing lpips for rendering eval..."
-    pip install -q lpips
-  }
+    if ! pip install -q lpips; then
+      echo "  ERROR: lpips pip install failed -- LPIPS metric will be missing from summary"
+      echo "  Continue anyway; PSNR + SSIM + ATE will still be computed."
+    fi
+    # Verify the install actually succeeded — pip can silently leave a broken package
+    python -c "import lpips" 2>/dev/null || \
+      echo "  WARN: lpips still not importable after install; LPIPS metric will be empty"
+  fi
   export LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
 }
 
@@ -117,6 +123,19 @@ fi
 N_RGB=$(find "$STAGED/video_frames" -maxdepth 1 -name '*l.png' | wc -l)
 N_DEPTH=$(find "$STAGED/depth" -maxdepth 1 -name '*.png' | wc -l)
 echo "  staged data: rgb=$N_RGB depth=$N_DEPTH"
+# Defensive: a stale .STAGED from a prior partial preprocess could leave
+# fewer-than-expected frames behind.  C_1/001 has 360 frames per the 3-test
+# summary; threshold of 250 catches gross truncation while tolerating minor
+# variations.
+if [ "$N_RGB" -lt 250 ] || [ "$N_DEPTH" -lt 250 ]; then
+  echo "  ERROR: insufficient staged data (rgb=$N_RGB depth=$N_DEPTH; expected ~360 each)"
+  echo "         Likely a partial / stale .STAGED.  Re-run the T0 / 3test runbook to refresh."
+  exit 1
+fi
+if [ "$N_RGB" -ne "$N_DEPTH" ]; then
+  echo "  ERROR: rgb count ($N_RGB) does not match depth count ($N_DEPTH)"
+  exit 1
+fi
 
 # ============================================================================
 # PHASE 2 -- SM_v1 (paper representation upgrade)
@@ -186,6 +205,13 @@ else
   echo "  T0 root: $PRIOR"
   mkdir -p /content/_retro_T0
   for V in T0_SM T0_SS; do
+    # Skip retroactive eval if the prior T0 variant SLAM crashed — its
+    # payload.tgz won't contain meaningful renders.  (Mirrors the Phase 5
+    # guard for the new variants.)
+    if [ -f "$PRIOR/$V/.FAILED" ] && grep -q FAILED_SLAM "$PRIOR/$V/.FAILED"; then
+      echo "  $V: prior SLAM crashed (per .FAILED) -- skip retroactive eval"
+      continue
+    fi
     SRC=$PRIOR/$V/payload.tgz
     DST=/content/_retro_T0/$V
     if [ ! -f "$SRC" ]; then echo "  missing $SRC -- skip"; continue; fi
