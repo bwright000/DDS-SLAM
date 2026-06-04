@@ -1,20 +1,26 @@
 # Ablation T0_SS — LITERAL upstream DDS-SLAM-Base Super (SemSup) values on CRCD C_1/001.
-# Aggressive baseline: iters 200, first_iters 1000, lr 1e-4, voxel_sdf 0.0002, k=1.
-# Depth ×1.0 (MoGe native).
+# Aggressive baseline: iters 200, first_iters 1000, lr 1e-4, voxel_sdf 0.0002,
+# keyframe_every=1. Depth ×1.0 (MoGe native).
 #
-# Expected: high VRAM, may OOM on T4. If runs, possibly best PSNR of T0/T1 tier
-# (high compute) but raw ATE still wrecked by MoGe scale. If it OOMs, that's a
-# data point too — confirms upstream Super doesn't directly transfer to CRCD-class
-# data without scene-scale adaptation.
+# Bound = literal upstream DDS-SLAM-Base/configs/Super/trail3.yaml values:
+#     [[-0.7, 0.7], [-0.7, 0.7], [0.7, 1.2]]
+# This is a 1.4 x 1.4 x 0.5 m box with z range 0.7-1.2 m. With MoGe native
+# depth (~0.6 m surfaces) this bound is right on the edge — z=0.7 may CLIP
+# the surface side. Worth seeing what the literal config does.
 #
-# Wall: estimate ~3-5× T0_SM time on T4 (~3-5 hr). If too slow, skip and document.
+# voxel_sdf=0.0002 with bound 1.4 m gives top-level resolution 1.4/0.0002 =
+# 7000 voxels per axis. Hash 2^16 = 65k buckets => collision factor ~7.5 x 10^5.
+# T0_SS may OOM on T4 or train very slowly. If it OOMs, that is data — confirms
+# upstream Super does not transfer to CRCD-class close-up data verbatim.
+#
+# Wall: estimate ~3-5x T0_SM time on T4 (~3-5 hr). If too slow, kill and document.
 
 inherit_from: configs/CRCD/crcd_upstream_super.yaml
 timesteps: 271
 
 mapping:
-  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
-  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
+  marching_cubes_bound: [[-0.7,0.7],[-0.7,0.7],[0.7,1.2]]
 
 data:
   datadir: data/CRCD/C1_001
