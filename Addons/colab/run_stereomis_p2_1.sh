@@ -183,9 +183,28 @@ fi
 # PHASE 1.5 -- generate MoGe-2 depth on the left rgb frames
 # ============================================================================
 phase 1.5 "MoGe-2 depth generation (4000 frames at 640x512, ~30-40 min on A100)"
-EXPECTED=$N_L
+# EXPECTED matches the slice in MoGe symlink loop below + dataset.py:120 [-4000:].
+# Previously this was $N_L (=8465) which caused "depth count mismatch
+# png=4000 expected>=8465" FATAL after a clean MoGe run produced the right
+# 4000 files.  Fix: clamp to 4000 since that's both what we generate AND
+# what SLAM consumes.
+SLICE_N=4000
+EXPECTED=$(( N_L < SLICE_N ? N_L : SLICE_N ))
 ACTUAL_DEPTH=0
 [ -d "$STAGED/depth" ] && ACTUAL_DEPTH=$(find "$STAGED/depth" -maxdepth 1 -name '*.png' | wc -l)
+# Salvage path: if a previous run left depth.tmp/ complete but failed the
+# spurious EXPECTED check, promote it instead of regenerating (~30 min on A100).
+if [ -d "$STAGED/depth.tmp" ] && [ ! -f "$STAGED/depth/.DONE" ]; then
+  TMP_COUNT=$(find "$STAGED/depth.tmp" -maxdepth 1 -name '*.png' | wc -l)
+  if [ "$TMP_COUNT" -ge "$EXPECTED" ]; then
+    echo "  promoting existing depth.tmp/ ($TMP_COUNT files >= $EXPECTED) to depth/"
+    rm -rf "$STAGED/depth"
+    mv "$STAGED/depth.tmp" "$STAGED/depth"
+    sync; touch "$STAGED/depth/.DONE"; sync
+    rm -rf "$STAGED/_moge_in" "$STAGED/_moge_npy"
+    ACTUAL_DEPTH=$TMP_COUNT
+  fi
+fi
 if [ -f "$STAGED/depth/.DONE" ] && [ "$ACTUAL_DEPTH" -ge "$EXPECTED" ]; then
   echo "  depth/ complete ($ACTUAL_DEPTH/$EXPECTED) -- skip MoGe gen"
 else

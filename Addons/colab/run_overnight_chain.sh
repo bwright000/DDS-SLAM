@@ -38,18 +38,25 @@ cd /content/DDS-SLAM
 git fetch origin && git merge --ff-only origin/main 2>&1 | tee -a "$CHAIN_LOG"
 
 # ============================================================================
-# STAGE 1 -- StereoMIS T0 only
+# STAGE 1 -- StereoMIS T0 only  (env var SKIP_STEREOMIS=1 skips this stage)
 # ============================================================================
-echo "" | tee -a "$CHAIN_LOG"
-echo "============================================================" | tee -a "$CHAIN_LOG"
-echo "=== STAGE 1: StereoMIS P2_1 T0_literal (SKIP_T1=1)" | tee -a "$CHAIN_LOG"
-echo "============================================================" | tee -a "$CHAIN_LOG"
-T0_START=$(date +%s)
-SKIP_T1=1 bash /content/DDS-SLAM/Addons/colab/run_stereomis_p2_1.sh 2>&1 | tee -a "$CHAIN_LOG"
-T0_RC=$?
-T0_ELAPSED=$(( ($(date +%s) - T0_START) / 60 ))
-echo "" | tee -a "$CHAIN_LOG"
-echo "=== STAGE 1 done in ${T0_ELAPSED} min (exit $T0_RC) at $(date -Iseconds)" | tee -a "$CHAIN_LOG"
+if [ "${SKIP_STEREOMIS:-0}" = "1" ]; then
+  echo "" | tee -a "$CHAIN_LOG"
+  echo "=== STAGE 1 SKIPPED (SKIP_STEREOMIS=1)" | tee -a "$CHAIN_LOG"
+  T0_RC=0
+  T0_ELAPSED=0
+else
+  echo "" | tee -a "$CHAIN_LOG"
+  echo "============================================================" | tee -a "$CHAIN_LOG"
+  echo "=== STAGE 1: StereoMIS P2_1 T0_literal (SKIP_T1=1)" | tee -a "$CHAIN_LOG"
+  echo "============================================================" | tee -a "$CHAIN_LOG"
+  T0_START=$(date +%s)
+  SKIP_T1=1 bash /content/DDS-SLAM/Addons/colab/run_stereomis_p2_1.sh 2>&1 | tee -a "$CHAIN_LOG"
+  T0_RC=$?
+  T0_ELAPSED=$(( ($(date +%s) - T0_START) / 60 ))
+  echo "" | tee -a "$CHAIN_LOG"
+  echo "=== STAGE 1 done in ${T0_ELAPSED} min (exit $T0_RC) at $(date -Iseconds)" | tee -a "$CHAIN_LOG"
+fi
 
 # ============================================================================
 # STAGE 2 -- CRCD 4-snippet batch
