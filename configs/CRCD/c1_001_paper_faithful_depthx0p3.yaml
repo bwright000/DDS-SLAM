@@ -4,6 +4,12 @@ mapping:
   bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
   marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
 
+  # PINNED to baseline schedule (see c1_001_paper_faithful.yaml comment). This
+  # variant isolates the depth-scale hypothesis (H2) ONLY — keeping the same
+  # iters/first_iters as paper_faithful so the comparison is depth-rescale-vs-not.
+  iters: 10
+  first_iters: 200
+
 data:
   datadir: data/CRCD/C1_001
   trainskip: 1

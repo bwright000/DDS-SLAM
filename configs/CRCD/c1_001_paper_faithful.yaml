@@ -4,6 +4,14 @@ mapping:
   bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
   marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
 
+  # PINNED to the 2026-06-04 baseline. Base crcd.yaml moved to Recipe A
+  # (first_iters 1000, iters 20) per project_dds_slam_config_knob_deepdive_20260604;
+  # this control variant keeps the original StereoMIS-inherited values so the
+  # C_1/001 3-test (paper_faithful vs semsup_sched vs depthx0p3) stays a clean
+  # A/B/C against the under-training baseline.
+  iters: 10
+  first_iters: 200
+
 data:
   datadir: data/CRCD/C1_001
   trainskip: 1
@@ -13,8 +21,8 @@ data:
 # Paper-faithful corrections from the SemSup recreation breakthrough
 # (project_paper_recreation_breakthrough_20260602):
 #   - grid.hash_size 16 -> 19 (8x bigger hash table; matches encodings.py default)
-# Same config skeleton as f1_002_paper_faithful.yaml — applied to the smaller
-# C_1/001 snippet (360 frames, ~15-20 min A100) as the cross-snippet anchor
-# for the 4-snippet sweep + as the control vs semsup_sched / depthx0p3 tests.
+# Note: this override is REDUNDANT post-2026-06-04 (base crcd.yaml now also at 19)
+# but kept for snapshot reproducibility — removing it would mean future config
+# audits couldn't tell whether this variant was hash-corrected.
 grid:
   hash_size: 19

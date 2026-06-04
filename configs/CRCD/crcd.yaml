@@ -11,7 +11,17 @@ data:
 mapping:
   sample: 2048
   first_mesh: True
-  iters: 10
+  # Recipe A (project_dds_slam_config_knob_deepdive_20260604):
+  #   iters       10 -> 20    (per-keyframe mapping refinement; paper says k=5/iters=10
+  #                            for long StereoMIS, k=1/iters=200 for short SemSup. CRCD
+  #                            sits between; 20 is the conservative Recipe A step that
+  #                            survived the 7-investigator adversarial filter)
+  #   first_iters 200 -> 1000 (matches Super.yaml; under-trained canonical anchor on
+  #                            real surgical specular data was the #1 hypothesis)
+  # Variants that need the old StereoMIS-inherited schedule (e.g. the 2026-06-04
+  # 3-test paper_faithful + paper_faithful_depthx0p3 baselines) MUST pin
+  # iters: 10 + first_iters: 200 explicitly.
+  iters: 20
   cur_frame_iters: 0
   lr_embed: 0.01
   lr_decoder: 0.01
@@ -20,7 +30,7 @@ mapping:
   keyframe_every: 5
   map_every: 5
   n_pixels: 0.05
-  first_iters: 200
+  first_iters: 1000
   optim_cur: True
   min_pixels_cur: 1024
   map_accum_step: 1
@@ -44,13 +54,23 @@ tracking:
 grid:
   enc: 'HashGrid'
   tcnn_encoding: True
-  hash_size: 16
+  # hash_size 16 -> 19 (project_paper_recreation_breakthrough_20260602):
+  # SemSup isolated ablation showed +0.888 dB PSNR / -0.034 LPIPS from this
+  # alone (28% of the paper gap). encodings.py default is 19; the previous
+  # 16 was an 8x undersized hash table that aliases at the top resolution
+  # level. paper-faithful CRCD variants (c1_001_paper_faithful, f1_002, etc)
+  # have run with 19 since 2026-06-02 with no regression — base config catches
+  # up here. StereoMIS deliberately HELD at 16 in stereomis.yaml pending the
+  # isolated P2_1 last-4000 sweep (project_dds_slam_config_knob_deepdive_20260604
+  # Rank 5).
+  hash_size: 19
   voxel_color: 0.08
-  # Run 4 (2026-04-22): voxel_sdf 0.002 -> 0.001 in isolation (only this
-  # change vs Run 1). Doubles linear scene resolution (12 -> 25 voxels
-  # across 25 mm CRCD scene). Leaves hash_size, all sampling params, and
-  # training budget at Run 1 defaults. Tests whether finer representation
-  # alone helps when the sampling-regulariser params are preserved.
+  # voxel_sdf 0.002 -> 0.001 (Run 4, 2026-04-22): doubles linear scene
+  # resolution (12 -> 25 voxels across the 25 mm CRCD scene). In isolation
+  # with hash_size=16 this REGRESSED catastrophically (Run 4: ATE 2.20 ->
+  # 788 mm) due to hash-table collision pressure at the new resolution. The
+  # finer voxel grid is now safe BECAUSE hash_size=19 is in force above
+  # (Recipe C constraint: voxel_sdf finer ONLY if hash_size >= 19).
   voxel_sdf: 0.001
   oneGrid: True
   resolution: [64, 64, 64, 100]
