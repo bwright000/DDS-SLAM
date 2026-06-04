@@ -199,12 +199,16 @@ else
   }
   cd "$STAGED"
   mkdir -p _moge_in _moge_npy depth.tmp
-  # Symlink: video_frames/NNNNNNl.png -> _moge_in/NNNNNN-left.png
-  for f in video_frames/*l.png; do
+  # CRITICAL: dataset.py:120 slices [-4000:] of video_frames/*l.png at SLAM time.
+  # Generating MoGe for ALL 8465 frames wastes 4465 frames of compute AND doubles
+  # peak memory (caused OOM at frame 5380 on 2026-06-04 evening).
+  # Symlink only the last 4000 left frames — matches what dataset.py consumes.
+  for f in $(ls video_frames/*l.png | tail -4000); do
     fid=$(basename "$f" l.png)
     [ -L "_moge_in/${fid}-left.png" ] || ln -sf "$PWD/$f" "_moge_in/${fid}-left.png"
   done
-  echo "  symlinks: $(ls _moge_in/ | wc -l)"
+  N_SYM=$(ls _moge_in/ | wc -l)
+  echo "  symlinks: $N_SYM (last-4000 slice of $(ls video_frames/*l.png | wc -l) total)"
   # Run MoGe-2 (no temporal smoothing — memory: 4000 frames at 640x512 float32
   # = 5 GB peak; --temporal_window 1 keeps it under 4 GB).
   # No --ref provided -> MoGe-2's native metric depth saved at scale 10000.
