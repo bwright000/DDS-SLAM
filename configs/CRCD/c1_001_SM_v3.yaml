@@ -1,0 +1,43 @@
+# SM_v3 = SM_v2 + MoGe depth scale correction.
+# Single change vs SM_v2: cam.png_depth_scale 10000 -> 62500, making loaded
+# depth = MoGe_metres x 0.16.
+#
+# Math: 3-test depthx0p3 (rescale x0.30) gave Sim3 scale s=0.5324, meaning the
+# est trajectory was still 1.88x too big after x0.30 rescale.  Linear
+# extrapolation: 0.30 x 0.5324 = 0.16 should land s ~= 1.0 (paper-comparable
+# absolute scale).
+#
+# Bound STILL at literal upstream p2_1 [[-1.8,2.1],[-2,1.2],[-0.1,2.7]] —
+# preserves the single-change-per-step principle.  Surfaces at MoGe x 0.16 =
+# ~0.097 m are well within the upstream room-scale bound's z=[-0.1, 2.7].  No
+# bound-mismatch issue here (unlike with the tight CRCD-fit bound).
+#
+# CAVEAT: depth rescale x0.16 is specific to CRCD with MoGe-2 monocular depth.
+# Applying it to StereoMIS (calibrated stereo depth) would actively destroy
+# performance.  This config is the v3 endpoint of the "100% good idea on CRCD"
+# chain — the generalised CRCD config (modulo bound, which is a separate
+# experiment).
+
+inherit_from: configs/CRCD/crcd_upstream_stereomis.yaml
+timesteps: 271
+
+mapping:
+  bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+  marching_cubes_bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+  iters: 20                  # SM_v2
+  first_iters: 1000          # SM_v2
+
+grid:
+  hash_size: 19              # SM_v1
+  voxel_sdf: 0.001           # SM_v1
+
+cam:
+  png_depth_scale: 62500     # SM_v3 CHANGE (was 10000).
+                             # depth_m = stored_uint16 / 62500
+                             # = (MoGe_m * 10000) / 62500 = MoGe_m * 0.16
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_SM_v3
+  exp_name: demo

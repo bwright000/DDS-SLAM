@@ -1,0 +1,29 @@
+# SM_v2 = SM_v1 + Recipe A (mapping schedule).
+# Single change vs SM_v1: mapping.iters 10 -> 20 AND mapping.first_iters 200 -> 1000.
+#
+# Isolates: per-keyframe optimisation budget.  Recipe A is the sole survivor of
+# the 2026-06-03 7-investigator adversarial filter on DDS-SLAM CRCD tuning
+# (project_dds_slam_tuning_playbook_20260603).  Hypothesis: real surgical tissue
+# + noisy MoGe depth needs more iters per keyframe than the conservative
+# StereoMIS schedule allows.
+#
+# Bound, depth scale, and representation (hash/voxel) all preserved from SM_v1.
+
+inherit_from: configs/CRCD/crcd_upstream_stereomis.yaml
+timesteps: 271
+
+mapping:
+  bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+  marching_cubes_bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+  iters: 20                  # SM_v2 CHANGE (was 10)
+  first_iters: 1000          # SM_v2 CHANGE (was 200)
+
+grid:
+  hash_size: 19              # SM_v1
+  voxel_sdf: 0.001           # SM_v1
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_SM_v2
+  exp_name: demo

@@ -1,0 +1,30 @@
+# SM_v1 = T0_SM + paper-faithful representation upgrade.
+# Single change vs T0_SM: grid.hash_size 16 -> 19 AND grid.voxel_sdf 0.002 -> 0.001
+# (paired per playbook Recipe C — voxel_sdf=0.001 with hash_size=16 caused
+# C1_001 Run 4's 358x ATE regression, so the two must move together).
+#
+# Isolates: representation capacity (hash collision rate + grid resolution).
+# Expected (project_paper_recreation_breakthrough_20260602, SemSup isolated):
+#   +0.888 dB PSNR / -0.034 LPIPS in isolation.
+# This was also deployed in CRCD paper_faithful (yesterday's 3-test) with no
+# regression observed.
+#
+# Bound = LITERAL upstream p2_1.yaml [[-1.8,2.1],[-2,1.2],[-0.1,2.7]], preserved
+# from T0_SM so the single-change-per-step principle holds.
+
+inherit_from: configs/CRCD/crcd_upstream_stereomis.yaml
+timesteps: 271
+
+mapping:
+  bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+  marching_cubes_bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+
+grid:
+  hash_size: 19              # SM_v1 CHANGE (was 16)
+  voxel_sdf: 0.001           # SM_v1 CHANGE (was 0.002), paired with hash bump
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_SM_v1
+  exp_name: demo
