@@ -106,10 +106,12 @@ activate_dds_env
 # (depth/ NOT expected — we generate via MoGe-2 in Phase 1.5)
 # ============================================================================
 phase 1 "stage StereoMIS P2_1 rgb + masks + GT from Drive (depth gen separately)"
-# Robust per-item copy: cp -r first, rsync --partial fallback.
-# No stderr suppression — failures must be diagnosable.
-# Designed for Drive FUSE which can drop mid-read on large dirs (~8 GB
-# video_frames/ exceeds Drive's stable single-stream read window).
+# Tarball-first staging.  Drive FUSE per-file reads are catastrophically slow
+# for 8000+ small files (~70 min observed); a single ~8 GB sequential tar
+# read is 3-5 min.  Per-item cp/rsync kept as fallback for first-time
+# bootstrapping if tarball doesn't exist yet.
+DRIVE_TAR=/content/drive/MyDrive/Datasets/StereoMisPP/P2_1_staging.tar
+
 copy_item() {
   local SRC=$1 DST=$2 LABEL=$3
   if [ ! -e "$SRC" ]; then
@@ -133,19 +135,38 @@ copy_item() {
 
 if [ -f "$STAGED/.STAGED" ]; then
   echo "  already staged"
-else
-  [ -d "$DRIVE_DATA" ] || { echo "FATAL: $DRIVE_DATA not on Drive (per CLAUDE.local.md path: MyDrive/Datasets/StereoMisPP/P2_1/)"; exit 3; }
+elif [ -f "$DRIVE_TAR" ]; then
+  echo "  using tarball staging: $DRIVE_TAR ($(du -h "$DRIVE_TAR" | cut -f1))"
   mkdir -p "$STAGED"
-  # Per-item copy — failure localises and tells us which dir/file fails.
-  # DO NOT copy depth/ — we generate via MoGe-2 in Phase 1.5 per user direction.
-  # (Drive's depth/ contains the paper's stereo depth; deliberately bypassed.)
+  # Single sequential read from Drive then local extract.
+  T0=$(date +%s)
+  if ! tar xf "$DRIVE_TAR" -C "$STAGED"; then
+    echo "FATAL: tarball extraction failed; falling back to per-item cp"
+    rm -rf "$STAGED"
+    mkdir -p "$STAGED"
+    copy_item "$DRIVE_DATA/video_frames"    "$STAGED/video_frames"    "video_frames"    || exit 3
+    copy_item "$DRIVE_DATA/masks"           "$STAGED/masks"           "masks"           || exit 3
+    copy_item "$DRIVE_DATA/groundtruth.txt" "$STAGED/groundtruth.txt" "groundtruth.txt" || exit 3
+    [ -e "$DRIVE_DATA/StereoCalibration.ini" ] && \
+      copy_item "$DRIVE_DATA/StereoCalibration.ini" "$STAGED/StereoCalibration.ini" "StereoCalibration.ini"
+  else
+    echo "  tarball extracted in $(( ($(date +%s) - T0) / 60 )) min"
+  fi
+  touch "$STAGED/.STAGED"
+else
+  # Tarball doesn't exist — fall back to per-item cp/rsync.
+  [ -d "$DRIVE_DATA" ] || { echo "FATAL: $DRIVE_DATA not on Drive"; exit 3; }
+  echo "  WARN: no tarball at $DRIVE_TAR; using slow per-item cp/rsync"
+  echo "  TIP: build a one-time tarball with:"
+  echo "       tar cf $DRIVE_TAR -C $DRIVE_DATA video_frames masks groundtruth.txt StereoCalibration.ini"
+  mkdir -p "$STAGED"
   copy_item "$DRIVE_DATA/video_frames"    "$STAGED/video_frames"    "video_frames"    || exit 3
   copy_item "$DRIVE_DATA/masks"           "$STAGED/masks"           "masks"           || exit 3
   copy_item "$DRIVE_DATA/groundtruth.txt" "$STAGED/groundtruth.txt" "groundtruth.txt" || exit 3
   if [ -e "$DRIVE_DATA/StereoCalibration.ini" ]; then
     copy_item "$DRIVE_DATA/StereoCalibration.ini" "$STAGED/StereoCalibration.ini" "StereoCalibration.ini" || exit 3
   else
-    echo "  StereoCalibration.ini absent on Drive -- skipping (not consumed by ddsslam.py directly)"
+    echo "  StereoCalibration.ini absent on Drive -- skipping"
   fi
   touch "$STAGED/.STAGED"
 fi
