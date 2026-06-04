@@ -1,0 +1,27 @@
+inherit_from: configs/CRCD/crcd.yaml
+timesteps: 271
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_paper_faithful_depthx0p3
+  exp_name: demo
+
+# Tests hypothesis #2 from project_crcd_f1_002_sim3_finding_20260603:
+# MoGe-2 monocular depth is up-to-scale. F1/002 median was 0.605 m vs expected
+# 0.1-0.2 m endoscopic (~3x too far). Sim3 optimal scale was 0.018 (collapses
+# ALL three error sources at once: absolute scale + per-frame jitter + sub-SNR).
+# A clean 0.3x rescale targets just the absolute-scale component.
+#
+# Implementation: rather than regenerating depth NPYs/PNGs (slow), absorb the
+# scale into png_depth_scale: stored = depth_m * 10000 (unchanged on disk);
+# recovered = stored / 33333 = depth_m * 0.3.  10000/0.3 = 33333.
+cam:
+  png_depth_scale: 33333
+
+# Paper-faithful corrections
+grid:
+  hash_size: 19

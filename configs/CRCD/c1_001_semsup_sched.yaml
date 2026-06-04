@@ -1,0 +1,39 @@
+inherit_from: configs/CRCD/crcd.yaml
+timesteps: 271
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+
+  # SemSup-style compute schedule (Recipe A from project_dds_slam_tuning_playbook_20260603).
+  # CRCD inherits StereoMIS-style values that are 5-20x lower per-frame than
+  # SemSup; this is the suspected dominant cause of PSNR 18.6 on F1/002. Test on
+  # the smaller C_1/001 (~15-20 min A100 baseline, ~30-40 min with this schedule)
+  # before committing to it for the full 4-snippet sweep.
+  iters: 50          # was 10. Recipe A x 2.5 compromise (SemSup uses 200)
+  first_iters: 1000  # was 200. SemSup PF level. One-shot, cheap.
+  lr_rot: 0.0001     # was 0.001. SemSup PF level. Co-SLAM BC0 found this critical.
+  lr_trans: 0.0001   # was 0.001. Same.
+  mapping_window_size: 5
+
+tracking:
+  iter: 20           # was 10. Recipe D + SemSup PF level.
+  lr_rot: 0.0001     # was 0.001. Match mapping.
+  lr_trans: 0.0001
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_semsup_sched
+  exp_name: demo
+
+# Paper-faithful corrections (proven on SemSup; expected to compound with the
+# SemSup-style schedule above)
+grid:
+  hash_size: 19
+
+training:
+  smooth_weight: 0.00001   # was 0.000001. R11 — mild specular-noise suppression
+                           #               for endoscopic tissue/tool reflections.
+
+# Save renders every 10 frames (was every 100) for visual inspection.
+render_freq: 10
