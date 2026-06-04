@@ -1,0 +1,23 @@
+# Ablation T0_SS — LITERAL upstream DDS-SLAM-Base Super (SemSup) values on CRCD C_1/001.
+# Aggressive baseline: iters 200, first_iters 1000, lr 1e-4, voxel_sdf 0.0002, k=1.
+# Depth ×1.0 (MoGe native).
+#
+# Expected: high VRAM, may OOM on T4. If runs, possibly best PSNR of T0/T1 tier
+# (high compute) but raw ATE still wrecked by MoGe scale. If it OOMs, that's a
+# data point too — confirms upstream Super doesn't directly transfer to CRCD-class
+# data without scene-scale adaptation.
+#
+# Wall: estimate ~3-5× T0_SM time on T4 (~3-5 hr). If too slow, skip and document.
+
+inherit_from: configs/CRCD/crcd_upstream_super.yaml
+timesteps: 271
+
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_ABL_T0_SS
+  exp_name: demo

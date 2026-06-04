@@ -1,0 +1,32 @@
+# Ablation T3 = T2 + depth ×0.16.
+# Single change vs T2: cam.png_depth_scale 10000 -> 62500 (= 10000 / 0.16),
+# making loaded depth ×0.16 of MoGe's native output. Targets sim3_s -> 1.0
+# (the 3-test's depthx0p3 result gave sim3_s = 0.5324 with rescale ×0.30,
+# implying optimal is ~0.30 × 0.5324 ≈ 0.16).
+#
+# Bound STILL at MoGe-native [0.68, 0.90] — INTENTIONAL MISMATCH. With depth
+# ×0.16, surfaces are at ~0.097 m, outside the bound. Tests whether the bound
+# saturation is fatal or merely sub-optimal. T4 fixes the bound.
+
+inherit_from: configs/CRCD/crcd_upstream_stereomis.yaml
+timesteps: 271
+
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  iters: 20                  # T2
+  first_iters: 1000          # T2
+
+grid:
+  hash_size: 19              # T1
+  voxel_sdf: 0.001           # T1
+
+cam:
+  png_depth_scale: 62500     # T3 CHANGE (was 10000). depth_m = stored / 62500
+                             # = MoGe_m * 10000 / 62500 = MoGe_m * 0.16
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_ABL_T3_depthx16
+  exp_name: demo

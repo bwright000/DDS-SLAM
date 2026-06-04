@@ -1,0 +1,24 @@
+# Ablation T0_SM — LITERAL upstream DDS-SLAM-Base StereoMIS values on CRCD C_1/001.
+# This is the rollback baseline. No paper-faithful corrections, no Recipe A,
+# no depth rescale. Hash 16, voxel_sdf 0.002, iters 10, first_iters 200, lr 1e-3.
+# Depth ×1.0 (MoGe native).
+#
+# Expected: high SE3 ATE (likely 30-50 mm) because MoGe scale + StereoMIS schedule
+# is the worst combo. PSNR/SSIM should still produce reasonable renders because
+# the bound DOES fit MoGe's native depth at z=[0.68, 0.90].
+#
+# Bound = original CRCD C_1/001 bound (matches MoGe ~0.7 m surface depth).
+# Bound is preserved across T0..T3 so each step isolates one knob; T4 fixes it.
+
+inherit_from: configs/CRCD/crcd_upstream_stereomis.yaml
+timesteps: 271
+
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_ABL_T0_SM
+  exp_name: demo

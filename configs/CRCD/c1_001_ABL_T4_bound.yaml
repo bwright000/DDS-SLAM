@@ -1,0 +1,34 @@
+# Ablation T4 = T3 + corrected bound for rescaled depth.
+# Single change vs T3: mapping.bound z range [0.68, 0.90] -> [-0.05, 0.22] so
+# the SDF/marching-cubes grid actually contains the rescaled surfaces at ~0.097m.
+# x/y unchanged (camera positions don't change with depth rescale).
+#
+# This is the BEST-SHOT config of the ablation chain: upstream StereoMIS schedule
+# (minus Recipe A bump) + paper-faithful representation + depth ×0.16 + matched
+# bound. If sim3_s lands near 1.0 here AND PSNR/SSIM/LPIPS hold or improve over
+# T3, the bound was contributing to the result. If T3 ≈ T4 on quality, the
+# bound saturation wasn't load-bearing (hash grid handles out-of-bound queries
+# more gracefully than feared).
+
+inherit_from: configs/CRCD/crcd_upstream_stereomis.yaml
+timesteps: 271
+
+mapping:
+  # T4 CHANGE: z range covers cameras (~origin) + rescaled surfaces (0.097m) + pad
+  bound: [[-0.08,0.13],[-0.02,0.18],[-0.05,0.22]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[-0.05,0.22]]
+  iters: 20                  # T2
+  first_iters: 1000          # T2
+
+grid:
+  hash_size: 19              # T1
+  voxel_sdf: 0.001           # T1
+
+cam:
+  png_depth_scale: 62500     # T3 (depth ×0.16)
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_ABL_T4_bound
+  exp_name: demo

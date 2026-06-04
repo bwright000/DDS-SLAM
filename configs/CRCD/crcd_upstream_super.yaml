@@ -1,0 +1,130 @@
+# LITERAL upstream DDS-SLAM-Base Super (SemSup) values + CRCD intrinsics + CRCD
+# scene bound. Used as the ablation chain's "aggressive baseline" — the Super
+# regime is high-compute (iters=200, first_iters=1000, lr=1e-4, voxel_sdf=0.0002,
+# keyframe_every=1).
+#
+# WARNING: voxel_sdf=0.0002 with hash_size=16 on a 22cm-deep CRCD scene gives
+# a 22cm/0.0002 = 1100-voxel-per-axis top-level resolution. Hash table of 65k
+# buckets gives ~20x collision rate. May OOM or produce bad reconstruction. The
+# test point IS to see what literal-upstream-Super does on CRCD before edits.
+#
+# Every value taken verbatim from DDS-SLAM-Base/configs/Super/Super.yaml EXCEPT
+# cam.* (CRCD-rectified intrinsics).
+#
+# Do NOT inherit from configs/CRCD/crcd.yaml — see crcd_upstream_stereomis.yaml
+# comment for rationale.
+
+dataset: 'stereomis'         # CRCD uses StereoMIS dataset class (not 'super')
+use_semantic: True
+use_normal: False
+dynamic: True
+render_freq: 10              # bumped from upstream's 1 — keeps ablation symmetric
+data:
+  downsample: 1
+  sc_factor: 1
+  translation: 0
+  num_workers: 0
+
+mapping:
+  sample: 2048
+  first_mesh: True
+  iters: 200                 # upstream Super
+  lr_embed: 0.01
+  lr_decoder: 0.01
+  lr_rot: 0.0001             # upstream Super
+  lr_trans: 0.0001           # upstream Super
+  keyframe_every: 1          # upstream Super (short-sequence regime)
+  map_every: 1               # upstream Super
+  n_pixels: 0.05
+  first_iters: 1000          # upstream Super
+  optim_cur: True
+  min_pixels_cur: 100        # upstream Super (was 1024 in StereoMIS)
+  map_accum_step: 1
+  cur_frame_iters: 100       # upstream Super (was 0 in StereoMIS)
+  pose_accum_step: 5
+  map_wait_step: 0
+  filter_depth: False
+  mapping_window_size: 5     # upstream Super
+
+tracking:
+  iter: 20                   # upstream Super
+  sample: 1024
+  pc_samples: 40960
+  lr_rot: 0.0001             # upstream Super
+  lr_trans: 0.0001           # upstream Super
+  ignore_edge_W: 1
+  ignore_edge_H: 1
+  iter_point: 0
+  wait_iters: 100
+  const_speed: True
+  best: True
+
+grid:
+  enc: 'HashGrid'
+  tcnn_encoding: True
+  hash_size: 16              # upstream Super
+  voxel_color: 0.0008        # upstream Super (was 0.08 in StereoMIS)
+  voxel_sdf: 0.0002          # upstream Super (was 0.002 in StereoMIS)
+  oneGrid: True
+
+pos:
+  enc: 'OneBlob'
+  n_bins: 16
+  n_frequencies: 16          # upstream Super-only
+
+decoder:
+  geo_feat_dim: 15
+  hidden_dim: 32
+  num_layers: 2
+  num_layers_color: 2
+  hidden_dim_color: 64
+  hidden_dim_time: 128
+  num_layers_time: 4
+  tcnn_network: False
+  learnable_beta: True
+
+cam:
+  # CRCD-specific (NOT upstream — upstream is 480x640 @ fx=768.99)
+  H: 720
+  W: 1280
+  fx: 1096.69619
+  fy: 1096.69619
+  cx: 622.807617
+  cy: 383.12598
+  png_depth_scale: 10000     # CRCD MoGe convention
+  crop_edge: 0
+  near: 0
+  far: 5                     # upstream Super
+  depth_trunc: 5.            # upstream Super
+
+training:
+  normal_weight: 0.000
+  normal_loss: 0.000
+  rgb_weight: 5
+  semantic_weight: 0.5
+  angle_loss_weight: 0
+  depth_weight: 0.1
+  sdf_weight: 1000
+  fs_weight: 10
+  eikonal_weight: 0
+  smooth_weight: 0           # upstream Super (was 0.000001 in StereoMIS)
+  smooth_pts: 32
+  smooth_vox: 0.1
+  smooth_margin: 0.05
+  n_samples_d: 32
+  range_d: 0.1               # upstream Super (was 0.05 in StereoMIS)
+  n_range_d: 11              # upstream Super (paper typo; should be 16)
+  n_importance: 0
+  perturb: 1
+  white_bkgd: False
+  trunc: 0.1
+  rot_rep: 'axis_angle'
+  rgb_missing: 0.05
+
+mesh:
+  resolution: 512
+  render_color: False
+  vis: 500
+  voxel_eval: 0.03
+  voxel_final: 0.03
+  visualisation: False

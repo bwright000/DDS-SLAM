@@ -1,0 +1,25 @@
+# Ablation T1 = T0_SM + paper-faithful representation upgrade.
+# Single change vs T0_SM: hash_size 16 -> 19 AND voxel_sdf 0.002 -> 0.001
+# (paired per playbook Recipe C — voxel_sdf finer ONLY if hash_size>=19).
+#
+# Isolates: representation capacity (hash collision rate + grid resolution).
+# Expected effect (from project_paper_recreation_breakthrough_20260602 on SemSup):
+# +0.888 dB PSNR / -0.034 LPIPS in isolation. On CRCD with MoGe ×1.0 the
+# scale problem still dominates raw ATE — this is purely a render-quality test.
+
+inherit_from: configs/CRCD/crcd_upstream_stereomis.yaml
+timesteps: 271
+
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+
+grid:
+  hash_size: 19              # T1 CHANGE (was 16)
+  voxel_sdf: 0.001           # T1 CHANGE (was 0.002), paired with hash bump
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_ABL_T1_paperrep
+  exp_name: demo

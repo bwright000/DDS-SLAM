@@ -1,0 +1,26 @@
+# Ablation T2 = T1 + Recipe A (mapping schedule bump).
+# Single change vs T1: mapping.iters 10 -> 20 AND mapping.first_iters 200 -> 1000.
+#
+# Isolates: per-keyframe optimization budget (Recipe A, sole survivor of the
+# 2026-06-03 7-investigator adversarial filter).
+# Expected: +0.3-0.8 dB PSNR if under-fitting was real on CRCD canonical anchor.
+# Depth still ×1.0 (MoGe native scale) — raw ATE still wrecked.
+
+inherit_from: configs/CRCD/crcd_upstream_stereomis.yaml
+timesteps: 271
+
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  iters: 20                  # T2 CHANGE (was 10)
+  first_iters: 1000          # T2 CHANGE (was 200)
+
+grid:
+  hash_size: 19              # T1
+  voxel_sdf: 0.001           # T1
+
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_ABL_T2_recipeA
+  exp_name: demo
