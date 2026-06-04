@@ -1,23 +1,40 @@
-# StereoMIS P2_1 last-4000 — T0_literal + hash_size 16->19 ONLY.
+# StereoMIS P2_1 last-4000 — T0_literal + paper-faithful corrections + our empirical hash bump.
 #
-# Single change vs T0_literal: grid.hash_size 16 -> 19.
+# THREE differences vs T0_literal:
 #
-# voxel_sdf is INTENTIONALLY kept at 0.002 (NOT 0.001 as SemSup paper-faithful
-# used).  Reason: StereoMIS bound (3.9 x 3.2 x 2.8 m) is ~14x larger than
-# SemSup's (1.4 x 1.4 x 0.5 m).  Voxel_sdf=0.001 would give top-level
-# resolution 3900 voxels/axis = ~5.9e10 / 524k hash buckets = ~113k collisions
-# per bucket.  Far beyond useful — collision soup.
+# 1. grid.hash_size 16 -> 19  (EMPIRICAL — NOT paper-mandated)
+#    Paper's "L=16" (Sec III-A) is the number of multi-resolution hash GRID
+#    LEVELS, NOT log2(table size).  Paper doesn't specify entries-per-level.
+#    We bump 2^16 -> 2^19 (65k -> 524k entries) based on the SemSup
+#    +0.888 dB PSNR / -0.034 LPIPS empirical breakthrough
+#    (project_paper_recreation_breakthrough_20260602).
+#    voxel_sdf is INTENTIONALLY kept at 0.002 (not 0.001 like SemSup paper-faithful):
+#    StereoMIS bound (3.9m) is 14x larger than SemSup's (1.4m).  voxel_sdf=0.001
+#    would give top-level resolution 3900 voxels/axis = ~5.9e10 / 524k buckets =
+#    ~113k collisions/bucket → collision soup.  At hash=19 + voxel_sdf=0.002:
+#    1950 voxels/axis = ~14k collisions/bucket (10x better than upstream).
 #
-# At hash=19 + voxel_sdf=0.002:
-#   res = 3.9/0.002 = 1950 voxels/axis = ~7.4e9 / 524k = ~14k collisions/bucket
-# Still high but ~10x better than hash=16 (which gave ~114k collisions/bucket).
+# 2. decoder.freq_n_xyz 12 -> 10  (PAPER-FAITHFUL)
+#    Paper Sec III-A Eq (2): "L being 10 for x".  Code default is 12.
+#    Our project_paper_audit_v2_20260602 made this config-overrideable.
 #
-# Tests: does the SemSup hash-bump breakthrough transfer to StereoMIS, given
-# we don't pair it with the (StereoMIS-impossible) finer voxel?
-# Expected: modest PSNR / LPIPS improvement, maybe minor ATE shift.
-# Per memory project_dds_slam_config_knob_deepdive_20260604 Rank-5, this is
-# exactly the "StereoMIS isolated hash-bump test" needed to gate propagating
-# hash=19 into the base stereomis.yaml.
+# 3. decoder.freq_n_t 12 -> 4  (PAPER-FAITHFUL)
+#    Paper Sec III-A Eq (2): "and 4 for t".  Code default is 12 — a 3x over-encoding.
+#
+# CAVEAT: project_paper_audit_v2_20260602 records that freq L=10/4 is
+# DATA-DEPENDENT: +0.13 dB on SemSup, -0.16 dB on CRCD F1/002.  StereoMIS is
+# real surgical data like CRCD — could land either direction.  BUT paper's
+# 8.261 mm ATE-RMSE result was achieved WITH these values, so for paper-
+# comparable reproduction we must use them.
+#
+# Semantic loss IS already enabled by default for StereoMIS via
+# StereoMISDataset (dataset.py:147) computing edge_semantic from masks/, and
+# ddsslam.py:203 weighting it at rgb_weight*0.1 = 0.5 — matching paper λ_m=0.5
+# exactly.  No additional knob needed.
+#
+# Tests: combined paper-faithful + empirical hash bump.  Paper target 8.261 mm
+# (Table II, with semantics ON per Table III).  T0 vs T1 delta tells us
+# whether the combined fixes close the gap from previous ~50 mm runs.
 
 inherit_from: configs/StereoMIS/stereomis.yaml
 timesteps:  4000
@@ -26,7 +43,11 @@ mapping:
   marching_cubes_bound: [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
 
 grid:
-  hash_size: 19              # T1 CHANGE (was 16). voxel_sdf STAYS at 0.002.
+  hash_size: 19              # +Empirical (NOT paper-mandated).  voxel_sdf STAYS at 0.002.
+
+decoder:
+  freq_n_xyz: 10             # Paper Sec III-A Eq (2): "L being 10 for x"
+  freq_n_t: 4                # Paper Sec III-A Eq (2): "and 4 for t" (was 12 default = 3x over)
 
 data:
   datadir: data/P2_1
