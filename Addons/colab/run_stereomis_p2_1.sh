@@ -106,16 +106,47 @@ activate_dds_env
 # (depth/ NOT expected — we generate via MoGe-2 in Phase 1.5)
 # ============================================================================
 phase 1 "stage StereoMIS P2_1 rgb + masks + GT from Drive (depth gen separately)"
+# Robust per-item copy: cp -r first, rsync --partial fallback.
+# No stderr suppression — failures must be diagnosable.
+# Designed for Drive FUSE which can drop mid-read on large dirs (~8 GB
+# video_frames/ exceeds Drive's stable single-stream read window).
+copy_item() {
+  local SRC=$1 DST=$2 LABEL=$3
+  if [ ! -e "$SRC" ]; then
+    echo "FATAL: missing on Drive: $SRC"
+    return 1
+  fi
+  if [ -e "$DST" ]; then
+    echo "  $LABEL already at destination -- skip"
+    return 0
+  fi
+  local SIZE
+  SIZE=$(du -sh "$SRC" 2>/dev/null | cut -f1)
+  echo "  copying $LABEL ($SIZE) ..."
+  if cp -r "$SRC" "$DST"; then
+    return 0
+  fi
+  echo "  cp -r failed for $LABEL, retrying via rsync --partial..."
+  rsync -a --partial "$SRC" "$DST" \
+    || { echo "FATAL: rsync also failed for $LABEL ($SRC -> $DST)"; return 1; }
+}
+
 if [ -f "$STAGED/.STAGED" ]; then
   echo "  already staged"
 else
   [ -d "$DRIVE_DATA" ] || { echo "FATAL: $DRIVE_DATA not on Drive (per CLAUDE.local.md path: MyDrive/Datasets/StereoMisPP/P2_1/)"; exit 3; }
   mkdir -p "$STAGED"
-  echo "  copying from $DRIVE_DATA ..."
-  # Stage rgb + masks + GT + calib.  DO NOT expect depth/ — we generate via MoGe.
-  (cd "$DRIVE_DATA" && tar cf - video_frames masks groundtruth.txt StereoCalibration.ini 2>/dev/null) \
-    | (cd "$STAGED" && tar xf -) \
-    || { echo "FATAL: tar pipe failed (check $DRIVE_DATA has video_frames/, masks/, groundtruth.txt)"; exit 3; }
+  # Per-item copy — failure localises and tells us which dir/file fails.
+  # DO NOT copy depth/ — we generate via MoGe-2 in Phase 1.5 per user direction.
+  # (Drive's depth/ contains the paper's stereo depth; deliberately bypassed.)
+  copy_item "$DRIVE_DATA/video_frames"    "$STAGED/video_frames"    "video_frames"    || exit 3
+  copy_item "$DRIVE_DATA/masks"           "$STAGED/masks"           "masks"           || exit 3
+  copy_item "$DRIVE_DATA/groundtruth.txt" "$STAGED/groundtruth.txt" "groundtruth.txt" || exit 3
+  if [ -e "$DRIVE_DATA/StereoCalibration.ini" ]; then
+    copy_item "$DRIVE_DATA/StereoCalibration.ini" "$STAGED/StereoCalibration.ini" "StereoCalibration.ini" || exit 3
+  else
+    echo "  StereoCalibration.ini absent on Drive -- skipping (not consumed by ddsslam.py directly)"
+  fi
   touch "$STAGED/.STAGED"
 fi
 N_L=$(find "$STAGED/video_frames" -maxdepth 1 -name '*l.png' 2>/dev/null | wc -l)
