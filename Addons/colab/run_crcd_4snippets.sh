@@ -523,13 +523,29 @@ else:
         print(f'  WARN: all |Pearson| < 0.1 — trajectory shape uncorrelated with GT')
 PYEOF
   cat "$SUMMARY"
-  # Ship: tar key outputs to drive (skip full output dir — only what's needed)
+  # Ship: tar key outputs to drive.
+  # IMPORTANT: ddsslam.py:806 saves rendered RGB as $OUTPUT/{frame:04d}.jpg
+  # at the ROOT of the output dir, and depth at $OUTPUT/depth/{frame:04d}.png.
+  # Previously we shipped only `demo/` + `ckpts/`, leaving renders behind.
+  # User-validated 2026-06-05 on the overnight run: payload.tgz had 0
+  # rendered images on all 3 completed snippets despite render_freq=1.
+  # Fix: ship the renders explicitly.
   if [ ! -f "$DRIVE_DST/payload.tgz" ] && [ -d "$OUTPUT/demo" ]; then
     echo "  shipping payload to $DRIVE_DST..."
+    # Build list of directories/items to include
+    SHIP_ITEMS=(demo)
+    [ -d "$OUTPUT/ckpts" ] && SHIP_ITEMS+=(ckpts)
+    [ -d "$OUTPUT/depth" ] && SHIP_ITEMS+=(depth)
+    # Also include all top-level .jpg renders if any exist
+    if ls "$OUTPUT"/*.jpg >/dev/null 2>&1; then
+      mkdir -p "$OUTPUT/renders_rgb"
+      mv "$OUTPUT"/*.jpg "$OUTPUT/renders_rgb/" 2>/dev/null || true
+      SHIP_ITEMS+=(renders_rgb)
+    fi
     tar czf "$DRIVE_DST/payload.tgz.partial" \
-      -C "$OUTPUT" demo \
-      $([ -d "$OUTPUT/ckpts" ] && echo ckpts) 2>/dev/null || true
+      -C "$OUTPUT" "${SHIP_ITEMS[@]}" 2>/dev/null || true
     mv "$DRIVE_DST/payload.tgz.partial" "$DRIVE_DST/payload.tgz" 2>/dev/null || true
+    echo "  shipped items: ${SHIP_ITEMS[*]}"
   fi
   mark_done "$DRIVE_DST"
   echo "## $NAME complete"
