@@ -49,6 +49,13 @@ PAPER_REFERENCES = {
     'Lab3 (trail8)':    {'PSNR': 27.230, 'SSIM': 0.782, 'LPIPS': 0.195},
     'Lab4 (trail9)':    {'PSNR': 27.340, 'SSIM': 0.734, 'LPIPS': 0.210},
     'StereoMIS (P2_1)': {'PSNR': 22.513, 'SSIM': 0.592, 'LPIPS': 0.496},
+    # CRCD has no DDS-SLAM paper reference (dataset post-dates paper).  None = no
+    # comparison value printed.  Choice-list entries enable the runbook to pass
+    # --sequence without argparse errors.
+    'CRCD (C1_001)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
+    'CRCD (C2_001)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
+    'CRCD (F1_002)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
+    'CRCD (F3_007)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
 }
 
 
@@ -192,12 +199,15 @@ def main():
                 writer.writerow(row)
         print(f"\nPer-frame metrics saved to {args.output_csv}")
 
-    # Paper reference (DDS-SLAM Table I/II)
+    # Paper reference (DDS-SLAM Table I/II) — None if no baseline exists
     ref = PAPER_REFERENCES[args.sequence]
-    print(f"\nPaper reference (DDS-SLAM, {args.sequence}):")
-    print(f"  PSNR:  {ref['PSNR']}")
-    print(f"  SSIM:  {ref['SSIM']}")
-    print(f"  LPIPS: {ref['LPIPS']}")
+    if ref['PSNR'] is not None:
+        print(f"\nPaper reference (DDS-SLAM, {args.sequence}):")
+        print(f"  PSNR:  {ref['PSNR']}")
+        print(f"  SSIM:  {ref['SSIM']}")
+        print(f"  LPIPS: {ref['LPIPS']}")
+    else:
+        print(f"\nNo paper reference for {args.sequence}.")
 
     # Append summary row to cross-method comparison CSV
     if args.summary_csv:
