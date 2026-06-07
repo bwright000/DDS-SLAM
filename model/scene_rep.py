@@ -164,11 +164,19 @@ class JointEncoding(nn.Module):
         if self.config['dynamic']:
             pts = inputs_flat[:,:3]
             frame_time = inputs_flat[:,3].unsqueeze(-1)
-            embed_time = self.embed_time(frame_time)
-            embed_pos = self.embed_fre_pos(pts)
-            h = torch.cat([embed_time,embed_pos],dim=-1)
-            vox_motion = self.time_net(h)
-            vox_motion = torch.where(frame_time.reshape(-1, frame_time.shape[-1]) == 0, torch.zeros_like(vox_motion), vox_motion)
+            # PHASE 0 DIAGNOSIS HOOK (2026-06-05, workflow wx3zjzfyh):
+            # deformation_off config flag forces Δx=0 in this forward pass,
+            # turning the deformation field OFF without retraining.  Required
+            # for Tests 0/2/5 (depth-floor, tool-cancellation, strain).
+            # Default: False (normal SLAM behavior unchanged).
+            if self.config.get('deformation_off', False):
+                vox_motion = torch.zeros(pts.shape[0], 3, device=pts.device, dtype=pts.dtype)
+            else:
+                embed_time = self.embed_time(frame_time)
+                embed_pos = self.embed_fre_pos(pts)
+                h = torch.cat([embed_time,embed_pos],dim=-1)
+                vox_motion = self.time_net(h)
+                vox_motion = torch.where(frame_time.reshape(-1, frame_time.shape[-1]) == 0, torch.zeros_like(vox_motion), vox_motion)
             inputs_flat = pts + vox_motion
         
         # Normalize the input to [0, 1] (TCNN convention)
@@ -314,7 +322,16 @@ class JointEncoding(nn.Module):
 
         # Run rendering pipeline
         pts = rays_o[...,None,:3] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples, 3]
-        timestamps = (rays_o[...,3]).reshape(-1,1)
+        # PHASE 0 DIAGNOSIS GUARD (2026-06-05, workflow wx3zjzfyh):
+        # rays_o[...,3] was previously read unconditionally — crashes when
+        # the caller (e.g. infra/deform_off_render.py with dynamic=False) only
+        # provides 3-column rays_o.  Guard by checking shape; default timestamp=0
+        # if missing (the deformation network already masks frame_time==0 via
+        # the `where` clause at run_network).  Documented in Addons/RESULTS_LOG.md:26.
+        if rays_o.shape[-1] >= 4:
+            timestamps = (rays_o[...,3]).reshape(-1,1)
+        else:
+            timestamps = torch.zeros(rays_o.shape[0], 1, device=rays_o.device, dtype=rays_o.dtype)
         timestamps = timestamps.repeat(1,pts.shape[1]).unsqueeze(-1)
         pts = torch.cat([pts,timestamps],dim=-1)
         raw, edge_semantic = self.run_network(pts)
