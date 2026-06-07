@@ -170,6 +170,65 @@ for KEY in C1_001 C2_001; do
     echo "  deform_on_render already done" | tee -a "$LOG"
   fi
 
+  # -----------------------------------------------------------------
+  # A.4 -- Δx norm heatmap overlay on input RGB (visualization 1)
+  # -----------------------------------------------------------------
+  HEATMAP_DIR=$SNIPPET_DRIVE/dx_heatmap
+  RGB_DIR=$REPO_ROOT/data/CRCD/${KEY}/video_frames
+  if [ ! -d "$HEATMAP_DIR" ] || [ -z "$(ls $HEATMAP_DIR/*.png 2>/dev/null | head -1)" ]; then
+    phase "A.4.$KEY" "Δx heatmap overlays on input RGB"
+    python diagnosis/infra/dx_norm_heatmap.py \
+      --config "$CFG" \
+      --checkpoint "$CKPT" \
+      --rgb_dir "$RGB_DIR" \
+      --rgb_pattern '*l.png' \
+      --output_dir "$HEATMAP_DIR" \
+      --frames auto \
+      2>&1 | tee -a "$LOG" || echo "  WARN: dx_norm_heatmap failed for $KEY"
+  else
+    echo "  dx_heatmap already done" | tee -a "$LOG"
+  fi
+
+  # -----------------------------------------------------------------
+  # A.5 -- SDF cross-section (diagnoses marching_cubes failure if any)
+  # -----------------------------------------------------------------
+  SDF_DIR=$SNIPPET_DRIVE/sdf_cross_section
+  if [ ! -f "$SDF_DIR/sdf_cross_section.png" ]; then
+    phase "A.5.$KEY" "SDF cross-section visualization"
+    python diagnosis/infra/sdf_cross_section.py \
+      --config "$CFG" \
+      --checkpoint "$CKPT" \
+      --output_dir "$SDF_DIR" \
+      --axes xy,xz,yz \
+      2>&1 | tee -a "$LOG" || echo "  WARN: sdf_cross_section failed for $KEY"
+  else
+    echo "  sdf_cross_section already done" | tee -a "$LOG"
+  fi
+
+  # -----------------------------------------------------------------
+  # A.6 -- Tool-mask Δx line plot (visualization 3 = Test 2 headline)
+  # -----------------------------------------------------------------
+  TEST2_FIG=$SNIPPET_DRIVE/test2_tool_mask_dx.png
+  # CRCD-Published source for semantic_instance masks
+  case "$KEY" in
+    C1_001) SEM_DIR=/content/drive/MyDrive/Datasets/CRCD-Published/C_1/snippet_001/semantic_instance ;;
+    C2_001) SEM_DIR=/content/drive/MyDrive/Datasets/CRCD-Published/C_2/snippet_001/semantic_instance ;;
+    *)      SEM_DIR="" ;;
+  esac
+  if [ -n "$SEM_DIR" ] && [ ! -f "$TEST2_FIG" ]; then
+    phase "A.6.$KEY" "Tool-mask Δx line plot (Test 2 visualization)"
+    python diagnosis/phase1/test2_tool_mask_dx.py \
+      --dx_dir "$DX_DIR" \
+      --config "$CFG" \
+      --semantic_dir "$SEM_DIR" \
+      --out_csv "$SNIPPET_DRIVE/test2_tool_mask_dx.csv" \
+      --out_fig "$TEST2_FIG" \
+      --name "$KEY" \
+      2>&1 | tee -a "$LOG" || echo "  WARN: test2 failed for $KEY"
+  else
+    echo "  test2 viz already done (or no semantic dir)" | tee -a "$LOG"
+  fi
+
   mark_done "$SNIPPET_DRIVE"
   echo "## $KEY CRCD diagnostic complete" | tee -a "$LOG"
 done
