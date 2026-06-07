@@ -124,16 +124,11 @@ def main():
             dx_out_mean[i] = float(dx_norms[out_tool].mean())
             dx_out_count[i] = int(out_tool.sum())
 
-    import pandas as pd
-    df = pd.DataFrame({
-        'frame': np.arange(n),
-        'dx_in_mean_mm': dx_in_mean,
-        'dx_out_mean_mm': dx_out_mean,
-        'dx_in_count': dx_in_count,
-        'dx_out_count': dx_out_count,
-        'tool_pixel_frac': tool_pixel_frac,
-    })
-    df.to_csv(args.out_csv, index=False)
+    # Save CSV without pandas (dds_env paper-exact stack doesn't include it)
+    with open(args.out_csv, 'w') as f:
+        f.write('frame,dx_in_mean_mm,dx_out_mean_mm,dx_in_count,dx_out_count,tool_pixel_frac\n')
+        for i in range(n):
+            f.write(f'{i},{dx_in_mean[i]:.6f},{dx_out_mean[i]:.6f},{int(dx_in_count[i])},{int(dx_out_count[i])},{tool_pixel_frac[i]:.6f}\n')
     print(f'Saved CSV: {args.out_csv}')
 
     # Plot

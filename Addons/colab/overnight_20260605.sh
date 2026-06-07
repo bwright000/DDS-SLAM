@@ -98,6 +98,36 @@ for KEY in C1_001 C2_001; do
     echo "  $KEY already done -- skip" | tee -a "$LOG"; continue
   fi
 
+  # Stage CRCD data locally (dx_hook doesn't need it but renders do).
+  # The June-4 preprocessed data lives at MyDrive/Datasets/CRCD-Published-Preprocessed/<KEY>/
+  # OR we can re-stage from the source tarball + run preprocess.
+  KEY_LOWER=$(echo "$KEY" | tr A-Z a-z)
+  DATA_LOCAL=$REPO_ROOT/data/CRCD/$KEY
+  if [ ! -d "$DATA_LOCAL" ]; then
+    mkdir -p "$DATA_LOCAL"
+    # Try preprocessed Drive copy first
+    PREPROC=/content/drive/MyDrive/Datasets/CRCD-Published-Preprocessed/$KEY
+    if [ -d "$PREPROC" ]; then
+      cp -r "$PREPROC"/* "$DATA_LOCAL/" 2>/dev/null
+      echo "  staged data from $PREPROC" | tee -a "$LOG"
+    else
+      # Fall back to extracting from source tarball + preprocessing
+      case "$KEY" in
+        C1_001) RAW_TAR=/content/drive/MyDrive/Datasets/CRCD-Published/C_1_snippet_001_staging.tar ;;
+        C2_001) RAW_TAR=/content/drive/MyDrive/Datasets/CRCD-Published/C_2_snippet_001_staging.tar ;;
+        *)      RAW_TAR="" ;;
+      esac
+      if [ -n "$RAW_TAR" ] && [ -f "$RAW_TAR" ]; then
+        RAW_DIR=/content/crcd_raw_$KEY
+        mkdir -p "$RAW_DIR"
+        tar xf "$RAW_TAR" -C "$RAW_DIR" 2>/dev/null
+        echo "  extracted raw to $RAW_DIR; preprocess will happen on render demand" | tee -a "$LOG"
+      else
+        echo "  WARN: no preprocessed data + no raw tar for $KEY; renders will skip frames" | tee -a "$LOG"
+      fi
+    fi
+  fi
+
   # Pull the latest checkpoint from Drive into the local CKPT_DIR if local missing.
   # The June-4 batch put payloads at MyDrive/Outputs/dds_crcd_4snippets_20260604/<NAME>/payload.tgz
   if ! ls "$CKPT_DIR"/checkpoint*.pt >/dev/null 2>&1; then
@@ -291,15 +321,62 @@ from config import load_config
 c = load_config('$CFG')
 print(c['data']['output'])
 " 2>/dev/null)
+  # Map runbook KEY -> actual trail3 dir name on Drive
+  case "$KEY" in
+    paperfaith)         DRIVE_KEY=trail3_paper_faithful ;;
+    paperfaith_v2)      DRIVE_KEY=trail3_paper_faithful_v2 ;;
+    variantB_ep9_hash19) DRIVE_KEY=trail3_variant_b_ep9_hash19 ;;
+    variantA_stereo)    DRIVE_KEY=trail3_variant_a_stereo ;;
+    variantC_stereo)    DRIVE_KEY=trail3_variant_c_stereo ;;
+    moge2)              DRIVE_KEY=trail3_moge2 ;;
+    *)                  DRIVE_KEY=$KEY ;;
+  esac
   CKPT=$(ls -t $REPO_ROOT/$OUT_DIR/demo/checkpoint*.pt 2>/dev/null | head -1)
   if [ -z "$CKPT" ]; then
-    # Try Drive — earlier sweep results
-    CKPT=$(find /content/drive/MyDrive/Outputs -name "checkpoint*.pt" -path "*$KEY*" 2>/dev/null | sort -V | tail -1)
+    # Drive search — multiple paths (depthsweep, plain outputs, etc)
+    CKPT=$(find \
+      /content/drive/MyDrive/Outputs/ddsslam_super_depthsweep_*/$DRIVE_KEY \
+      /content/drive/MyDrive/Outputs/$DRIVE_KEY \
+      /content/drive/MyDrive/Outputs/$KEY \
+      -name "checkpoint*.pt" 2>/dev/null | sort -V | tail -1)
   fi
   if [ -z "$CKPT" ]; then
-    echo "  FATAL: no ckpt for $KEY (looked in $OUT_DIR + Drive)" | tee -a "$LOG"; continue
+    # Final fallback — broad find
+    CKPT=$(find /content/drive/MyDrive/Outputs -name "checkpoint*.pt" \
+      -path "*$DRIVE_KEY*" 2>/dev/null | sort -V | tail -1)
+  fi
+  if [ -z "$CKPT" ]; then
+    echo "  FATAL: no ckpt for $KEY (DRIVE_KEY=$DRIVE_KEY)" | tee -a "$LOG"; continue
   fi
   echo "  using ckpt: $CKPT" | tee -a "$LOG"
+
+  # Stage SemSup data if not present locally.  Memory notes the Drive
+  # source is `MyDrive/SemSup/v2_data/trial_3` with the trial_3 vs trail_3
+  # typo gotcha — config wants data/Super/trail_3 (a, typo).
+  if [ ! -d "$REPO_ROOT/data/Super/trail_3" ]; then
+    mkdir -p "$REPO_ROOT/data/Super"
+    SUPER_DRIVE=/content/drive/MyDrive/SemSup/v2_data/trial_3
+    if [ -d "$SUPER_DRIVE" ]; then
+      echo "  staging Super trail_3 from $SUPER_DRIVE" | tee -a "$LOG"
+      cp -r "$SUPER_DRIVE" "$REPO_ROOT/data/Super/trail_3"
+    else
+      # Try alternative locations
+      for ALT in \
+        /content/drive/MyDrive/SemSup/v2_data/trail_3 \
+        /content/drive/MyDrive/Datasets/SemSup/trial_3 \
+        /content/drive/MyDrive/Datasets/SemSup/v2_data/trial_3; do
+        if [ -d "$ALT" ]; then
+          echo "  staging from $ALT" | tee -a "$LOG"
+          cp -r "$ALT" "$REPO_ROOT/data/Super/trail_3"
+          break
+        fi
+      done
+    fi
+    if [ ! -d "$REPO_ROOT/data/Super/trail_3" ]; then
+      echo "  WARN: Super trail_3 data not found on Drive — skipping $KEY" | tee -a "$LOG"
+      continue
+    fi
+  fi
 
   phase "B.$KEY" "post-hoc render with FIXED depth scale (png_depth_scale=10000)"
   python Addons/viz/render_all_frames.py \
@@ -309,16 +386,14 @@ print(c['data']['output'])
     --save_depth --save_gt \
     2>&1 | tee -a "$LOG" || echo "  WARN: render_all_frames failed for $KEY"
 
-  # Eval PSNR/SSIM/LPIPS
+  # Eval PSNR/SSIM/LPIPS — use 'Lab1 (trail3)' as sequence (these ARE trail3 runs)
   python Addons/eval/eval_rendering.py \
     --gt_dir "$KEY_DRIVE/rendered_all" \
     --render_dir "$KEY_DRIVE/rendered_all" \
-    --gt_pattern "*_gt.png" \
-    --render_pattern "[0-9]*.png" \
     --name "$KEY" \
     --output_csv "$KEY_DRIVE/eval_per_frame.csv" \
     --summary_csv "$SEMSUP_DRIVE/_summary.csv" \
-    --sequence "SemSup ($KEY)" 2>&1 | tee "$KEY_DRIVE/eval_summary.txt" || \
+    --sequence "Lab1 (trail3)" 2>&1 | tee "$KEY_DRIVE/eval_summary.txt" || \
     echo "  WARN: eval_rendering failed for $KEY"
 
   mark_done "$KEY_DRIVE"
@@ -378,11 +453,21 @@ else
 
   phase "C" "StereoMIS Back-4000 SLAM with MoGe-2 depth"
   cd "$REPO_ROOT"
-  # Stage data locally if not done
+  # Stage data locally — use the pre-built tarball on Drive (per user 2026-06-05)
   if [ ! -d /content/p2_1_local/video_frames ]; then
     mkdir -p /content/p2_1_local
-    cd "$P2_1_DRIVE" && tar cf - video_frames groundtruth.txt StereoCalibration.ini masks | tar xf - -C /content/p2_1_local
-    cd "$REPO_ROOT"
+    STEREO_TAR=/content/drive/MyDrive/Datasets/StereoMisPP/P2_1_staging.tar
+    if [ -f "$STEREO_TAR" ]; then
+      echo "  extracting from $STEREO_TAR ($(du -h "$STEREO_TAR" | cut -f1))" | tee -a "$LOG"
+      T0=$(date +%s)
+      tar xf "$STEREO_TAR" -C /content/p2_1_local
+      echo "  extracted in $(( ($(date +%s) - T0) / 60 )) min" | tee -a "$LOG"
+    else
+      # Fallback: per-file tar from Drive (slow)
+      echo "  WARN: $STEREO_TAR missing, using per-file copy (slow)" | tee -a "$LOG"
+      cd "$P2_1_DRIVE" && tar cf - video_frames groundtruth.txt StereoCalibration.ini masks | tar xf - -C /content/p2_1_local
+      cd "$REPO_ROOT"
+    fi
   fi
 
   # Symlink the MoGe dir into the staged data location expected by the config

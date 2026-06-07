@@ -55,26 +55,38 @@ def main():
     if REPO_ROOT not in sys.path:
         sys.path.insert(0, REPO_ROOT)
     from config import load_config
-    from datasets.dataset import get_dataset
     from model.scene_rep import JointEncoding
 
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     cfg = load_config(args.config)
     os.makedirs(args.output_dir, exist_ok=True)
 
-    dataset = get_dataset(cfg)
+    # Intrinsics from config (dataset may not be staged)
+    cam = cfg['cam']
+    H, W = int(cam['H']), int(cam['W'])
+    fx, fy = float(cam['fx']), float(cam['fy'])
+    cx, cy = float(cam['cx']), float(cam['cy'])
+
     bounding_box = torch.from_numpy(np.array(cfg['mapping']['bound'])).to(device)
     model = JointEncoding(cfg, bounding_box).to(device)
     ckpt = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(ckpt['model'])
-    est_c2w = ckpt['pose']
-    if isinstance(est_c2w, list):
-        est_c2w = torch.stack([p.detach() if hasattr(p, 'detach') else torch.as_tensor(p) for p in est_c2w], dim=0)
-    est_c2w = est_c2w.to(device)
-    model.eval()
 
-    H, W = dataset.H, dataset.W
-    fx, fy, cx, cy = dataset.fx, dataset.fy, dataset.cx, dataset.cy
+    # Defensive c2w extraction
+    est_c2w = ckpt['pose']
+    if isinstance(est_c2w, dict):
+        keys_sorted = sorted(est_c2w.keys(), key=lambda k: int(k) if isinstance(k, (int, str)) else k)
+        est_c2w = torch.stack([torch.as_tensor(est_c2w[k]) for k in keys_sorted], dim=0)
+    elif isinstance(est_c2w, list):
+        est_c2w = torch.stack([torch.as_tensor(p) for p in est_c2w], dim=0)
+    elif not torch.is_tensor(est_c2w):
+        est_c2w = torch.as_tensor(est_c2w)
+    if est_c2w.dim() == 3 and est_c2w.shape[-2:] == (3, 4):
+        pad_row = torch.zeros(est_c2w.shape[0], 1, 4)
+        pad_row[..., 0, 3] = 1.0
+        est_c2w = torch.cat([est_c2w, pad_row], dim=1)
+    est_c2w = est_c2w.to(device).float()
+    model.eval()
 
     # Frame selection
     rgb_files = sorted(glob.glob(os.path.join(args.rgb_dir, args.rgb_pattern)))

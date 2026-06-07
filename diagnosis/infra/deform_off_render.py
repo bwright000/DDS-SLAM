@@ -48,7 +48,6 @@ def main():
         sys.path.insert(0, REPO_ROOT)
 
     from config import load_config
-    from datasets.dataset import get_dataset
     from model.scene_rep import JointEncoding
 
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
@@ -65,19 +64,40 @@ def main():
         os.makedirs(depth_dir, exist_ok=True)
     png_depth_scale = float(cfg['cam'].get('png_depth_scale', 10000.0))
 
-    dataset = get_dataset(cfg)
+    # Intrinsics from config (dataset may not be staged on fresh Colab)
+    cam = cfg['cam']
+    H, W = int(cam['H']), int(cam['W'])
     bounding_box = torch.from_numpy(np.array(cfg['mapping']['bound'])).to(device)
     model = JointEncoding(cfg, bounding_box).to(device)
     ckpt = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(ckpt['model'])
+
+    # Defensive c2w extraction (DDS-SLAM pose can be dict/list/tensor)
     est_c2w_data = ckpt['pose']
-    if isinstance(est_c2w_data, list):
-        est_c2w_data = torch.stack([p.detach() if hasattr(p, 'detach') else torch.as_tensor(p) for p in est_c2w_data], dim=0)
-    est_c2w_data = est_c2w_data.to(device)
+    if isinstance(est_c2w_data, dict):
+        keys_sorted = sorted(est_c2w_data.keys(), key=lambda k: int(k) if isinstance(k, (int, str)) else k)
+        est_c2w_data = torch.stack([torch.as_tensor(est_c2w_data[k]) for k in keys_sorted], dim=0)
+    elif isinstance(est_c2w_data, list):
+        est_c2w_data = torch.stack([torch.as_tensor(p) for p in est_c2w_data], dim=0)
+    elif not torch.is_tensor(est_c2w_data):
+        est_c2w_data = torch.as_tensor(est_c2w_data)
+    if est_c2w_data.dim() == 3 and est_c2w_data.shape[-2:] == (3, 4):
+        pad_row = torch.zeros(est_c2w_data.shape[0], 1, 4)
+        pad_row[..., 0, 3] = 1.0
+        est_c2w_data = torch.cat([est_c2w_data, pad_row], dim=1)
+    est_c2w_data = est_c2w_data.to(device).float()
     model.eval()
 
-    H, W = dataset.H, dataset.W
-    n_frames = min(len(dataset), est_c2w_data.shape[0])
+    # Also need fx, fy, cx, cy from config (dataset not loaded)
+    fx, fy = float(cam['fx']), float(cam['fy'])
+    cx, cy = float(cam['cx']), float(cam['cy'])
+    # Override dataset attrs used downstream
+    class CamShim: pass
+    dataset = CamShim()
+    dataset.H, dataset.W = H, W
+    dataset.fx, dataset.fy = fx, fy
+    dataset.cx, dataset.cy = cx, cy
+    n_frames = est_c2w_data.shape[0]
     indices = list(range(0, n_frames, args.skip))
     print(f'Rendering {len(indices)} frames at output_dir={args.output_dir}')
 

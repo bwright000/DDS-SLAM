@@ -58,32 +58,50 @@ def main():
         sys.path.insert(0, REPO_ROOT)
 
     from config import load_config
-    from datasets.dataset import get_dataset
     from model.scene_rep import JointEncoding
 
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     cfg = load_config(args.config)
     os.makedirs(args.output_dir, exist_ok=True)
 
-    # Build dataset + model (same path as render_all_frames.py)
-    dataset = get_dataset(cfg)
+    # Intrinsics from config — avoid dataset construction (raw data may not be
+    # staged on Colab; only the ckpt + config are needed for the Δx dump).
+    cam = cfg['cam']
+    H, W = int(cam['H']), int(cam['W'])
+    fx, fy = float(cam['fx']), float(cam['fy'])
+    cx, cy = float(cam['cx']), float(cam['cy'])
+
     bounding_box = torch.from_numpy(np.array(cfg['mapping']['bound'])).to(device)
     model = JointEncoding(cfg, bounding_box).to(device)
     ckpt = torch.load(args.checkpoint, map_location=device)
     model.load_state_dict(ckpt['model'])
+
+    # Defensive c2w extraction — DDS-SLAM ckpt['pose'] can be:
+    #   torch tensor (N, 4, 4)
+    #   list of (4, 4) tensors
+    #   dict {frame_id: tensor}  ← actual DDS-SLAM format
     est_c2w_data = ckpt['pose']
-    if isinstance(est_c2w_data, list):
-        est_c2w_data = torch.stack([p.detach() if hasattr(p, 'detach') else torch.as_tensor(p) for p in est_c2w_data], dim=0)
-    est_c2w_data = est_c2w_data.to(device)
+    if isinstance(est_c2w_data, dict):
+        # Sort by frame index, stack
+        keys_sorted = sorted(est_c2w_data.keys(), key=lambda k: int(k) if isinstance(k, (int, str)) else k)
+        est_c2w_data = torch.stack([torch.as_tensor(est_c2w_data[k]) for k in keys_sorted], dim=0)
+    elif isinstance(est_c2w_data, list):
+        est_c2w_data = torch.stack([torch.as_tensor(p) for p in est_c2w_data], dim=0)
+    elif not torch.is_tensor(est_c2w_data):
+        est_c2w_data = torch.as_tensor(est_c2w_data)
+    # Ensure (N, 4, 4)
+    if est_c2w_data.dim() == 3 and est_c2w_data.shape[-2:] == (3, 4):
+        # 3x4 → pad to 4x4
+        pad_row = torch.zeros(est_c2w_data.shape[0], 1, 4)
+        pad_row[..., 0, 3] = 1.0
+        est_c2w_data = torch.cat([est_c2w_data, pad_row], dim=1)
+    est_c2w_data = est_c2w_data.to(device).float()
     model.eval()
 
     if not cfg.get('dynamic', False):
         print('WARN: cfg.dynamic is False — deformation field is not active. Δx will be 0.')
 
-    H, W = dataset.H, dataset.W
-    fx, fy, cx, cy = dataset.fx, dataset.fy, dataset.cx, dataset.cy
-
-    n_frames = min(args.max_frames or len(dataset), est_c2w_data.shape[0], len(dataset))
+    n_frames = min(args.max_frames or est_c2w_data.shape[0], est_c2w_data.shape[0])
     rays_per_frame = args.rays_per_frame
     samples_per_ray = args.samples_per_ray
     rng = np.random.default_rng(args.seed)
