@@ -239,21 +239,101 @@ def main():
     plt.savefig(args.out_fig, dpi=150, bbox_inches='tight')
     print(f'Saved figure: {args.out_fig}')
 
-    # Verdict
-    print(f'\n=== TEST 1 VERDICT ===')
+    # Test 1 verdict (Direction A — field absorbs ego-motion)
+    print(f'\n=== TEST 1 VERDICT (Direction A: field absorbs ego-motion) ===')
     if abs(pear_r) > 0.6 and max(map(abs, shape_r_xyz)) > 0.7:
-        print(f'  >>> GAUGE ABSORPTION CONFIRMED <<<')
-        print(f'  G_t trajectory shape matches GT camera trajectory (Pearson > 0.7 on dominant axis)')
-        print(f'  → deformation field IS carrying ego-motion')
-        print(f'  → Proceed to Phase 2 (is the field gateable?)')
+        direction_A = 'CONFIRMED'
+        print(f'  >>> Direction A CONFIRMED <<<')
+        print(f'  Δx rigid component tracks GT camera motion (Pearson > 0.7 on dominant axis)')
     elif abs(pear_r) > 0.3 or max(map(abs, shape_r_xyz)) > 0.5:
-        print(f'  >>> PARTIAL ABSORPTION <<<')
-        print(f'  Some correlation present but not decisive')
-        print(f'  → Investigate per-class or per-regime breakdown (Test 1 sub-analyses)')
+        direction_A = 'PARTIAL'
+        print(f'  >>> Direction A PARTIAL <<<  (Pearson {pear_r:+.2f}, max axis {max(map(abs, shape_r_xyz)):.2f})')
     else:
-        print(f'  >>> ABSORPTION HYPOTHESIS NOT SUPPORTED <<<')
-        print(f'  G_t does NOT correlate with GT camera motion')
-        print(f'  → Escalate to Wyrd, the gauge-absorption premise may be wrong')
+        direction_A = 'NOT SUPPORTED'
+        print(f'  Direction A NOT SUPPORTED (Pearson {pear_r:+.2f})')
+
+    # =======================================================================
+    # TEST 1' (Direction B — POSE absorbs deformation)
+    # =======================================================================
+    # The gauge mode is symmetric: a large deformation can be "explained" as
+    # fake camera motion just as ego-motion can be "explained" as fake
+    # deformation.  Wyrd's plan tests Direction A; we add B for completeness.
+    #
+    # Signal: est trajectory has motion BEYOND what GT says.  If that extra
+    # motion correlates with deformation events (non-rigid Δx residual), the
+    # tracker is misclassifying real deformation as camera motion.
+    print(f'\n=== TEST 1\' VERDICT (Direction B: pose absorbs deformation) ===')
+
+    # Need est_c2w trajectory.  Load from ckpt if dx_dir has frame_*.npz with
+    # c2w field saved per frame (which dx_hook.py does).
+    c2w_est = []
+    for f in files:
+        d = np.load(f)
+        if 'c2w' in d.files:
+            c2w_est.append(d['c2w'])
+    if not c2w_est:
+        print(f'  Could not extract est c2w from NPZ — skipping Test 1\'')
+        return
+    c2w_est = np.stack(c2w_est, axis=0)[:n_aligned]
+
+    # Compute Sim3 alignment of est to GT (use a few-point Horn-style)
+    # For the trajectory POSITIONS only (4x4 → just take [:3,3]).
+    est_xyz = c2w_est[:, :3, 3]
+    gt_xyz = gt_c2w[:n_aligned, :3, 3]
+    # Procrustes (rotation+translation only — Sim3 minus scale for simplicity)
+    R_a, t_a = kabsch(est_xyz, gt_xyz)
+    est_aligned = (R_a @ est_xyz.T).T + t_a
+    pose_residual = np.linalg.norm(est_aligned - gt_xyz, axis=1) * 1000  # mm per frame
+
+    # Magnitude of non-rigid Δx per frame = "real deformation magnitude"
+    # We have it from the loop above: residual_norms (mean non-rigid residual per frame)
+    # Length-align
+    pr = pose_residual[:n_aligned]
+    rn = residual_norms[:n_aligned]
+
+    # Correlate per-frame pose residual with per-frame non-rigid Δx magnitude
+    pear_pose_def, p_pose_def = pearsonr(pr, rn * 1000)  # both in mm
+    spear_pose_def, _ = spearmanr(pr, rn * 1000)
+    print(f'  Pearson(|est - GT|, |non-rigid Δx|) = {pear_pose_def:+.3f} (p={p_pose_def:.2e})')
+    print(f'  Spearman                            = {spear_pose_def:+.3f}')
+    print(f'  Mean est-vs-GT pose residual : {pr.mean():.3f} mm/frame')
+    print(f'  Mean non-rigid Δx (deformation): {rn.mean()*1000:.3f} mm')
+
+    if abs(pear_pose_def) > 0.5:
+        direction_B = 'CONFIRMED'
+        print(f'  >>> Direction B CONFIRMED <<<')
+        print(f'  Tracker pose drift correlates with deformation events.')
+        print(f'  → Tracker is absorbing scene deformation as fake camera motion.')
+    elif abs(pear_pose_def) > 0.25:
+        direction_B = 'PARTIAL'
+        print(f'  >>> Direction B PARTIAL <<<')
+    else:
+        direction_B = 'NOT SUPPORTED'
+        print(f'  Direction B NOT SUPPORTED.')
+
+    # =======================================================================
+    # OVERALL VERDICT (combine A + B)
+    # =======================================================================
+    print(f'\n=== OVERALL GAUGE MODE VERDICT ===')
+    print(f'  Direction A (field absorbs ego-motion) : {direction_A}')
+    print(f'  Direction B (pose absorbs deformation): {direction_B}')
+    if direction_A != 'NOT SUPPORTED' and direction_B != 'NOT SUPPORTED':
+        print(f'  >>> BIDIRECTIONAL GAUGE ABSORPTION — both modes present')
+        print(f'  → Combined effect explains observed tracker decoupling.')
+    elif direction_A == 'NOT SUPPORTED' and direction_B != 'NOT SUPPORTED':
+        print(f'  >>> Direction B DOMINANT — pose-absorbs-deformation is the failure mode')
+        print(f'  → Tracker, not deformation field, is the gauge sink.')
+        print(f'  → Fix priority: constrain tracker (e.g. pose regulariser) rather than field.')
+    elif direction_A != 'NOT SUPPORTED' and direction_B == 'NOT SUPPORTED':
+        print(f'  >>> Direction A DOMINANT — original gauge-absorption hypothesis')
+        print(f'  → Fix priority: constrain deformation field (Phase 2 Test D capacity probe).')
+    else:
+        print(f'  >>> NEITHER direction confirmed — gauge mode unlikely.')
+        print(f'  → Tracker decoupling stems from something else (sub-SNR? depth scale?).')
+
+    # Append additional column to existing CSV
+    df['pose_residual_mm'] = pose_residual[:n]
+    df.to_csv(args.out_csv, index=False)
 
 
 if __name__ == '__main__':
