@@ -58,6 +58,16 @@ def main():
     cfg['deformation_off'] = True
     print('[deform_off_render] config["deformation_off"] = True (Δx≡0 inference)')
 
+    # CRCD configs use n_samples_d (not n_samples) — scene_rep.py:313 wants the
+    # latter literally.  Normal SLAM uses a different sampling path; our direct
+    # render_rays() call needs n_samples present.  Populate it from n_samples_d
+    # if missing.
+    if 'training' not in cfg:
+        cfg['training'] = {}
+    if 'n_samples' not in cfg['training']:
+        cfg['training']['n_samples'] = cfg['training'].get('n_samples_d', 32)
+        print(f'[deform_off_render] set training.n_samples = {cfg["training"]["n_samples"]} (from n_samples_d)')
+
     os.makedirs(args.output_dir, exist_ok=True)
     depth_dir = os.path.join(args.output_dir, 'depth')
     if args.save_depth:
