@@ -130,16 +130,6 @@ for KEY in C1_001 C2_001; do
     fi
   fi
 
-  # Sanity-check the deformation network BEFORE the full dx_hook dump.
-  # If time_net outputs are zero across test inputs, dx_hook will produce
-  # zero Δx and Test 1 will be non-diagnostic (we caught this 2026-06-08).
-  SANITY_LOG=$SNIPPET_DRIVE/dx_hook_sanity.log
-  if [ ! -f "$SANITY_LOG" ]; then
-    phase "A.0.$KEY" "dx_hook sanity check (verify time_net non-zero)"
-    python diagnosis/infra/dx_hook_sanity.py \
-      --config "$CFG" --checkpoint "$CKPT" 2>&1 | tee "$SANITY_LOG"
-  fi
-
   # Pull the latest checkpoint from Drive into the local CKPT_DIR if local missing.
   # The June-4 batch put payloads at MyDrive/Outputs/dds_crcd_4snippets_20260604/<NAME>/payload.tgz
   if ! ls "$CKPT_DIR"/checkpoint*.pt >/dev/null 2>&1; then
@@ -161,6 +151,17 @@ for KEY in C1_001 C2_001; do
   CKPT=$(ls -t "$CKPT_DIR"/checkpoint*.pt 2>/dev/null | head -1)
   if [ -z "$CKPT" ]; then
     echo "  FATAL: no ckpt for $KEY"; continue
+  fi
+
+  # Sanity-check the deformation network BEFORE the full dx_hook dump.
+  # If time_net outputs are zero across test inputs, dx_hook will produce
+  # zero Δx and Test 1 will be non-diagnostic (we caught this 2026-06-08).
+  # (Sanity must run AFTER CKPT resolution — fixed 2026-06-08.)
+  SANITY_LOG=$SNIPPET_DRIVE/dx_hook_sanity.log
+  if [ ! -s "$SANITY_LOG" ] || grep -q "FileNotFoundError" "$SANITY_LOG"; then
+    phase "A.0.$KEY" "dx_hook sanity check (verify time_net non-zero)"
+    python diagnosis/infra/dx_hook_sanity.py \
+      --config "$CFG" --checkpoint "$CKPT" 2>&1 | tee "$SANITY_LOG"
   fi
   echo "  using ckpt: $CKPT" | tee -a "$LOG"
 
