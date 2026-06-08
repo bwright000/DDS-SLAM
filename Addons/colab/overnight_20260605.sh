@@ -183,7 +183,13 @@ for KEY in C1_001 C2_001; do
 
   # -----------------------------------------------------------------
   # A.2 -- deformation-off render (Tests 0, 2)
+  #        Slow (~9 s/frame on T4, ~50 min for 360 frames, ~1h45m for 730).
+  #        Skip with SKIP_DEFORM_RENDERS=1 if Test 1 dx_hook is the priority.
   # -----------------------------------------------------------------
+  if [ "${SKIP_DEFORM_RENDERS:-0}" = "1" ]; then
+    echo "  [SKIP_DEFORM_RENDERS=1] skipping A.2 and A.3 for $KEY" | tee -a "$LOG"
+    DEFOFF_DIR=$SNIPPET_DRIVE/deform_off_render
+  else
   DEFOFF_DIR=$SNIPPET_DRIVE/deform_off_render
   if [ ! -d "$DEFOFF_DIR" ] || [ -z "$(ls $DEFOFF_DIR/*.jpg 2>/dev/null | head -1)" ]; then
     phase "A.2.$KEY" "deformation-off render (Tests 0/2)"
@@ -211,6 +217,7 @@ for KEY in C1_001 C2_001; do
   else
     echo "  deform_on_render already done" | tee -a "$LOG"
   fi
+  fi  # end SKIP_DEFORM_RENDERS guard
 
   # -----------------------------------------------------------------
   # A.4 -- Δx norm heatmap overlay on input RGB (visualization 1)

@@ -41,16 +41,28 @@ def main():
     print(f'ckpt keys: {list(ckpt.keys())}')
     print(f'cfg.dynamic = {cfg.get("dynamic")}')
 
-    # Inspect what's in model state_dict for time_net
+    # Inspect what's in model state_dict for time_net.
+    # Per user 2026-06-08: we want to distinguish "barely trained" (weights at
+    # near-init) from "trained but output happens to be ~zero" (weights moved
+    # but still produce zero).  Build a fresh model with the SAME architecture
+    # to read the init weights, then compare against the ckpt's weights.
     msd = ckpt['model']
     time_net_keys = [k for k in msd if 'time_net' in k]
     print(f'time_net keys in ckpt[\'model\']: {time_net_keys}')
+    init_state = model.state_dict()  # before load — captures init values
+    print(f'\nWeight statistics: ckpt-loaded vs Kaiming-init')
     for k in time_net_keys:
-        v = msd[k]
-        print(f'  {k}: shape={tuple(v.shape)}, '
-              f'mean={v.float().mean().item():+.6f}, '
-              f'abs_mean={v.float().abs().mean().item():.6f}, '
-              f'max={v.float().abs().max().item():.6f}')
+        v = msd[k].float()
+        init_v = init_state.get(k, None)
+        if init_v is not None:
+            init_v = init_v.float()
+            diff = (v - init_v).abs()
+            print(f'  {k}: shape={tuple(v.shape)}')
+            print(f'    ckpt:  mean={v.mean().item():+.6f} abs_mean={v.abs().mean().item():.6f} max={v.abs().max().item():.6f}')
+            print(f'    init:  mean={init_v.mean().item():+.6f} abs_mean={init_v.abs().mean().item():.6f} max={init_v.abs().max().item():.6f}')
+            print(f'    |ckpt-init|:  mean={diff.mean().item():.6f} max={diff.max().item():.6f}  (large = trained-away-from-init)')
+        else:
+            print(f'  {k}: no init counterpart found')
 
     model.load_state_dict(msd)
     model.eval()
