@@ -243,19 +243,28 @@ class DebugLogger:
             self._csv_f.close()
         except Exception:
             pass
+        # The reanalyse step (alignment columns) is OPTIONAL post-processing and
+        # depends on pandas, which the paper-exact dds_env (torch 1.10 / py3.7)
+        # does NOT have. Importing it must NEVER crash the run at exit — the raw
+        # CSV is already flushed above. Guard BOTH import paths (the importlib
+        # fallback re-executes the module, re-hitting `import pandas`).
         try:
-            from reanalyse_debug_csv import reanalyse_csv
-        except ImportError:
-            # fall back to import by absolute path (debug_logger is placed
-            # on sys.path by ddsslam.py but reanalyse_debug_csv may not be)
-            import importlib.util
-            spec = importlib.util.spec_from_file_location(
-                'reanalyse_debug_csv',
-                os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             'reanalyse_debug_csv.py'))
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            reanalyse_csv = mod.reanalyse_csv
+            try:
+                from reanalyse_debug_csv import reanalyse_csv
+            except ImportError:
+                # fall back to import by absolute path (debug_logger is placed
+                # on sys.path by ddsslam.py but reanalyse_debug_csv may not be)
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(
+                    'reanalyse_debug_csv',
+                    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 'reanalyse_debug_csv.py'))
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                reanalyse_csv = mod.reanalyse_csv
+        except Exception as _e:
+            print(f'[DebugLogger] reanalyse skipped (optional, needs pandas): {_e}')
+            return
         try:
             _, summary = reanalyse_csv(self.csv_path, in_place=True, verbose=False)
             print(f'[DebugLogger] CSV finalised: '

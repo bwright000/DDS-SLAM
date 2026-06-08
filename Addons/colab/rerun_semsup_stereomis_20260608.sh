@@ -96,16 +96,27 @@ if [ -z "$(ls "$STEREO_MOGE_DIR"/*.png 2>/dev/null | head -1)" ]; then
     [ -f "$STAR" ] && tar xf "$STAR" -C /content/p2_1_local || \
       (cd "$STEREO_DS" && tar cf - video_frames groundtruth.txt StereoCalibration.ini masks | tar xf - -C /content/p2_1_local)
   fi
-  # Symlink last-4000 left frames AS *-left.png so generate_depth_moge globs them.
-  STAGE=/content/p2_1_moge_stage; rm -rf "$STAGE"; mkdir -p "$STAGE"
-  ( cd /content/p2_1_local/video_frames && ls *l.png 2>/dev/null | tail -4000 | while read f; do
-      stem="${f%l.png}"; ln -sf "/content/p2_1_local/video_frames/$f" "$STAGE/${stem}-left.png"; done )
-  echo "  staged $(ls "$STAGE"/*-left.png 2>/dev/null | wc -l) left frames" | tee -a "$LOG"
-  NPY=/content/p2_1_moge_npy; mkdir -p "$NPY"
-  # --depth_scale 1 => npy holds metres (avoids the overnight double-scale bug)
-  "$PYSYS" Addons/depth/generate_depth_moge.py \
-    --rgb "$STAGE" --out "$NPY" --temporal_window 5 --depth_scale 1 \
-    2>&1 | tee -a "$LOG" || echo "  WARN: StereoMIS MoGe gen failed" | tee -a "$LOG"
+  # generate_depth_moge.py stage-1 pre-allocates a [N,H,W] float32 buffer; for
+  # 4000 frames that is ~5-20 GB -> OOM -> no NPYs -> empty depth -> the SLAM
+  # dies with a cryptic IndexError on frame 0 (the 2026-06-08 failure).
+  # Fix: process in CHUNKS of 500 (bounded memory; temporal smoothing kept
+  # within each chunk; negligible boundary effect over 4000 frames).
+  "$PYSYS" -c "import moge" 2>/dev/null || echo "  WARN: 'import moge' FAILED in system python — StereoMIS depth gen will produce nothing (fix moge install in Phase 1)" | tee -a "$LOG"
+  ( cd /content/p2_1_local/video_frames && ls *l.png 2>/dev/null | tail -4000 ) > /content/_p2_1_frames.txt
+  NIMG=$(wc -l < /content/_p2_1_frames.txt)
+  NPY=/content/p2_1_moge_npy; rm -rf "$NPY"; mkdir -p "$NPY"
+  echo "  StereoMIS: $NIMG frames -> MoGe-2 in chunks of 500 (memory-safe)" | tee -a "$LOG"
+  CHUNK=500; i=0
+  while [ "$i" -lt "$NIMG" ]; do
+    STAGE=/content/p2_1_moge_stage; rm -rf "$STAGE"; mkdir -p "$STAGE"
+    sed -n "$((i+1)),$((i+CHUNK))p" /content/_p2_1_frames.txt | while read f; do
+      stem="${f%l.png}"; ln -sf "/content/p2_1_local/video_frames/$f" "$STAGE/${stem}-left.png"; done
+    echo "  MoGe chunk frames $i..$((i+CHUNK)): $(ls "$STAGE"/*-left.png 2>/dev/null | wc -l) staged" | tee -a "$LOG"
+    "$PYSYS" Addons/depth/generate_depth_moge.py --rgb "$STAGE" --out "$NPY" \
+      --temporal_window 5 --depth_scale 1 2>&1 | tee -a "$LOG" || echo "  WARN: MoGe chunk $i failed" | tee -a "$LOG"
+    i=$((i+CHUNK))
+  done
+  echo "  MoGe NPYs produced: $(ls "$NPY"/*-left_depth.npy 2>/dev/null | wc -l)/$NIMG" | tee -a "$LOG"
   # npy(metres) -> uint16 png at png_depth_scale=10000, named <stem>.png
   mkdir -p "$STEREO_MOGE_DIR"
   "$PYSYS" - "$NPY" "$STEREO_MOGE_DIR" <<'PYEOF'
@@ -189,25 +200,35 @@ if [ ! -f "$SDIR/.DONE" ]; then
     STAR=$STEREO_DS/P2_1_staging.tar
     [ -f "$STAR" ] && tar xf "$STAR" -C /content/p2_1_local
   fi
-  # StereoMISDataset reads {datadir}/depth/*.png — symlink the MoGe png dir there
+  # StereoMISDataset reads {datadir}/depth/*.png — symlink the MoGe png dir there.
+  # (rm -rf first: `ln -sf` into an existing dir nests the link INSIDE it.)
   rm -rf /content/p2_1_local/depth
   ln -sf "$STEREO_MOGE_DIR" /content/p2_1_local/depth
-  CFG=configs/StereoMIS/p2_1_moge_back4000.yaml   # tracked; output dir = $SNAME
-  python ddsslam.py --config "$CFG" 2>&1 | tee -a "$LOG" || echo "  WARN: StereoMIS SLAM failed" | tee -a "$LOG"
-  OUT=$(python -c "from config import load_config;print(load_config('$CFG')['data']['output'])")
-  CKPT=$(ls -t "$REPO/$OUT/demo"/checkpoint*.pt 2>/dev/null | head -1)
-  if [ -n "$CKPT" ]; then
-    cp "$CKPT" "$STEREO_CKPT_DIR/$SNAME.pt"
-    echo "  saved -> $STEREO_CKPT_DIR/$SNAME.pt" | tee -a "$LOG"
-    # collect ATE (ddsslam.py wrote output.txt + pose_*.png inline) + render
-    cp "$REPO/$OUT/demo/output.txt" "$SDIR/ate_output.txt" 2>/dev/null || true
-    cp "$REPO/$OUT/demo"/pose_*.png "$SDIR/" 2>/dev/null || true
-    python Addons/viz/render_all_frames.py --config "$CFG" --checkpoint "$CKPT" \
-      --output_dir "$SDIR/rendered_all" --save_depth --save_gt 2>&1 | tee -a "$LOG"
+  # FAIL-FAST: __len__ uses video_frames; if depth has fewer PNGs the dataloader
+  # dies with a cryptic IndexError on frame 0 (the 2026-06-08 failure). Verify first.
+  NDEP=$(ls /content/p2_1_local/depth/*.png 2>/dev/null | wc -l)
+  NIMG=$( ( cd /content/p2_1_local/video_frames && ls *l.png 2>/dev/null | tail -4000 ) | wc -l )
+  echo "  StereoMIS depth check: $NDEP depth png vs $NIMG frames" | tee -a "$LOG"
+  if [ "$NIMG" -eq 0 ] || [ "$NDEP" -lt "$NIMG" ]; then
+    echo "  FATAL: StereoMIS MoGe depth incomplete ($NDEP/$NIMG) — SKIPPING SLAM (no .DONE, so it retries next run). Check Phase-1b above: moge import / OOM / HF model download." | tee -a "$LOG"
   else
-    echo "  FATAL: no StereoMIS ckpt produced" | tee -a "$LOG"
+    CFG=configs/StereoMIS/p2_1_moge_back4000.yaml   # tracked; output dir = $SNAME
+    python ddsslam.py --config "$CFG" 2>&1 | tee -a "$LOG" || echo "  WARN: StereoMIS SLAM crashed" | tee -a "$LOG"
+    OUT=$(python -c "from config import load_config;print(load_config('$CFG')['data']['output'])")
+    CKPT=$(ls -t "$REPO/$OUT/demo"/checkpoint*.pt 2>/dev/null | head -1)
+    if [ -n "$CKPT" ]; then
+      cp "$CKPT" "$STEREO_CKPT_DIR/$SNAME.pt"
+      echo "  saved -> $STEREO_CKPT_DIR/$SNAME.pt" | tee -a "$LOG"
+      # collect ATE (ddsslam.py wrote output.txt + pose_*.png inline) + render
+      cp "$REPO/$OUT/demo/output.txt" "$SDIR/ate_output.txt" 2>/dev/null || true
+      cp "$REPO/$OUT/demo"/pose_*.png "$SDIR/" 2>/dev/null || true
+      python Addons/viz/render_all_frames.py --config "$CFG" --checkpoint "$CKPT" \
+        --output_dir "$SDIR/rendered_all" --save_depth --save_gt 2>&1 | tee -a "$LOG"
+      touch "$SDIR/.DONE"   # only mark DONE on SUCCESS so a failed run retries
+    else
+      echo "  FATAL: no StereoMIS ckpt produced" | tee -a "$LOG"
+    fi
   fi
-  touch "$SDIR/.DONE"
 fi
 
 echo "=== rerun complete $(date -Iseconds) ===" | tee -a "$LOG"
