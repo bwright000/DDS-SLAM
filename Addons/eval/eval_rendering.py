@@ -89,21 +89,54 @@ def main():
         print(f"No rendered images found in {args.render_dir}")
         return
 
-    # Find ground truth images (Semantic-SuPer: *-left.png, StereoMIS: *l.png)
-    gt_images = sorted(glob.glob(os.path.join(args.gt_dir, '*-left.png')))
-    if not gt_images:
-        gt_images = sorted(glob.glob(os.path.join(args.gt_dir, '*_left.png')))
-    if not gt_images:
-        # StereoMIS pattern: *l.png (exclude *r.png)
-        all_l = sorted(glob.glob(os.path.join(args.gt_dir, '*l.png')))
-        gt_images = [f for f in all_l if not f.endswith('r.png')]
-    if not gt_images:
-        print(f"No ground truth images found in {args.gt_dir}")
+    # Parse numeric frame index from a filename like "0500.png" -> 500.
+    def _parse_idx(path):
+        try:
+            return int(os.path.splitext(os.path.basename(path))[0])
+        except ValueError:
+            return None
+    def _stem(path):
+        return os.path.splitext(os.path.basename(path))[0]
+
+    # --- Ground-truth discovery + pairing -----------------------------------
+    # Mode 1 (preferred): render_all_frames.py --save_gt writes the GT next to
+    # each render as "<stem>_gt.png".  Pair directly by filename stem. This is
+    # what the SemSup/CRCD re-render runbooks produce; the old code only knew the
+    # separate-dir patterns below and reported "No ground truth images found".
+    sibling_gt = {p: os.path.join(args.gt_dir, _stem(p) + '_gt.png') for p in rendered}
+    n_sibling = sum(os.path.exists(g) for g in sibling_gt.values())
+    if n_sibling >= max(1, len(rendered) // 2):
+        pairs = [(p, sibling_gt[p]) for p in rendered if os.path.exists(sibling_gt[p])]
+        print(f"GT-alongside mode: paired {len(pairs)} render/_gt.png by filename")
+    else:
+        # Mode 2: GT in a separate dir.
+        # Semantic-SuPer: *-left.png / *_left.png ; StereoMIS: *l.png (excl *r.png)
+        gt_images = sorted(glob.glob(os.path.join(args.gt_dir, '*-left.png')))
+        if not gt_images:
+            gt_images = sorted(glob.glob(os.path.join(args.gt_dir, '*_left.png')))
+        if not gt_images:
+            all_l = sorted(glob.glob(os.path.join(args.gt_dir, '*l.png')))
+            gt_images = [f for f in all_l if not f.endswith('r.png')]
+        if not gt_images:
+            print(f"No ground truth images found in {args.gt_dir}")
+            return
+        numeric_render = all(_parse_idx(p) is not None for p in rendered)
+        if numeric_render:
+            pairs = [(p, gt_images[_parse_idx(p) + args.gt_offset]) for p in rendered
+                     if 0 <= _parse_idx(p) + args.gt_offset < len(gt_images)]
+            print(f"Pairing by filename index (stride-aware, gt_offset={args.gt_offset}): "
+                  f"{len(pairs)} pairs")
+        else:
+            n_eval = min(len(rendered), len(gt_images))
+            pairs = [(rendered[i], gt_images[i]) for i in range(n_eval)]
+
+    if not pairs:
+        print(f"No render/GT pairs could be formed (rendered={len(rendered)}, gt_dir={args.gt_dir})")
         return
 
     print(f"Method: {args.name}")
     print(f"Rendered: {len(rendered)} images")
-    print(f"Ground truth: {len(gt_images)} images")
+    print(f"Pairs to evaluate: {len(pairs)}")
 
     # Try to import LPIPS
     try:
@@ -123,33 +156,15 @@ def main():
     lpips_list = []
     frame_indices = []
 
-    # If rendered filenames are numeric (e.g. "0500.jpg"), treat them as absolute
-    # GT frame indices — needed when render_freq > 1 and rendered set is sparse.
-    def _parse_idx(path):
-        try:
-            return int(os.path.splitext(os.path.basename(path))[0])
-        except ValueError:
-            return None
-    numeric_render = all(_parse_idx(p) is not None for p in rendered)
-
-    if numeric_render:
-        pairs = [(p, _parse_idx(p) + args.gt_offset) for p in rendered
-                 if _parse_idx(p) + args.gt_offset < len(gt_images)]
-        print(f"Pairing by filename index (stride-aware, gt_offset={args.gt_offset}): "
-              f"{len(pairs)} pairs")
-    else:
-        n_eval = min(len(rendered), len(gt_images))
-        pairs = [(rendered[i], i) for i in range(n_eval)]
-
-    for render_path, gt_idx in pairs:
+    for render_path, gt_path in pairs:
         # Load rendered image
         render = cv2.imread(render_path)
         render = cv2.cvtColor(render, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
         # Load ground truth
-        gt = cv2.imread(gt_images[gt_idx])
+        gt = cv2.imread(gt_path)
         gt = cv2.cvtColor(gt, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        frame_indices.append(gt_idx)
+        frame_indices.append(_parse_idx(render_path) if _parse_idx(render_path) is not None else len(frame_indices))
 
         # Resize if needed
         if render.shape != gt.shape:
