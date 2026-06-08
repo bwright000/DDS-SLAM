@@ -503,21 +503,71 @@ else
     echo "  Checked:" | tee -a "$LOG"
     for d in "${MOGE_DRIVE_OPTIONS[@]}"; do echo "    $d ($(ls $d/*.png 2>/dev/null | wc -l))" | tee -a "$LOG"; done
     echo "  Generating fresh MoGe-2 depth for last 4000 frames..." | tee -a "$LOG"
-    # Stage data locally first
+
+    # Stage P2_1 via tarball (user 2026-06-08: use the pre-built tar)
     mkdir -p /content/p2_1_local
     if [ ! -d /content/p2_1_local/video_frames ]; then
-      cd "$P2_1_DRIVE" && tar cf - video_frames | tar xf - -C /content/p2_1_local
+      STEREO_TAR=/content/drive/MyDrive/Datasets/StereoMisPP/P2_1_staging.tar
+      if [ -f "$STEREO_TAR" ]; then
+        echo "  extracting from $STEREO_TAR" | tee -a "$LOG"
+        tar xf "$STEREO_TAR" -C /content/p2_1_local
+      else
+        cd "$P2_1_DRIVE" && tar cf - video_frames | tar xf - -C /content/p2_1_local
+      fi
     fi
-    MOGE_DIR=/content/p2_1_local/depth_moge_back4000
-    mkdir -p "$MOGE_DIR"
+
+    # Use `generate_depth_moge.py` (NOT generate_depth_stereomis.py — doesn't exist).
+    # The script outputs .npy files; we'll convert to uint16 PNG at scale 10000.
+    # No native --slice flag — we symlink only the last-4000 frames into a
+    # staging dir before invocation.
+    STAGE_DIR=/content/p2_1_back4000_rgb
+    rm -rf "$STAGE_DIR"; mkdir -p "$STAGE_DIR"
+    cd /content/p2_1_local/video_frames
+    # CRCD-style naming would be *l.png; StereoMIS uses different naming — find pattern
+    ALL_LEFTS=$(ls *l.png 2>/dev/null || ls *.png 2>/dev/null)
+    N_ALL=$(echo "$ALL_LEFTS" | wc -l)
+    echo "  found $N_ALL left frames; staging last 4000" | tee -a "$LOG"
+    echo "$ALL_LEFTS" | tail -4000 | xargs -I {} ln -sf "/content/p2_1_local/video_frames/{}" "$STAGE_DIR/{}"
+
+    MOGE_NPY_DIR=/content/p2_1_local/depth_moge_npy_back4000
+    MOGE_PNG_DIR=/content/p2_1_local/depth_moge_back4000
+    mkdir -p "$MOGE_NPY_DIR" "$MOGE_PNG_DIR"
     cd "$REPO_ROOT"
-    # Generate MoGe for last 4000 frames only
-    python Addons/depth/generate_depth_stereomis.py \
-      --rgb_dir /content/p2_1_local/video_frames \
-      --out_dir "$MOGE_DIR" \
-      --slice_back 4000 \
-      --model MoGe-2 \
+    python Addons/depth/generate_depth_moge.py \
+      --rgb "$STAGE_DIR" \
+      --out "$MOGE_NPY_DIR" \
+      --temporal_window 1 \
+      --depth_scale 10000 \
       2>&1 | tee -a "$LOG" || echo "  WARN: MoGe gen failed"
+
+    # NPY -> uint16 PNG conversion (scale 10000) for DDS-SLAM consumption
+    python - <<PYEOF
+import numpy as np, cv2, os, glob
+NPY_DIR = '$MOGE_NPY_DIR'
+PNG_DIR = '$MOGE_PNG_DIR'
+files = sorted(glob.glob(os.path.join(NPY_DIR, '*.npy')))
+print(f'Converting {len(files)} NPY -> uint16 PNG (scale 10000)...')
+n = 0
+for f in files:
+    d_m = np.load(f).astype(np.float32)
+    d_u16 = np.clip(d_m * 10000, 0, 65535).astype(np.uint16)
+    out = os.path.join(PNG_DIR, os.path.basename(f).replace('.npy', '.png'))
+    cv2.imwrite(out, d_u16)
+    n += 1
+print(f'wrote {n} PNGs to {PNG_DIR}')
+PYEOF
+
+    MOGE_DIR="$MOGE_PNG_DIR"
+
+    # SAVE BACK TO DRIVE for future runs (per user 2026-06-08)
+    DRIVE_MOGE_TARGET=/content/drive/MyDrive/Datasets/StereoMisPP/P2_1/depth_moge_back4000
+    if [ -n "$(ls $MOGE_PNG_DIR/*.png 2>/dev/null | head -1)" ]; then
+      echo "  copying generated MoGe depth to Drive: $DRIVE_MOGE_TARGET" | tee -a "$LOG"
+      mkdir -p "$DRIVE_MOGE_TARGET"
+      cp -n "$MOGE_PNG_DIR"/*.png "$DRIVE_MOGE_TARGET/" 2>/dev/null
+      N_SAVED=$(ls "$DRIVE_MOGE_TARGET"/*.png 2>/dev/null | wc -l)
+      echo "  Drive cache now has $N_SAVED PNGs (future runs will skip this step)" | tee -a "$LOG"
+    fi
   fi
 
   phase "C" "StereoMIS Back-4000 SLAM with MoGe-2 depth"
