@@ -98,34 +98,46 @@ for KEY in C1_001 C2_001; do
     echo "  $KEY already done -- skip" | tee -a "$LOG"; continue
   fi
 
-  # Stage CRCD data locally (dx_hook doesn't need it but renders do).
-  # The June-4 preprocessed data lives at MyDrive/Datasets/CRCD-Published-Preprocessed/<KEY>/
-  # OR we can re-stage from the source tarball + run preprocess.
+  # Stage CRCD data: raw tarball -> preprocess -> data/CRCD/<KEY>/.
   KEY_LOWER=$(echo "$KEY" | tr A-Z a-z)
   DATA_LOCAL=$REPO_ROOT/data/CRCD/$KEY
-  if [ ! -d "$DATA_LOCAL" ]; then
+  if [ ! -d "$DATA_LOCAL/video_frames" ] || [ -z "$(ls $DATA_LOCAL/video_frames/*.png 2>/dev/null | head -1)" ]; then
     mkdir -p "$DATA_LOCAL"
-    # Try preprocessed Drive copy first
-    PREPROC=/content/drive/MyDrive/Datasets/CRCD-Published-Preprocessed/$KEY
-    if [ -d "$PREPROC" ]; then
-      cp -r "$PREPROC"/* "$DATA_LOCAL/" 2>/dev/null
-      echo "  staged data from $PREPROC" | tee -a "$LOG"
-    else
-      # Fall back to extracting from source tarball + preprocessing
-      case "$KEY" in
-        C1_001) RAW_TAR=/content/drive/MyDrive/Datasets/CRCD-Published/C_1_snippet_001_staging.tar ;;
-        C2_001) RAW_TAR=/content/drive/MyDrive/Datasets/CRCD-Published/C_2_snippet_001_staging.tar ;;
-        *)      RAW_TAR="" ;;
-      esac
-      if [ -n "$RAW_TAR" ] && [ -f "$RAW_TAR" ]; then
-        RAW_DIR=/content/crcd_raw_$KEY
-        mkdir -p "$RAW_DIR"
-        tar xf "$RAW_TAR" -C "$RAW_DIR" 2>/dev/null
-        echo "  extracted raw to $RAW_DIR; preprocess will happen on render demand" | tee -a "$LOG"
-      else
-        echo "  WARN: no preprocessed data + no raw tar for $KEY; renders will skip frames" | tee -a "$LOG"
-      fi
+    case "$KEY" in
+      C1_001) EP=C_1; SID=001 ;;
+      C2_001) EP=C_2; SID=001 ;;
+      F1_002) EP=F_1; SID=002 ;;
+      F3_007) EP=F_3; SID=007 ;;
+    esac
+    RAW_TAR=/content/drive/MyDrive/Datasets/CRCD-Published/${EP}_snippet_${SID}_staging.tar
+    RAW_DIR=/content/crcd_raw_$KEY
+    if [ ! -d "$RAW_DIR/$EP" ] && [ -f "$RAW_TAR" ]; then
+      mkdir -p "$RAW_DIR"
+      echo "  extracting $RAW_TAR -> $RAW_DIR" | tee -a "$LOG"
+      tar xf "$RAW_TAR" -C "$RAW_DIR" 2>/dev/null
     fi
+    SNIPPET_DIR=$(find "$RAW_DIR" -maxdepth 3 -type d -name "snippet_$SID" 2>/dev/null | head -1)
+    CALIB_PKL=/content/drive/MyDrive/Datasets/CRCD-Published/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl
+    if [ -n "$SNIPPET_DIR" ] && [ -f "$CALIB_PKL" ]; then
+      echo "  preprocessing CRCD $SNIPPET_DIR -> $DATA_LOCAL" | tee -a "$LOG"
+      python Addons/preprocess/preprocess_crcd_published.py \
+        --snippet_dir "$SNIPPET_DIR" \
+        --calib_pkl   "$CALIB_PKL" \
+        --output_dir  "$DATA_LOCAL" 2>&1 | tee -a "$LOG" || \
+        echo "  WARN: CRCD preprocess failed for $KEY" | tee -a "$LOG"
+    else
+      echo "  WARN: SNIPPET_DIR=$SNIPPET_DIR or CALIB_PKL not found" | tee -a "$LOG"
+    fi
+  fi
+
+  # Sanity-check the deformation network BEFORE the full dx_hook dump.
+  # If time_net outputs are zero across test inputs, dx_hook will produce
+  # zero Δx and Test 1 will be non-diagnostic (we caught this 2026-06-08).
+  SANITY_LOG=$SNIPPET_DRIVE/dx_hook_sanity.log
+  if [ ! -f "$SANITY_LOG" ]; then
+    phase "A.0.$KEY" "dx_hook sanity check (verify time_net non-zero)"
+    python diagnosis/infra/dx_hook_sanity.py \
+      --config "$CFG" --checkpoint "$CKPT" 2>&1 | tee "$SANITY_LOG"
   fi
 
   # Pull the latest checkpoint from Drive into the local CKPT_DIR if local missing.
@@ -350,33 +362,54 @@ print(c['data']['output'])
   fi
   echo "  using ckpt: $CKPT" | tee -a "$LOG"
 
-  # Stage SemSup data if not present locally.  Memory notes the Drive
-  # source is `MyDrive/SemSup/v2_data/trial_3` with the trial_3 vs trail_3
-  # typo gotcha — config wants data/Super/trail_3 (a, typo).
+  # Stage SemSup data if not present locally.  Canonical Drive source per
+  # user 2026-06-08: MyDrive/Datasets/SemSup/v2_data/trial_3/  (with
+  # trial_3 vs trail_3 typo — config wants data/Super/trail_3 with 'a').
   if [ ! -d "$REPO_ROOT/data/Super/trail_3" ]; then
     mkdir -p "$REPO_ROOT/data/Super"
-    SUPER_DRIVE=/content/drive/MyDrive/SemSup/v2_data/trial_3
+    SUPER_DRIVE=/content/drive/MyDrive/Datasets/SemSup/v2_data/trial_3
     if [ -d "$SUPER_DRIVE" ]; then
       echo "  staging Super trail_3 from $SUPER_DRIVE" | tee -a "$LOG"
       cp -r "$SUPER_DRIVE" "$REPO_ROOT/data/Super/trail_3"
     else
-      # Try alternative locations
-      for ALT in \
-        /content/drive/MyDrive/SemSup/v2_data/trail_3 \
-        /content/drive/MyDrive/Datasets/SemSup/trial_3 \
-        /content/drive/MyDrive/Datasets/SemSup/v2_data/trial_3; do
-        if [ -d "$ALT" ]; then
-          echo "  staging from $ALT" | tee -a "$LOG"
-          cp -r "$ALT" "$REPO_ROOT/data/Super/trail_3"
-          break
-        fi
-      done
-    fi
-    if [ ! -d "$REPO_ROOT/data/Super/trail_3" ]; then
-      echo "  WARN: Super trail_3 data not found on Drive — skipping $KEY" | tee -a "$LOG"
+      echo "  WARN: Super trail_3 data not at $SUPER_DRIVE — skipping $KEY" | tee -a "$LOG"
       continue
     fi
   fi
+
+  # Substitute depth_subdir for configs whose original depth is missing on
+  # Drive (per user 2026-06-08 image of trial_3/depth/).  For post-hoc
+  # rendering, the loaded depth is NOT used for the rendered output (the
+  # model produces both RGB and depth from its weights).  We only need
+  # the dataset to load successfully (i.e. depth_subdir to exist).
+  # Missing on Drive: variant_b_ep9 (needed by variantB_ep9_hash19), moge2.
+  # Available substitutes: variant_b_afsfm (closest to variantB), variant_a_stereo.
+  CFG_OVERRIDE_DIR=$REPO_ROOT/configs/Super/_overnight
+  mkdir -p "$CFG_OVERRIDE_DIR"
+  case "$KEY" in
+    variantB_ep9_hash19)
+      SUBSTITUTE=variant_b_afsfm
+      CFG_USE=$CFG_OVERRIDE_DIR/$KEY.yaml
+      cat > "$CFG_USE" <<YAMLEOF
+inherit_from: $CFG
+data:
+  depth_subdir: depth/$SUBSTITUTE
+YAMLEOF
+      CFG=$CFG_USE
+      echo "  SUBSTITUTED depth_subdir -> $SUBSTITUTE (original depth/variant_b_ep9 missing on Drive)" | tee -a "$LOG"
+      ;;
+    moge2)
+      SUBSTITUTE=variant_a_stereo
+      CFG_USE=$CFG_OVERRIDE_DIR/$KEY.yaml
+      cat > "$CFG_USE" <<YAMLEOF
+inherit_from: $CFG
+data:
+  depth_subdir: depth/$SUBSTITUTE
+YAMLEOF
+      CFG=$CFG_USE
+      echo "  SUBSTITUTED depth_subdir -> $SUBSTITUTE (original depth/moge2 missing on Drive)" | tee -a "$LOG"
+      ;;
+  esac
 
   phase "B.$KEY" "post-hoc render with FIXED depth scale (png_depth_scale=10000)"
   python Addons/viz/render_all_frames.py \
@@ -386,15 +419,43 @@ print(c['data']['output'])
     --save_depth --save_gt \
     2>&1 | tee -a "$LOG" || echo "  WARN: render_all_frames failed for $KEY"
 
-  # Eval PSNR/SSIM/LPIPS — use 'Lab1 (trail3)' as sequence (these ARE trail3 runs)
+  # Eval PSNR/SSIM/LPIPS — use the staged data's RGB as GT (render_all_frames.py
+  # saves NNNN_gt.png alongside NNNN.png IF --save_gt was passed; if missing,
+  # we fall back to comparing against data/Super/trail_3/rgb/<NNNN>.png).
+  GT_DIR=$KEY_DRIVE/rendered_all
+  if ! ls "$GT_DIR"/*_gt.png >/dev/null 2>&1; then
+    # No _gt.png saved — point eval at the dataset's RGB dir instead
+    GT_DIR=$REPO_ROOT/data/Super/trail_3/rgb
+    echo "  no _gt.png in renders; using GT from $GT_DIR" | tee -a "$LOG"
+  fi
   python Addons/eval/eval_rendering.py \
-    --gt_dir "$KEY_DRIVE/rendered_all" \
+    --gt_dir "$GT_DIR" \
     --render_dir "$KEY_DRIVE/rendered_all" \
     --name "$KEY" \
     --output_csv "$KEY_DRIVE/eval_per_frame.csv" \
     --summary_csv "$SEMSUP_DRIVE/_summary.csv" \
     --sequence "Lab1 (trail3)" 2>&1 | tee "$KEY_DRIVE/eval_summary.txt" || \
     echo "  WARN: eval_rendering failed for $KEY"
+
+  # Generate 6-panel video on the spot (per user 2026-06-08: locally before
+  # shipping to Drive).  SemSup data has no semantic masks, so 4-panel layout.
+  VIDEO=$KEY_DRIVE/${KEY}_6panel.mp4
+  if [ ! -f "$VIDEO" ]; then
+    phase "B.$KEY.vid" "generate video"
+    python Addons/viz/generate_video.py \
+      --rgb_input_dir "$REPO_ROOT/data/Super/trail_3/rgb" \
+      --rgb_input_pattern '*.png' \
+      --rgb_output_dir "$KEY_DRIVE/rendered_all" \
+      --rgb_output_pattern '[0-9]*.png' \
+      --depth_input_dir "$REPO_ROOT/data/Super/trail_3/depth/variant_a_stereo" \
+      --depth_output_dir "$KEY_DRIVE/rendered_all/depth" \
+      --trajectory_est "$KEY_DRIVE/rendered_all/est_c2w_data.txt" \
+      --trajectory_gt  "$REPO_ROOT/data/Super/trail_3/groundtruth.txt" \
+      --output "$VIDEO" \
+      --fps 15 \
+      --png_depth_scale 10000 \
+      2>&1 | tee -a "$LOG" || echo "  WARN: video gen failed for $KEY"
+  fi
 
   mark_done "$KEY_DRIVE"
 done
