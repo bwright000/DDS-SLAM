@@ -1,0 +1,12 @@
+inherit_from: configs/StereoMIS/p2_1.yaml
+# StereoMIS P2_1 last-4000 with MoGe-2 monocular depth (rerun 2026-06-08).
+# StereoMISDataset reads {datadir}/depth/*.png directly (depth_subdir is a
+# SuperDataset-only knob), so the runbook symlinks the MoGe depth dir into
+# /content/p2_1_local/depth before launching.  Back-4000 slice is enforced in
+# datasets/dataset.py:120-121 ([-4000:]); input dir must hold the full sequence.
+data:
+  datadir: /content/p2_1_local
+  output: output/StereoMIS/DDS-SLAM_stereomis-p2-1-moge-back4000_20260608
+  exp_name: demo
+cam:
+  png_depth_scale: 10000   # MoGe NPY->uint16 PNG convention used by the runbook
