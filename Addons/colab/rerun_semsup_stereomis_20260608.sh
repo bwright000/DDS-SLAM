@@ -127,7 +127,14 @@ fi
 # PHASE 2 — DDS-SLAM training + eval  (dds_env, torch 1.10)
 # =====================================================================
 source /tmp/dds_env/bin/activate
+# Paper-exact env needs CUDA 11.3 on the path at RUNTIME (tinycudann) — set here
+# (NOT globally) so Phase-1 MoGe/torch2 above stays on the default CUDA.
+export CUDA_HOME=/usr/local/cuda-11.3
+export PATH=/usr/local/cuda-11.3/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-11.3/lib64:/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
+export CC=/usr/bin/gcc-10 CXX=/usr/bin/g++-10 CUDAHOSTCXX=/usr/bin/g++-10
 echo "PHASE 2 env: $(python -c 'import torch;print("torch",torch.__version__)')" | tee -a "$LOG"
+python -c "import torch,tinycudann,marching_cubes;print('env OK cuda?',torch.cuda.is_available())" 2>&1 | tee -a "$LOG"
 
 # ---- SemSup: 5 configs (4 stereo + moge2 with regenerated depth) ----
 declare -A SEMSUP
