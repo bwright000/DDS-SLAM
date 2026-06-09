@@ -71,8 +71,10 @@ def load_image(path, target_size=None):
     return img
 
 
-def colormap_depth(depth_path, target_size=None, png_depth_scale=None):
-    """Load a depth map and apply colormap. Supports PNG (uint16/uint8) and NPY (float32)."""
+def colormap_depth(depth_path, target_size=None, png_depth_scale=None, robust=False):
+    """Load a depth map and apply colormap. Supports PNG (uint16/uint8) and NPY (float32).
+    robust=True uses a median-anchored p2..p98 range (so a few near/far outliers don't
+    flatten the bulk) — the 'median depth scaling' for the output-depth panel."""
     if depth_path.endswith('.npy'):
         depth = np.load(depth_path)
         # squeeze any trailing singleton (e.g., shape (1, H, W) -> (H, W))
@@ -89,7 +91,10 @@ def colormap_depth(depth_path, target_size=None, png_depth_scale=None):
     if len(valid) == 0:
         colored = np.zeros((*depth.shape[:2], 3), dtype=np.uint8)
     else:
-        vmin, vmax = valid.min(), valid.max()
+        if robust:
+            vmin, vmax = np.percentile(valid, 2), np.percentile(valid, 98)
+        else:
+            vmin, vmax = valid.min(), valid.max()
         depth_norm = np.clip((depth_f - vmin) / (vmax - vmin + 1e-8) * 255, 0, 255).astype(np.uint8)
         depth_norm[depth_f <= 0] = 0
         colored = cv2.applyColorMap(depth_norm, cv2.COLORMAP_TURBO)
@@ -287,6 +292,9 @@ def main():
     parser.add_argument('--panel_height', type=int, default=360)
     parser.add_argument('--panel_width', type=int, default=480)
     parser.add_argument('--png_depth_scale', type=float, default=None)
+    parser.add_argument('--depth_norm', choices=['minmax', 'robust'], default='minmax',
+                        help="depth colormap normalization: 'robust' = median-anchored p2..p98 "
+                             "(recommended for output depth so outliers don't flatten it)")
     parser.add_argument('--max_frames', type=int, default=None)
     parser.add_argument('--rotation_speed', type=float, default=0.05,
                         help='Trajectory rotation speed (degrees per frame)')
@@ -470,7 +478,8 @@ def main():
             elif panel_name in ('Input Depth', 'Output Depth'):
                 paths = panel_data[panel_name]
                 idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
-                img = colormap_depth(paths[idx], panel_size, args.png_depth_scale)
+                img = colormap_depth(paths[idx], panel_size, args.png_depth_scale,
+                                     robust=(args.depth_norm == 'robust'))
             else:
                 paths = panel_data[panel_name]
                 idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
