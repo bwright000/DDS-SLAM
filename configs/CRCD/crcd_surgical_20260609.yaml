@@ -1,0 +1,52 @@
+# CRCD surgical-scale base (2026-06-09) — paperfaith_lrfix + MoGe normalised to
+# a common 0.12 m surgical median (generate_depth_moge.py --target_median 0.12).
+#
+# WHY: MoGe-2 depth is up-to-scale and its median varies 5-9x across snippets
+# (project_depth_multiplier_math_audit_20260604), so prior runs leaned on a
+# per-snippet stereo-anchor sc_factor. Here we instead PRE-NORMALISE every
+# snippet's depth to median 0.12 m and set sc_factor=1 (the clean fix per
+# reference_dds_slam_knob_audit_20260604: scale the depth, leave sc_factor=1).
+# Because all snippets now share the same median, the scale-bearing constants
+# below are COMMON; only the bound stays per-snippet (each snippet's spatial
+# EXTENT differs even at the same median) — see the c*/f* _surgical configs.
+#
+# Scale-equivalent transform from crcd.yaml's ~0.8 m scene: k = 0.12/0.8 = 0.15
+# applied to far / depth_trunc / trunc / range_d / smooth_* / voxel_* / mesh
+# voxels / lr. Voxel COUNT preserved (extent also x0.15) -> hash-safe at hash 19.
+# Sim3 ATE unchanged (scale-invariant); this fixes raw scale + matches the
+# constants to the scene + (with the runbook fix) captures est_c2w_data.txt.
+# lr x0.15 keeps Adam pose-step behaviour scale-equivalent to the lrfix run
+# (the one debatable knob; fallback = the unscaled 1e-4 if tracking under-moves).
+
+inherit_from: configs/CRCD/crcd_paperfaith_lrfix.yaml
+
+data:
+  sc_factor: 1            # depth pre-normalised to 0.12 m -> no stereo-anchor sc_factor
+
+mapping:
+  lr_rot: 0.000015        # 1e-4 x0.15
+  lr_trans: 0.000015
+
+tracking:
+  lr_rot: 0.000015
+  lr_trans: 0.000015
+
+grid:
+  voxel_sdf: 0.00015      # 0.001 x0.15 (count preserved -> hash-safe at hash 19)
+  voxel_color: 0.012      # 0.08 x0.15
+
+cam:
+  near: 0
+  far: 0.15               # 1 x0.15 (~ covers scaled Zmax ~0.14)
+  depth_trunc: 1.5        # 10 x0.15
+  png_depth_scale: 10000
+
+training:
+  trunc: 0.015            # 0.1 x0.15
+  range_d: 0.0075         # 0.05 x0.15
+  smooth_vox: 0.015       # 0.1 x0.15
+  smooth_margin: 0.0075   # 0.05 x0.15
+
+mesh:
+  voxel_eval: 0.0075      # 0.05 x0.15
+  voxel_final: 0.003      # 0.02 x0.15

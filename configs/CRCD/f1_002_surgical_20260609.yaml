@@ -1,0 +1,12 @@
+# F_1/002 surgical (2026-06-09) — crcd_surgical base + per-snippet fitted bound.
+# bound = f1_002_paperfaith_lrfix bound x k, k = 0.12/Zcenter(0.855) = 0.1404.
+inherit_from: configs/CRCD/crcd_surgical_20260609.yaml
+timesteps: 1287
+mapping:
+  bound: [[-0.0112, 0.0182], [-0.0042, 0.0253], [0.1053, 0.1347]]
+  marching_cubes_bound: [[-0.0112, 0.0182], [-0.0042, 0.0253], [0.1053, 0.1347]]
+data:
+  datadir: data/CRCD/F1_002
+  trainskip: 1
+  output: output/CRCD/F1_002_surgical_20260609
+  exp_name: demo
