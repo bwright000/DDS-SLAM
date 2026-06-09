@@ -1,0 +1,52 @@
+inherit_from: configs/StereoMIS/p2_1_moge_back4000.yaml
+# StereoMIS P2_1 last-4000, MoGe-2 depth NORMALISED to a surgical median (0.12 m)
+# via generate_depth_moge.py --target_median 0.12  (2026-06-09 re-run).
+#
+# WHY: the 2026-06-08 run stored MoGe's native ~0.6 m median depth, so the scene
+# sat at internal scale 0.6 while the (RAFT-tuned) constants assumed a ~3-4x
+# larger box -> grossly oversized bound + raw ATE 67x paper (pure monocular
+# scale).  Here we apply a SCALE-EQUIVALENT transform: depth AND every
+# scale-bearing constant are multiplied by k = 0.12/0.6 = 0.2.  This reproduces
+# the prior run's optimisation dynamics EXACTLY (voxel COUNT preserved -> no new
+# hash collisions at hash_size=16; trunc/range_d/far stay the same fractions of
+# the scene), but now at true surgical scale -> physical mesh units, meaningful
+# raw scale, and config constants matched to the scene.  Sim3 ATE is unchanged
+# (scale-invariant); this run finally CAPTURES est_c2w_data.txt (the 2026-06-08
+# Drive save dropped it) so Sim3 can be computed. See README_render_metrics /
+# reference_dds_slam_knob_audit / feedback_neural_slam_not_scale_invariant.
+#
+# png_depth_scale stays 10000: NPY = 0.12 m * 10000 = uint16 ~1200; DDS reads
+# 1200/10000 = 0.12 internal units (= metres). Do NOT change without re-deriving.
+data:
+  output: output/StereoMIS/DDS-SLAM_stereomis-p2-1-moge-surgical_20260609
+
+mapping:
+  # bound x0.2 from p2_1.yaml [[-1.8,2.1],[-2,1.2],[-0.1,2.7]]
+  bound: [[-0.36, 0.42], [-0.40, 0.24], [-0.02, 0.54]]
+  marching_cubes_bound: [[-0.36, 0.42], [-0.40, 0.24], [-0.02, 0.54]]
+  lr_rot: 0.0002      # 0.001 x0.2 (Adam-step equivalence in the 5x-smaller scene)
+  lr_trans: 0.0002
+
+tracking:
+  lr_rot: 0.0002
+  lr_trans: 0.0002
+
+grid:
+  voxel_sdf: 0.0004   # 0.002 x0.2 -> voxel COUNT preserved (extent x0.2) -> hash-safe at hash_size 16
+  voxel_color: 0.016  # 0.08 x0.2
+
+cam:
+  near: 0
+  far: 0.4            # 2 x0.2
+  depth_trunc: 2.0    # 10 x0.2
+  png_depth_scale: 10000
+
+training:
+  trunc: 0.02         # 0.1 x0.2
+  range_d: 0.01       # 0.05 x0.2
+  smooth_vox: 0.02    # 0.1 x0.2
+  smooth_margin: 0.01 # 0.05 x0.2
+
+mesh:
+  voxel_eval: 0.01    # 0.05 x0.2
+  voxel_final: 0.004  # 0.02 x0.2

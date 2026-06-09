@@ -143,6 +143,14 @@ def main():
                     help="MoGe inference resolution level (higher = sharper, slower)")
     ap.add_argument("--max_depth_m", type=float, default=5.0,
                     help="clamp predicted depth to [0, max_depth_m] meters before scaling")
+    ap.add_argument("--target_median", type=float, default=None,
+                    help="surgical-bounds mode (global median scalar): if set and "
+                         "--ref is NOT given, rescale so the sequence median depth = "
+                         "this many METERS, then store at *depth_scale. Normalises "
+                         "MoGe's up-to-scale output to a COMMON surgical scale so one "
+                         "scale-matched config fits every snippet. Sim3 ATE is "
+                         "unaffected (scale-invariant); this fixes raw-scale + makes "
+                         "the config's scale-bearing constants match the scene.")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -218,11 +226,30 @@ def main():
         scale = compute_global_scale(depths_sm, args.ref, rgb_files)
         final_multiplier = scale          # scale already includes depth_scale
         mode = "ref-anchored"
+    elif args.target_median is not None:
+        # Surgical-bounds: ONE global scalar so the sequence median depth hits a
+        # fixed surgical target (meters), then store at *depth_scale.  Pred median
+        # = median of per-frame medians (memory-safe; avoids the full-stack boolean
+        # mask that OOMs on T4 per the [1/3]/[3/3] notes above).
+        per_frame_med = []
+        for t in range(depths_sm.shape[0]):
+            vv = depths_sm[t][depths_sm[t] > 1e-6]
+            if vv.size >= 100:
+                per_frame_med.append(float(np.median(vv)))
+        if not per_frame_med:
+            raise SystemExit("ERROR: no valid depth to estimate median for --target_median")
+        pred_median = float(np.median(per_frame_med))
+        scale = args.target_median / pred_median
+        final_multiplier = scale * args.depth_scale
+        mode = f"target-median {args.target_median}m"
+        print(f"  pred median (median-of-frame-medians) = {pred_median:.4f} m "
+              f"over {len(per_frame_med)} frames")
+        print(f"  surgical scale = target/pred = {scale:.4f}")
     else:
         scale = 1.0
         final_multiplier = args.depth_scale  # raw metric -> on-disk units
         mode = "metric-direct"
-        print(f"  No --ref provided; using MoGe's native metric depth")
+        print(f"  No --ref / --target_median provided; using MoGe's native metric depth")
     print(f"  mode: {mode}, final multiplier on m: {final_multiplier:.4f}")
 
     n_written = 0
