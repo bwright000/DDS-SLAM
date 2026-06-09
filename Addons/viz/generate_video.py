@@ -295,6 +295,9 @@ def main():
     parser.add_argument('--depth_norm', choices=['minmax', 'robust'], default='minmax',
                         help="depth colormap normalization: 'robust' = median-anchored p2..p98 "
                              "(recommended for output depth so outliers don't flatten it)")
+    parser.add_argument('--skip_horn_traj', action='store_true',
+                        help="omit the Horn-aligned trajectory panel; show only --trajectory_raw "
+                             "(use when GT is fictional, e.g. SemSup identity GT)")
     parser.add_argument('--max_frames', type=int, default=None)
     parser.add_argument('--rotation_speed', type=float, default=0.05,
                         help='Trajectory rotation speed (degrees per frame)')
@@ -370,8 +373,9 @@ def main():
                 print(f"Seg Overlay: enabled (rendered RGB + seg)")
 
     if args.trajectory_est:
-        panels.append('Trajectory (Horn-aligned)')
-        print("Trajectory: enabled (Horn-aligned)")
+        if not args.skip_horn_traj:
+            panels.append('Trajectory (Horn-aligned)')
+            print("Trajectory: enabled (Horn-aligned)")
         if args.trajectory_raw:
             panels.append('Trajectory Raw')
             print("Trajectory Raw: enabled (no alignment)")
@@ -402,7 +406,8 @@ def main():
                         gt_all.append(vals[1:4])
             gt_all = np.array(gt_all)
             gt_xyz = eval(f"gt_all[{args.gt_frame_slice}]")[:len(est_xyz)]
-        panel_lengths['Trajectory (Horn-aligned)'] = len(est_xyz)
+        if not args.skip_horn_traj:
+            panel_lengths['Trajectory (Horn-aligned)'] = len(est_xyz)
         if args.trajectory_raw:
             panel_lengths['Trajectory Raw'] = len(est_xyz)
 
