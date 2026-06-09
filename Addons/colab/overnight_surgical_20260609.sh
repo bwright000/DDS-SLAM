@@ -180,8 +180,9 @@ if [ -f "$SDIR/.DONE" ]; then say "StereoMIS surgical done -> skip"; else
       cp "$REPO/$OUT/demo/output.txt" "$SDIR/ate_output.txt" 2>/dev/null || true
       cp "$REPO/$OUT/demo"/pose_*.png "$SDIR/" 2>/dev/null || true
       cp /content/p2_1_local/groundtruth.txt "$SDIR/groundtruth.txt" 2>/dev/null || true
+      # 6-panel video only needs 1/10 frames (4000 -> 400); --skip 10
       python Addons/viz/render_all_frames.py --config "$CFG" --checkpoint "$CKPT" \
-        --output_dir "$SDIR/rendered_all" --save_depth --save_gt 2>&1 | tee -a "$LOG" || say "  WARN: StereoMIS render"
+        --output_dir "$SDIR/rendered_all" --skip 10 --save_depth --save_gt 2>&1 | tee -a "$LOG" || say "  WARN: StereoMIS render"
       touch "$SDIR/.DONE"
     else say "  FATAL: no StereoMIS ckpt (no .DONE -> retries)"; fi
   else say "  FATAL: StereoMIS surgical depth incomplete ($NDEP/$TNIMG) -> SKIP"; fi
