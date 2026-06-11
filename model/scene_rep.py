@@ -176,7 +176,10 @@ class JointEncoding(nn.Module):
                 embed_pos = self.embed_fre_pos(pts)
                 h = torch.cat([embed_time,embed_pos],dim=-1)
                 vox_motion = self.time_net(h)
-                vox_motion = torch.where(frame_time.reshape(-1, frame_time.shape[-1]) == 0, torch.zeros_like(vox_motion), vox_motion)
+                # frame-0 canonical anchor (Δx≡0 at t=0). deformation_anchor_off:true
+                # disables it (revival experiment — lets t=0 deform too). Default: on.
+                if not self.config.get('deformation_anchor_off', False):
+                    vox_motion = torch.where(frame_time.reshape(-1, frame_time.shape[-1]) == 0, torch.zeros_like(vox_motion), vox_motion)
             inputs_flat = pts + vox_motion
         
         # Normalize the input to [0, 1] (TCNN convention)

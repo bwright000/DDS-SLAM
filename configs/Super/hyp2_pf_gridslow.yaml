@@ -1,0 +1,10 @@
+# Battery-2 REVIVAL discriminator: HASHGRID test (answers "is it the map?").
+# posefrozen + grid lr_embed 0.01 -> 0.001 (10x slower hash grid). If the static map was
+# out-competing the field (absorbing temporal variation), slowing it should let the field
+# receive gradient and revive (Δx>0). If field stays dead -> map is NOT the (sole) cause.
+inherit_from: configs/Super/hyp2_posefrozen.yaml
+mapping:
+  lr_embed: 0.001
+data:
+  output: output/hyp2_pf_gridslow
+  exp_name: demo

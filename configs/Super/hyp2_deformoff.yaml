@@ -1,0 +1,9 @@
+# Battery-2 SemSup DEFORM-OFF (Part B: is the field doing anything elsewhere?).
+# deformation_off:true => field bypassed. Compare ALL outputs (pose/depth/render/backbone
+# weights/mesh) vs baseline+baseline_rep band. Within band => field fully inert.
+inherit_from: configs/Super/trail3_paper_faithful.yaml
+render_freq: 10
+deformation_off: true
+data:
+  output: output/hyp2_deformoff
+  exp_name: demo

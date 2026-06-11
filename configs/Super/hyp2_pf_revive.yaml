@@ -1,0 +1,15 @@
+# Battery-2 the FIX ATTEMPT: all structural levers together, pose out of the way.
+# posefrozen + grid x0.1 (lr_embed 0.001) + time_net wd0/lr x10 + frame-0 anchor off.
+# If the deformation field revives anywhere, it should be here. Δx>0 spatially-structured
+# => we have a revival recipe (then re-test under normal pose tracking). Δx~=0 even here
+# => deformation is genuinely unlearnable in this arch on SemSup -> deeper redesign needed.
+inherit_from: configs/Super/hyp2_posefrozen.yaml
+deformation_anchor_off: true
+mapping:
+  lr_embed: 0.001
+training:
+  timenet_weight_decay: 0.0
+  timenet_lr_mult: 10.0
+data:
+  output: output/hyp2_pf_revive
+  exp_name: demo

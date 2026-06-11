@@ -1,0 +1,12 @@
+# Battery-2 REVIVAL discriminator: WEIGHT-DECAY + LR test (answers "is the field suppressed?").
+# posefrozen + time_net own param group: weight_decay 1e-6 -> 0 (stop the denormal collapse)
+# and lr x10 (give the field a fighting chance). If the field was being executed-to-zero by
+# wd / starved by lr, it should now grow + produce Δx>0. If still dead -> the field genuinely
+# gets ~0 useful gradient (the loss prefers no deformation regardless).
+inherit_from: configs/Super/hyp2_posefrozen.yaml
+training:
+  timenet_weight_decay: 0.0
+  timenet_lr_mult: 10.0
+data:
+  output: output/hyp2_pf_timenet_boost
+  exp_name: demo

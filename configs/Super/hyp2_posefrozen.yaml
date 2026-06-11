@@ -1,0 +1,16 @@
+# Battery-2 SemSup POSE-FROZEN (structural reference; reproduces the 2026-06-11 decider).
+# Pose pinned (const_speed:false + tracking&mapping lr_rot/lr_trans=0) so it can't absorb
+# motion -> isolates the field. The revival configs (hyp2_pf_*) inherit THIS base and add
+# one structural fix each, so any revival is attributable to that fix, not the pose.
+inherit_from: configs/Super/trail3_paper_faithful.yaml
+render_freq: 10
+data:
+  output: output/hyp2_posefrozen
+  exp_name: demo
+tracking:
+  const_speed: false
+  lr_rot: 0.0
+  lr_trans: 0.0
+mapping:
+  lr_rot: 0.0
+  lr_trans: 0.0

@@ -1,0 +1,7 @@
+# Battery-2 SemSup BASELINE (reference + Part-B "is the field doing anything").
+# render_freq:10 = inline render every 10th frame (fast); NO posthoc render_all_frames.
+inherit_from: configs/Super/trail3_paper_faithful.yaml
+render_freq: 10
+data:
+  output: output/hyp2_baseline
+  exp_name: demo

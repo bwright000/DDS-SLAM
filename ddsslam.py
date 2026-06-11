@@ -657,22 +657,33 @@ class DDSSLAM():
         '''
         Create optimizer for mapping
         '''
+        # time_net (deformation field) is split into its OWN param group so its
+        # weight_decay / lr can be controlled for revival experiments. Defaults
+        # (timenet_weight_decay=1e-6, timenet_lr_mult=1.0) reproduce the original
+        # single decoder group exactly (Adam state is per-param; identical hyperparams
+        # in two groups == one group).
+        def _dec_groups():
+            lr_dec = self.config['mapping']['lr_decoder']
+            tn_wd = self.config['training'].get('timenet_weight_decay', 1e-6)
+            tn_mult = self.config['training'].get('timenet_lr_mult', 1.0)
+            main = [p for n, p in self.model.decoder.named_parameters() if 'time_net' not in n]
+            timep = [p for n, p in self.model.decoder.named_parameters() if 'time_net' in n]
+            g = [{'params': main, 'weight_decay': 1e-6, 'lr': lr_dec}]
+            if timep:
+                g.append({'params': timep, 'weight_decay': tn_wd, 'lr': lr_dec * tn_mult})
+            return g
+
         # Optimizer for BA
-        trainable_parameters = [{'params': self.model.decoder.parameters(), 'weight_decay': 1e-6, 'lr': self.config['mapping']['lr_decoder']},
-                                {'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
-    
+        trainable_parameters = _dec_groups() + [{'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
         if not self.config['grid']['oneGrid']:
             trainable_parameters.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
-        
         self.map_optimizer = optim.Adam(trainable_parameters, betas=(0.9, 0.99))
-        
+
         # Optimizer for current frame mapping
         if self.config['mapping']['cur_frame_iters'] > 0:
-            params_cur_mapping = [{'params': self.model.decoder.parameters(), 'weight_decay': 1e-6, 'lr': self.config['mapping']['lr_decoder']},
-                                  {'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
+            params_cur_mapping = _dec_groups() + [{'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
             if not self.config['grid']['oneGrid']:
                 params_cur_mapping.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
-                 
             self.cur_map_optimizer = optim.Adam(params_cur_mapping, betas=(0.9, 0.99))
         
     def run(self):

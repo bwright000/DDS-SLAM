@@ -1,0 +1,9 @@
+# Battery-2 REVIVAL discriminator: FRAME-0 ANCHOR test.
+# posefrozen + deformation_anchor_off:true (remove the Δx≡0-at-t=0 clamp). Self-validating:
+# if the flag took effect, Δx at t=0 will be NONZERO (vs 0 in every other run). Tests whether
+# the t=0 anchor was suppressing the field's gradient signal.
+inherit_from: configs/Super/hyp2_posefrozen.yaml
+deformation_anchor_off: true
+data:
+  output: output/hyp2_pf_noanchor
+  exp_name: demo

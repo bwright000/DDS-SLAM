@@ -1,0 +1,8 @@
+# Battery-2 SemSup BASELINE REPEAT — identical config, different output. Measures the
+# run-to-run (TCNN-atomic) nondeterminism band so deformoff-vs-baseline differences in
+# Part B can be judged against it (within band => field truly inert).
+inherit_from: configs/Super/trail3_paper_faithful.yaml
+render_freq: 10
+data:
+  output: output/hyp2_baseline_rep
+  exp_name: demo
