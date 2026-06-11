@@ -1,0 +1,22 @@
+# Hypothesis H3 (the decider): FREEZE the pose => does the deformation field revive?
+# Verified FOUR knobs needed to truly pin the pose (one alone is insufficient):
+#   tracking.const_speed:false  -> predict_current_pose copies prev pose (no velocity
+#                                  extrapolation); without this the pose drifts even at lr=0.
+#   tracking.lr_rot/lr_trans:0  -> tracking_render pose_optimizer steps are no-ops.
+#   mapping.lr_rot/lr_trans:0   -> global_BA + current_frame_mapping pose steps are no-ops.
+# => all poses pinned at frame-0 identity; map+field still train (map_optimizer holds
+#    decoder.parameters() incl time_net at lr_decoder, independent of pose lr).
+# SemSup camera is near-static (GT==identity), so pinning identity ~= truth: the field is
+# the ONLY way to explain residual tissue motion. Δx>0 (dx_norm_heatmap) => REVIVABLE
+# (gauge race) => CP-Rig viable. Δx~=0 => structural/frame-0 => pivot to Background-Canonical.
+inherit_from: configs/Super/trail3_paper_faithful.yaml
+data:
+  output: output/hyp_super_posefrozen
+  exp_name: demo
+tracking:
+  const_speed: false
+  lr_rot: 0.0
+  lr_trans: 0.0
+mapping:
+  lr_rot: 0.0
+  lr_trans: 0.0

@@ -1,0 +1,6 @@
+# Hypothesis-confirmation: SemSup trail_3 BASELINE (paperfaith, field on, pose tracked).
+# Control for H1 (dead field) + H2/H3 ablations. See Addons/docs/HYBRID_PROGRAMME.md.
+inherit_from: configs/Super/trail3_paper_faithful.yaml
+data:
+  output: output/hyp_super_baseline
+  exp_name: demo

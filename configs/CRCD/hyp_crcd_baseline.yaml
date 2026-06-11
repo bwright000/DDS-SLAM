@@ -1,0 +1,6 @@
+# Hypothesis-confirmation: CRCD C_1/001 BASELINE (paperfaith_lrfix, field on, pose tracked).
+# Control for the CRCD arm (has the tool class -> relevant to TriGauge). 360 frames.
+inherit_from: configs/CRCD/c1_001_paperfaith_lrfix.yaml
+data:
+  output: output/hyp_crcd_baseline
+  exp_name: demo

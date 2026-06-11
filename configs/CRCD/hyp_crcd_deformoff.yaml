@@ -1,0 +1,7 @@
+# Hypothesis H2 on CRCD: REMOVE the deformation field (deformation_off:true).
+# Field-inert confirmation on real surgical data with a tool present.
+inherit_from: configs/CRCD/c1_001_paperfaith_lrfix.yaml
+deformation_off: true
+data:
+  output: output/hyp_crcd_deformoff
+  exp_name: demo

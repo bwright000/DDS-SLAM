@@ -1,0 +1,10 @@
+# Hypothesis H2: REMOVE the deformation field (single-element ablation).
+# deformation_off:true => scene_rep.py:172-180 forces vox_motion=0 (field bypassed +
+# no gradient to time_net). Verified flag semantics: TRUE = off (false is the default/on).
+# Expectation: render/pose ~identical to baseline => field is INERT (DDS-SLAM as-run ==
+# static Co-SLAM + edge head). NOTE: confirms field-inert, NOT "pose absorbs" (that is H3).
+inherit_from: configs/Super/trail3_paper_faithful.yaml
+deformation_off: true
+data:
+  output: output/hyp_super_deformoff
+  exp_name: demo

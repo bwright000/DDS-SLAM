@@ -1,0 +1,17 @@
+# Hypothesis H3 on CRCD: FREEZE the pose (same four knobs as the SemSup variant).
+# CAVEAT (interpret with care): unlike SemSup, CRCD has REAL camera motion, so pinning
+# pose to identity forces the field to absorb camera motion + deformation together -> NOT a
+# clean revival measure. Read as: if Δx stays ~0 even when forced to explain everything,
+# that is strong evidence of STRUCTURAL deadness; if Δx grows, it is explaining something
+# (camera+tissue mixed). SemSup-posefrozen is the clean decider; this is the secondary check.
+inherit_from: configs/CRCD/c1_001_paperfaith_lrfix.yaml
+data:
+  output: output/hyp_crcd_posefrozen
+  exp_name: demo
+tracking:
+  const_speed: false
+  lr_rot: 0.0
+  lr_trans: 0.0
+mapping:
+  lr_rot: 0.0
+  lr_trans: 0.0
