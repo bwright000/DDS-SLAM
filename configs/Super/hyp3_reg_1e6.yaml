@@ -1,0 +1,11 @@
+# Battery-3 revival sweep (REVISED 2026-06-12 after battery-2: field diverges to ~6.6e15
+# instantly when freed, so {0.1..100} is too weak). reg_1e6: deformation_reg_weight=1000000.0,
+# timenet_lr_mult=1.0 (slowlr variant tames the runaway so the reg can catch it).
+inherit_from: configs/Super/hyp2_posefrozen.yaml
+training:
+  timenet_weight_decay: 0.0
+  deformation_reg_weight: 1000000.0
+  timenet_lr_mult: 1.0
+data:
+  output: output/hyp3_reg_1e6
+  exp_name: demo
