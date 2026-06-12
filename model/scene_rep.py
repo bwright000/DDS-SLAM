@@ -160,7 +160,8 @@ class JointEncoding(nn.Module):
             outputs: [N_rays, N_samples, 4]
         """
         inputs_flat = torch.reshape(inputs, [-1, inputs.shape[-1]])
-        
+        def_reg = inputs_flat.new_zeros(())   # deformation-magnitude reg accumulator (0 if static/off)
+
         if self.config['dynamic']:
             pts = inputs_flat[:,:3]
             frame_time = inputs_flat[:,3].unsqueeze(-1)
@@ -181,6 +182,7 @@ class JointEncoding(nn.Module):
                 if not self.config.get('deformation_anchor_off', False):
                     vox_motion = torch.where(frame_time.reshape(-1, frame_time.shape[-1]) == 0, torch.zeros_like(vox_motion), vox_motion)
             inputs_flat = pts + vox_motion
+            def_reg = (vox_motion ** 2).mean()   # ||Δx||^2 magnitude (differentiable -> time_net)
         
         # Normalize the input to [0, 1] (TCNN convention)
         if self.config['grid']['tcnn_encoding']:
@@ -189,7 +191,7 @@ class JointEncoding(nn.Module):
         outputs_flat, edge_semantic = batchify(self.query_color_sdf, None)(inputs_flat)
         outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
         edge_semantic = torch.reshape(edge_semantic, list(inputs.shape[:-1]) + [edge_semantic.shape[-1]])
-        return outputs, edge_semantic
+        return outputs, edge_semantic, def_reg
     
     def query_sdf(self, query_points, return_geo=False, embed=False):
         '''
@@ -337,7 +339,7 @@ class JointEncoding(nn.Module):
             timestamps = torch.zeros(rays_o.shape[0], 1, device=rays_o.device, dtype=rays_o.dtype)
         timestamps = timestamps.repeat(1,pts.shape[1]).unsqueeze(-1)
         pts = torch.cat([pts,timestamps],dim=-1)
-        raw, edge_semantic = self.run_network(pts)
+        raw, edge_semantic, def_reg = self.run_network(pts)
         rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map = self.raw2outputs(raw,edge_semantic, z_vals, self.config['training']['white_bkgd'])
 
         # Importance sampling
@@ -352,7 +354,7 @@ class JointEncoding(nn.Module):
             z_vals, _ = torch.sort(torch.cat([z_vals, z_samples], -1), -1)
             pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples + N_importance, 3]
 
-            raw, edge_semantic = self.run_network(pts)
+            raw, edge_semantic, def_reg = self.run_network(pts)
             rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_map,edge_semantic_map = self.raw2outputs(raw, z_vals, self.config['training']['white_bkgd'])
 
         # Return rendering outputs
@@ -362,7 +364,8 @@ class JointEncoding(nn.Module):
             'disp_map' : disp_map,
             'acc_map' : acc_map,
             'depth_var':depth_var,
-            'edge_semantic':edge_semantic_map
+            'edge_semantic':edge_semantic_map,
+            'def_reg': def_reg
         }
         ret = {**ret, 'z_vals': z_vals}
         ret['raw'] = raw
@@ -445,6 +448,7 @@ class JointEncoding(nn.Module):
             "rgb": rend_dict["rgb"],
             "depth": rend_dict["depth"],
             "edge_semantic": rend_dict["edge_semantic"],
+            "def_reg": rend_dict["def_reg"],
             "rgb_loss": rgb_loss,
             "depth_loss": depth_loss,
             "edge_semantic_loss": edge_semantic_loss,

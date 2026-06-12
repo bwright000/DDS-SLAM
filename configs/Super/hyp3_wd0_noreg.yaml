@@ -1,0 +1,11 @@
+# Battery-3 revival sweep (SemSup, pose-frozen, wd=0, normal lr): wire the deformation
+# regularizer (||dx||^2, deformation_reg_weight=0.0) and find the stable point between
+# denormal-collapse (wd 1e-6) and divergence (wd 0). lr_mult left at default 1.0 to avoid
+# battery-2's lr x10 divergence confound. wd0_noreg: deformation_reg_weight=0.0.
+inherit_from: configs/Super/hyp2_posefrozen.yaml
+training:
+  timenet_weight_decay: 0.0
+  deformation_reg_weight: 0.0
+data:
+  output: output/hyp3_wd0_noreg
+  exp_name: demo

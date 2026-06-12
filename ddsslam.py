@@ -202,6 +202,13 @@ class DDSSLAM():
         if edge_semantic:
             loss += self.config['training']['rgb_weight'] * 0.1 * ret["edge_semantic_loss"]
 
+        # Deformation-magnitude regularizer (||dx||^2) — wires the missing stabilizer the
+        # authors named (time_smoothness_weight etc.) but never connected. Default 0 = off
+        # (regression-safe). With wd=0 on time_net, a swept weight should settle the field
+        # at a stable, useful nonzero deformation (vs denormal collapse at wd=1e-6 / divergence at wd=0).
+        if self.config['training'].get('deformation_reg_weight', 0) > 0 and ret.get('def_reg') is not None:
+            loss += self.config['training']['deformation_reg_weight'] * ret['def_reg']
+
         if smooth and self.config['training']['smooth_weight']>0:
             loss += self.config['training']['smooth_weight'] * self.smoothness(self.config['training']['smooth_pts'],
                                                                                   self.config['training']['smooth_vox'],
