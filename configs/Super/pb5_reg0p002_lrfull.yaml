@@ -1,0 +1,8 @@
+# Battery-5 stabilisation sweep cell — reg 2e-3, full TimeNet lr (lr_mult 1.0). See pb5_reg0p003_lrslow.yaml.
+inherit_from: configs/Super/pb_control.yaml
+training:
+  deformation_reg_weight: 0.002
+  timenet_lr_mult: 1.0
+data:
+  output: output/pb5_reg0p002_lrfull
+  exp_name: demo

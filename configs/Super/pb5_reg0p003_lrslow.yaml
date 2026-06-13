@@ -1,0 +1,14 @@
+# Battery-5 STABILISATION sweep — find the finite-nonzero LIVE reg band.
+# Battery-4 (time-fix + wd0): reg 1e-3 DIVERGED (on-surface ~4e4), reg 1e-2 DEAD →
+# the stable equilibrium is INSIDE (1e-3, 1e-2). Battery-3 showed slow TimeNet lr
+# (lr_mult 0.1) tames without killing. This sweep = reg {2e-3,3e-3,5e-3,7e-3} ×
+# lr_mult {1.0 full, 0.1 slow}, read out by field_liveness (LIVE = finite mean_norm
+# + temporal_frac>0.05). Gate OFF (Tier-1 stabilise only); re-run oracle A/B after.
+# Inherits pb_control (pose-frozen + time_normalize + wd0 + oracle_routing:false).
+inherit_from: configs/Super/pb_control.yaml
+training:
+  deformation_reg_weight: 0.003
+  timenet_lr_mult: 0.1
+data:
+  output: output/pb5_reg0p003_lrslow
+  exp_name: demo
