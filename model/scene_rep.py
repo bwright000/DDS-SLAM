@@ -181,6 +181,12 @@ class JointEncoding(nn.Module):
                 embed_pos = self.embed_fre_pos(pts)
                 h = torch.cat([embed_time,embed_pos],dim=-1)
                 vox_motion = self.time_net(h)
+                # HARD BOUND (physical prior): cap |Δx| to ~a couple mm via tanh so the field CANNOT
+                # explode (removes the bistable explode mode by construction). deform_hardbound=b in model
+                # units (e.g. 0.04). Bounds the RAW field output, before anchor + gate. Default 0 = upstream.
+                _hb = self.config.get('deform_hardbound', 0)
+                if _hb and _hb > 0:
+                    vox_motion = _hb * torch.tanh(vox_motion / _hb)
                 # frame-0 canonical anchor (Δx≡0 at t=0). deformation_anchor_off:true
                 # disables it (revival experiment — lets t=0 deform too). Default: on.
                 if not self.config.get('deformation_anchor_off', False):

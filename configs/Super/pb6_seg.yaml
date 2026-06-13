@@ -1,0 +1,9 @@
+# Battery-6 cell: SEG-GATE on the stable field = pb5_reg0p003_lrslow + oracle_routing:true.
+# THE build-gate test (T1.3): does seg-routing concentrate Δx where the rigid model FAILS,
+# more than the bare field? Baseline = the existing pb5_reg0p003_lrslow checkpoint (reused, no gate).
+# Read out by dx_seg_localise (Pearson ||Δx|| vs deform-off residual). Pose-frozen.
+inherit_from: configs/Super/pb5_reg0p003_lrslow.yaml
+oracle_routing: true
+data:
+  output: output/pb6_seg
+  exp_name: demo

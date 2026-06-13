@@ -1,0 +1,13 @@
+# Battery-6 cell: HARDBOUND stabiliser — Δx = 0.04*tanh(field/0.04). reg 0 + FULL lr + hard cap:
+# the field CANNOT explode by construction, so we don't need the narrow soft-reg sweet spot or slow lr.
+# Tests whether the physical-prior hard bound is a cleaner / more-robust stable substrate than the
+# knife-edge soft reg (reg 0.003 only). Gate OFF. Pose-frozen (inherits pb_control).
+inherit_from: configs/Super/pb_control.yaml
+oracle_routing: false
+deform_hardbound: 0.04
+training:
+  deformation_reg_weight: 0.0
+  timenet_lr_mult: 1.0
+data:
+  output: output/pb6_hardbound
+  exp_name: demo

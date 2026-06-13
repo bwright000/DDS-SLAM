@@ -1,0 +1,8 @@
+# Battery-6 cell: HARDBOUND + SEG-GATE. Tests the gate on a substrate that CAN'T explode -> decouples
+# the gate's effect from the soft-reg knife-edge. If seg-gate helps here too (vs pb6_hardbound), the
+# gate's benefit is real, not a reg artifact. Gate ON.
+inherit_from: configs/Super/pb6_hardbound.yaml
+oracle_routing: true
+data:
+  output: output/pb6_hardbound_seg
+  exp_name: demo
