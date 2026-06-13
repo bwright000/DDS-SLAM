@@ -150,12 +150,16 @@ class JointEncoding(nn.Module):
             return self.decoder(embed, embe_pos, embed_color)
         return self.decoder(embed, embe_pos)
     
-    def run_network(self, inputs):
+    def run_network(self, inputs, oracle_w=None):
         """
         Run the network on a batch of inputs.
 
         Params:
             inputs: [N_rays, N_samples, 3]
+            oracle_w: [N_rays] or [N_rays, 1] attribution weights in (0,1] for T1.3
+                      oracle routing. When given, Δx is multiplied by w broadcast
+                      over samples (routes deformation to w>0 regions + w-weights
+                      the field's gradient). None = ungated (default, upstream).
         Returns:
             outputs: [N_rays, N_samples, 4]
         """
@@ -181,6 +185,13 @@ class JointEncoding(nn.Module):
                 # disables it (revival experiment — lets t=0 deform too). Default: on.
                 if not self.config.get('deformation_anchor_off', False):
                     vox_motion = torch.where(frame_time.reshape(-1, frame_time.shape[-1]) == 0, torch.zeros_like(vox_motion), vox_motion)
+            # T1.3 ORACLE ROUTING: gate Δx by a per-ray attribution w in (0,1]
+            # broadcast over samples. Restricts deformation to w>0 regions and
+            # w-weights the field's gradient (chain rule). def_reg below then
+            # regularises the GATED motion. None = ungated (default).
+            if oracle_w is not None:
+                ow = oracle_w.reshape(inputs.shape[0], 1, 1).expand(inputs.shape[0], inputs.shape[1], 1).reshape(-1, 1)
+                vox_motion = vox_motion * ow
             inputs_flat = pts + vox_motion
             def_reg = (vox_motion ** 2).mean()   # ||Δx||^2 magnitude (differentiable -> time_net)
         
@@ -293,7 +304,7 @@ class JointEncoding(nn.Module):
 
         return torch.sigmoid(raw_color)
 
-    def render_rays(self, rays_o, rays_d, target_d=None):
+    def render_rays(self, rays_o, rays_d, target_d=None, oracle_w=None):
         '''
         Params:
             rays_o: [N_rays, 3]
@@ -339,7 +350,7 @@ class JointEncoding(nn.Module):
             timestamps = torch.zeros(rays_o.shape[0], 1, device=rays_o.device, dtype=rays_o.dtype)
         timestamps = timestamps.repeat(1,pts.shape[1]).unsqueeze(-1)
         pts = torch.cat([pts,timestamps],dim=-1)
-        raw, edge_semantic, def_reg = self.run_network(pts)
+        raw, edge_semantic, def_reg = self.run_network(pts, oracle_w=oracle_w)
         rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map = self.raw2outputs(raw,edge_semantic, z_vals, self.config['training']['white_bkgd'])
 
         # Importance sampling
@@ -354,7 +365,7 @@ class JointEncoding(nn.Module):
             z_vals, _ = torch.sort(torch.cat([z_vals, z_samples], -1), -1)
             pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples + N_importance, 3]
 
-            raw, edge_semantic, def_reg = self.run_network(pts)
+            raw, edge_semantic, def_reg = self.run_network(pts, oracle_w=oracle_w)
             rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_map,edge_semantic_map = self.raw2outputs(raw, z_vals, self.config['training']['white_bkgd'])
 
         # Return rendering outputs
@@ -399,7 +410,11 @@ class JointEncoding(nn.Module):
         '''
 
         # Get render results
-        rend_dict = self.render_rays(rays_o, rays_d, target_d=target_d)
+        # T1.3 oracle routing: use the per-ray seg edge-prior as the attribution
+        # weight w. Training-time gradient mechanism only (disabled on render_only
+        # to avoid the full-image vs ray-batch shape mismatch at the eval call).
+        oracle_w = target_edge_semantic if (self.config.get('oracle_routing', False) and target_edge_semantic is not None and not render_only) else None
+        rend_dict = self.render_rays(rays_o, rays_d, target_d=target_d, oracle_w=oracle_w)
 
         if not self.training:
             return rend_dict
