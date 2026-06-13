@@ -250,7 +250,7 @@ class DDSSLAM():
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w[:3, :3], -1)
             if self.config['dynamic']:
                 cur_id =  0 * torch.ones(rays_o.shape[0])
-                timestamps = cur_id.to(self.device) #/ self.n_imgs #* 2 - 1
+                timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1] (else freq-encoder parity-collapse); flag default off = upstream behaviour
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
             # Forward
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, notFirstMap=False)
@@ -333,7 +333,7 @@ class DDSSLAM():
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[: ,:3, :3], -1)
             if self.config['dynamic']:
                 cur_id = (cur_frame_id*torch.ones(rays_o.shape[0]))
-                timestamps = cur_id.to(self.device) #/ self.n_imgs #*2 -1
+                timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1]; flag default off = upstream behaviour
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
             # Forward
             ret = self.model.forward(rays_o, rays_d, target_s, target_d,target_edge_semantic=target_edge_semantic)
@@ -564,7 +564,7 @@ class DDSSLAM():
 
             if self.config['dynamic']:
                 cur_id = (frame_id*torch.ones(rays_o.shape[0]))
-                timestamps = cur_id.to(self.device) #/ self.n_imgs #*2 -1
+                timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1]; flag default off = upstream behaviour
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
 
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, border=border, UseBorder=True)
@@ -800,7 +800,7 @@ class DDSSLAM():
             target_d1 = target_d[i:i + ray_batch_size]
             if self.config['dynamic']:
                 cur_id = (frame_id*torch.ones(rays_o1.shape[0]))
-                timestamps = cur_id.to(self.device) #/ self.n_imgs #*2 -1
+                timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1]; flag default off = upstream behaviour
                 rays_o1 = torch.cat([rays_o1,timestamps.unsqueeze(-1)],dim=1)
             # ret = self.model.render_rays(rays_o1, rays_d1, target_d1)
             ret = self.model.forward(rays_o1, rays_d1, target_s, target_d1,

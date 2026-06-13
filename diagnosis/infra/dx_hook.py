@@ -130,9 +130,14 @@ def main():
     t0 = time.time()
     for idx in tqdm(range(n_frames), desc='dx_hook'):
         c2w = est_c2w_data[idx]  # 4x4 torch
-        # Frame timestamp (DDS-SLAM convention: monotonic frame index normalized)
-        # ddsslam.py uses idx/total or idx/n_img — check; for now use idx as scalar
-        frame_time = float(idx)
+        # Frame timestamp — MUST match the coordinate the model was TRAINED on,
+        # else the field is queried out-of-distribution and Δx/Var_t is garbage.
+        # T1.2 (ddsslam.py:253...): time_normalize=True => frame_time = idx / N_frames
+        # in [0,1]; else raw integer idx (upstream behaviour).
+        if cfg.get('training', {}).get('time_normalize', False):
+            frame_time = float(idx) / float(est_c2w_data.shape[0])
+        else:
+            frame_time = float(idx)
 
         # Sample random pixels (u, v) per frame
         us = rng.integers(0, W, size=rays_per_frame)
