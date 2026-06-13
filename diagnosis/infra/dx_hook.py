@@ -146,9 +146,12 @@ def main():
         vs_t = torch.from_numpy(vs).to(device).long()
 
         # Build rays in CAMERA frame: (x_cam, y_cam, 1) using pinhole
+        # OpenGL convention (match datasets/utils.py get_camera_rays default): camera looks -z, y flipped.
+        # Was OpenCV [x,+y,+1] -> queried the field in a y,z-FLIPPED frame vs the trained model
+        # (made deformation direction read backwards vs the real depth render). Fixed 2026-06-13.
         x_cam = (us_t.float() - cx) / fx
-        y_cam = (vs_t.float() - cy) / fy
-        z_cam = torch.ones_like(x_cam)
+        y_cam = -(vs_t.float() - cy) / fy
+        z_cam = -torch.ones_like(x_cam)
         rays_d_cam = torch.stack([x_cam, y_cam, z_cam], dim=-1)
         # Transform to WORLD frame via c2w
         R = c2w[:3, :3]

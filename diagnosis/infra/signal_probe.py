@@ -56,7 +56,7 @@ def _render_image(model, c2w, H, W, fx, fy, cx, cy, frame_time, ray_batch_size, 
         torch.arange(H, device=device).float(),
         indexing='ij')
     i = i.T; j = j.T
-    dirs = torch.stack([(i - cx) / fx, (j - cy) / fy, torch.ones_like(i)], dim=-1)
+    dirs = torch.stack([(i - cx) / fx, -(j - cy) / fy, -torch.ones_like(i)], dim=-1)  # OpenGL (match get_camera_rays); was OpenCV
     rays_d = dirs @ c2w[:3, :3].T
     rays_d = rays_d / rays_d.norm(dim=-1, keepdim=True)
     rays_o = c2w[:3, 3].expand(rays_d.shape)

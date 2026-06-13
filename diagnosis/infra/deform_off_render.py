@@ -123,8 +123,8 @@ def main():
         )
         i = i.T; j = j.T
         dirs = torch.stack([(i - dataset.cx) / dataset.fx,
-                            (j - dataset.cy) / dataset.fy,
-                            torch.ones_like(i)], dim=-1)
+                            -(j - dataset.cy) / dataset.fy,
+                            -torch.ones_like(i)], dim=-1)  # OpenGL (match get_camera_rays); was OpenCV [x,+y,+1]
         rays_d = (dirs @ c2w[:3, :3].T)
         rays_d = rays_d / rays_d.norm(dim=-1, keepdim=True)
         rays_o = c2w[:3, 3].expand(rays_d.shape)

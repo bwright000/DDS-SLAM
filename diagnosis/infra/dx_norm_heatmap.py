@@ -122,8 +122,8 @@ def main():
         i_grid = i_grid.T  # (H, W)
         j_grid = j_grid.T
         x_cam = (i_grid - cx) / fx
-        y_cam = (j_grid - cy) / fy
-        dirs = torch.stack([x_cam, y_cam, torch.ones_like(x_cam)], dim=-1)  # (H, W, 3)
+        y_cam = -(j_grid - cy) / fy
+        dirs = torch.stack([x_cam, y_cam, -torch.ones_like(x_cam)], dim=-1)  # (H,W,3) OpenGL (match get_camera_rays); was OpenCV
         rays_d_world = dirs @ c2w[:3, :3].T
         rays_d_world = rays_d_world / rays_d_world.norm(dim=-1, keepdim=True)
         rays_o_world = c2w[:3, 3].expand(rays_d_world.shape)
