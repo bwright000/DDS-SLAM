@@ -1,12 +1,12 @@
 # Battery-3 (revival sweep, 2-axis λ × lr). Field diverges instantly when freed (battery-2:
 # 6.6e15 by t=1), so lr control is decisive: slow lr (lr_mult 0.1) lets the ||dx||^2 reg ramp
 # up before the field escapes. wd=0 throughout (reg is the sole stabilizer). pose-frozen.
-# wd0_noreg: deformation_reg_weight=0.0, timenet_lr_mult=1.0.
+# reg1e2_slowlr: deformation_reg_weight=100.0, timenet_lr_mult=0.1.
 inherit_from: configs/Super/hyp2_posefrozen.yaml
 training:
   timenet_weight_decay: 0.0
-  deformation_reg_weight: 0.0
-  timenet_lr_mult: 1.0
+  deformation_reg_weight: 100.0
+  timenet_lr_mult: 0.1
 data:
-  output: output/hyp3_wd0_noreg
+  output: output/hyp3_reg1e2_slowlr
   exp_name: demo

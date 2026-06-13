@@ -99,12 +99,13 @@ nvidia-smi -L || true
 cd "$REPO"; activate_dds_env
 stage_semsup || { say "SemSup staging failed -- abort"; exit 1; }
 
+# order = by value (resume-safe): control -> best bet -> lr-only control -> rest
 run_test configs/Super/hyp3_wd0_noreg.yaml      output/hyp3_wd0_noreg      wd0_noreg
-run_test configs/Super/hyp3_reg_1.yaml          output/hyp3_reg_1          reg_1
-run_test configs/Super/hyp3_reg_100.yaml        output/hyp3_reg_100        reg_100
-run_test configs/Super/hyp3_reg_1e4.yaml        output/hyp3_reg_1e4        reg_1e4
-run_test configs/Super/hyp3_reg_1e6.yaml        output/hyp3_reg_1e6        reg_1e6
-run_test configs/Super/hyp3_reg_1e4_slowlr.yaml output/hyp3_reg_1e4_slowlr reg_1e4_slowlr
+run_test configs/Super/hyp3_reg1e4_slowlr.yaml  output/hyp3_reg1e4_slowlr  reg1e4_slowlr
+run_test configs/Super/hyp3_wd0_slowlr.yaml     output/hyp3_wd0_slowlr     wd0_slowlr
+run_test configs/Super/hyp3_reg1e6_slowlr.yaml  output/hyp3_reg1e6_slowlr  reg1e6_slowlr
+run_test configs/Super/hyp3_reg1e2_slowlr.yaml  output/hyp3_reg1e2_slowlr  reg1e2_slowlr
+run_test configs/Super/hyp3_reg1e4_lr1.yaml     output/hyp3_reg1e4_lr1     reg1e4_lr1
 
 say "=== battery-3 DONE $(date -Iseconds) ==="
 say "READ-OUT: per test validate.json -> timenet_l2 (0=dead / finite=alive / huge=diverged) + dx_t0075 (0 / finite useful / Inf)."
