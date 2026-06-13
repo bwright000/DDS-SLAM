@@ -1,0 +1,28 @@
+# ============================================================================
+# T1.3 ORACLE ROUTING (battery-4 pre-build) — THE build decision.
+#
+# Identical to pb_control EXCEPT oracle_routing:true. The gate multiplies Δx by
+# a per-ray attribution w = the seg edge-prior (target_edge_semantic, exp(-d/10)),
+# routing deformation to instrument/boundary regions and w-weighting the field's
+# gradient (chain rule via scene_rep.run_network). Pose frozen, so no (1-w) pose
+# branch is needed yet — this isolates "does routing revive a USEFUL field?".
+#
+#   GO  -> field_liveness LIVE (temporal_frac substantial) AND Δx localised
+#          (spatial_std_of_meanmag >> control) AND render >= deform-off
+#          -> BUILD the learned gate (approximate this oracle w).
+#   NO-GO -> oracle dead/static-gauge while control same -> starvation binds
+#          -> tracks mandatory before any build.
+#
+# NB: oracle w = ALL seg-class boundaries (Canny over the whole mask), not tool-
+# only (the tool-class id is unconfirmed). A tighter tool-only prior is a later
+# refinement; this is the existing seg machinery, reused.
+# ============================================================================
+inherit_from: configs/Super/hyp2_posefrozen.yaml
+oracle_routing: true
+training:
+  time_normalize: true
+  timenet_weight_decay: 0.0
+  deformation_reg_weight: 0.001
+data:
+  output: output/pb_oracle
+  exp_name: demo

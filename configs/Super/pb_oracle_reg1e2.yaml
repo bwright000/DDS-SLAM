@@ -1,0 +1,11 @@
+# T1.3 ORACLE — divergence hedge. Same as pb_oracle but a STRONGER reg (1e-2).
+# Insurance: if reg=1e-3 lets the field diverge under wd=0 (battery-2 showed wd=0
+# diverges without a guard), this stronger reg should still land a stable point.
+# If BOTH this and pb_oracle diverge -> reg is structurally too weak; if this is
+# DEAD but pb_oracle LIVE -> 1e-2 over-damps. Brackets the stable band in one batch.
+inherit_from: configs/Super/pb_oracle.yaml
+training:
+  deformation_reg_weight: 0.01
+data:
+  output: output/pb_oracle_reg1e2
+  exp_name: demo

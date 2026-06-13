@@ -1,0 +1,24 @@
+# ============================================================================
+# T1.3 CONTROL (battery-4 pre-build) — pose-frozen + time-fix + reg, NO oracle gate.
+#
+# Pose pinned (inherited from hyp2_posefrozen: const_speed:false + tracking &
+# mapping lr_rot/lr_trans=0) so the camera CANNOT absorb scene motion -> the field
+# trains on the full residual. This is the CONTROL for pb_oracle: identical config
+# except oracle_routing. Any revival difference is attributable to the gate alone.
+#
+# Revival recipe (battery-2/3): timenet wd=0 (1e-6 over-damps to denormal) +
+# function-space deformation_reg_weight (the divergence guard wd=0 needs) +
+# time_normalize (fixes the parity-collapsed integer frame_time so the freq
+# encoder can represent smooth t). reg weight = 1e-3 = GUESS pending the full
+# battery-3 sweep; field_liveness.py verdict (DEAD/DIVERGED/STATIC-GAUGE/LIVE)
+# reports where we landed.
+# ============================================================================
+inherit_from: configs/Super/hyp2_posefrozen.yaml
+oracle_routing: false
+training:
+  time_normalize: true
+  timenet_weight_decay: 0.0
+  deformation_reg_weight: 0.001
+data:
+  output: output/pb_control
+  exp_name: demo
