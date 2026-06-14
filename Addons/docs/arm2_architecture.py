@@ -96,11 +96,11 @@ box(ax, 10, 2.15, 7.6, 0.85,
 arrow(ax, (10, 2.58), (10, 6.78), color='#3a7d2c', rad=0.0, ls=(0, (5, 3)))
 ax.text(10.35, 4.7, 'FiLM (optional)', fontsize=7.5, color='#3a7d2c', ha='left', rotation=90)
 
-# ---------------- seg input + caveat ----------------
-box(ax, 10, 0.95, 9.2, 0.95,
-    '⚠ "seg" prior = DDS-SLAM target_edge_semantic is a CANNY EDGE-DISTANCE field exp(−d/10), NOT a binary tool mask  (datasets/dataset.py:36-51).\n'
-    'DECISION: (A) use real DeepLabv3+ instrument masks   (B) rewrite posterior for the continuous edge field   (C) λ→0, lean on learnt σ² (everything-learnt)',
-    '#fde9e9', fs=8.0)
+# ---------------- seg input (resolved decision) ----------------
+box(ax, 10, 0.95, 10.4, 0.95,
+    'seg = REQUIRED canonicalized input (thesis aim).  Masks EXIST for all 3 datasets but are currently COLLAPSED to a Canny edge field (dataset.py:167/338) — surface the RAW mask.\n'
+    'Formats: StereoMIS binary tool(0/255) · CRCD {0=bg,1=Liver,2=Gallbladder,3=Tool} · SemSup {0,1,2}.  Canonicalize -> {tool,tissue,bg} (TriGauge), plumb PER-RAY into route + NRGS.',
+    '#e8f0e0', fs=8.0)
 
 # ---------------- build/flags note ----------------
 box(ax, 3.0, 1.35, 5.4, 1.6,
