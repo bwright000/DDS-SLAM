@@ -1,0 +1,10 @@
+{
+  "dx_dir": "C:/Users/benli/AppData/Local/Temp/b7probe/dx",
+  "n_points": 1310720,
+  "frac_in_bound": 0.031046295166015626,
+  "mean_dx_in_bound": 1.1280385479039978e-05,
+  "mean_dx_out_of_bound": 0.013626525178551674,
+  "out_over_in_ratio": 1207.984,
+  "max_dx": 0.2998548746109009,
+  "verdict": "FIELD WASTES MOTION OFF-SURFACE (out-of-bound >> in-bound)"
+}

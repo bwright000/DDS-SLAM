@@ -145,6 +145,25 @@ def main():
     out['note'] = ('A_*=does the still-render fail where tissue moves (the signal Inc-1 needs). '
                    'B_*=does the field currently reduce it (expected ~0 = inert). '
                    'C_*=is the still-render constant at moving pixels (confirms the residual is genuine).')
+
+    # (D) TIMESTAMP SWEEP at a FIXED pose: does the render actually MOVE with t? (the eyeball test —
+    # time enters ONLY via TimeNet, so a dead field => identical image at every t.)
+    sweep_pose = est[frames[0]]
+    sweep_ts = [frames[0], frames[len(frames) // 2], frames[-1]]
+    model.config['deformation_off'] = False
+    sw = np.stack([_render(model, sweep_pose, H, W, fx, fy, cx, cy, t, args.ray_batch_size, dev) for t in sweep_ts])
+    out['D_render_tstd_over_t_fixed_pose'] = float(sw.std(0).mean())
+    out['D_render_max_change_first_to_last'] = float(np.abs(sw[-1] - sw[0]).max())
+    out['D_render_moves_with_t'] = bool(out['D_render_tstd_over_t_fixed_pose'] > 1e-3)
+    try:
+        montage = (np.concatenate(list(sw), axis=1) * 255).astype(np.uint8)[..., ::-1]
+        d = np.abs(sw[-1] - sw[0]).mean(-1); d = (d / (d.max() + 1e-9) * 255).astype(np.uint8)
+        cv2.imwrite(args.json.replace('.json', '_sweep.png'), montage)           # 3 frames side by side
+        cv2.imwrite(args.json.replace('.json', '_sweepdiff.png'), d)             # |t_last - t_first|
+        out['D_sweep_png'] = args.json.replace('.json', '_sweep.png')
+    except Exception as e:
+        out['D_sweep_png'] = f'ERR {e}'
+
     with open(args.json, 'w') as f: json.dump(out, f, indent=2)
     print(json.dumps(out, indent=2))
 
