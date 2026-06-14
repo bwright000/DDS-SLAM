@@ -56,6 +56,14 @@ diagnose(){
   python diagnosis/infra/render_eval_attrib.py --config "$CFG" --checkpoint "$CKPT" \
     --json "$LW/field_attrib.json" --max_frames 40 --frame_stride 3 2>&1 | tee -a "$LOG" || say "  WARN attrib"
   python diagnosis/infra/dx_hook.py --config "$CFG" --checkpoint "$CKPT" --output_dir "$LW/dx" 2>&1 | tee -a "$LOG" || say "  WARN dx_hook"
+  python diagnosis/infra/field_liveness.py --config "$CFG" --checkpoint "$CKPT" \
+    --json "$LW/liveness.json" 2>&1 | tee -a "$LOG" || say "  WARN liveness"
+  python diagnosis/infra/dx_seg_localise.py --config "$CFG" --checkpoint "$CKPT" \
+    --json "$LW/seg_localise.json" --max_frames 30 --frame_stride 5 2>&1 | tee -a "$LOG" || say "  WARN seg_localise"
+  # gradient-attribution: WHO gets the update during deformation (the assume-nothing probe).
+  # AFTER the others so a grad crash can't starve them; writes to the LWORK mirror so it ships + is summarised.
+  python diagnosis/infra/grad_attribution_probe.py --config "$CFG" --checkpoint "$CKPT" \
+    --json "$LW/grad_attrib.json" --max_frames 12 --frame_stride 3 2>&1 | tee -a "$LOG" || say "  WARN grad_attrib"
   local BOUND; BOUND=$(python -c "import json; from config import load_config; print(json.dumps(load_config('$CFG')['mapping']['bound']))" 2>/dev/null)
   if [ -n "$BOUND" ]; then
     python diagnosis/infra/field_viz3d.py --dx_dir "$LW/dx" --out "$LW/field3d.png" \
@@ -152,19 +160,23 @@ say "########## SUMMARY ##########"
 python3 - "$DRIVE" <<'PY' 2>&1 | tee -a "$LOG"
 import sys, json, os, glob
 DR = sys.argv[1]
-print(f"\n{'run':<14}{'signal?':<9}{'A ratio':<9}{'pearson':<9}{'in-bnd dx':<12}{'out/in':<9}{'moves_w_t':<10}")
-print('-'*72)
+print(f"\n{'run':<14}{'signal?':<9}{'A ratio':<9}{'out/in':<9}{'moves_t':<9}{'grad f/map_eff':<15}{'grad verdict':<26}")
+print('-'*92)
 for d in sorted(glob.glob(f'{DR}/*/')):
     name = os.path.basename(d.rstrip('/'))
     lw = f'/content/mapprobe/{name}'   # LWORK mirror holds the json (ship dir has the tgz)
-    mp = os.path.join(lw, 'map_absorb.json'); fv = os.path.join(lw, 'field3d.json')
+    mp = os.path.join(lw, 'map_absorb.json')
     if not os.path.exists(mp): continue
-    m = json.load(open(mp)); f = json.load(open(fv)) if os.path.exists(fv) else {}
+    m = json.load(open(mp))
+    f = json.load(open(os.path.join(lw, 'field3d.json'))) if os.path.exists(os.path.join(lw, 'field3d.json')) else {}
+    g = json.load(open(os.path.join(lw, 'grad_attrib.json'))) if os.path.exists(os.path.join(lw, 'grad_attrib.json')) else {}
     print(f"{name:<14}{str(m.get('VERDICT_signal_exists')):<9}{str(m.get('A_moving_over_static_ratio')):<9}"
-          f"{str(m.get('A_pearson_residoff_vs_gtvar')):<9}{str(f.get('mean_dx_in_bound','?'))[:10]:<12}"
-          f"{str(f.get('out_over_in_ratio','?')):<9}{str(m.get('D_render_moves_with_t')):<10}")
-print("\nGATE: signal?=True on any run -> GO build Inc-1. All False -> motion sub-SNR / map tracks it -> rethink.")
-print("Read each run's map_absorb.json (A/B/C/D), field3d.png (3D field), *_sweep.png (does render move with t).")
+          f"{str(f.get('out_over_in_ratio','?')):<9}{str(m.get('D_render_moves_with_t')):<9}"
+          f"{str(g.get('RATIO_field_over_map_effective','?')):<15}{str(g.get('VERDICT_tag','?')):<26}")
+print("\nGATE 1 (is there signal?): signal?=True on any run -> GO build Inc-1. All False -> motion sub-SNR / map tracks it -> rethink.")
+print("GATE 2 (who eats it?): grad verdict 'map-absorbs'/'map-favoured' -> THROTTLE-MAP is the fix; 'signal-not-reaching-field'")
+print("  -> plumbing/anchor (not a race); 'race-or-shared' -> field gets the gradient, deadness is optimisation/ill-posedness.")
+print("Per run: map_absorb.json (A/B/C/D), field3d.png (3D field), *_sweep.png (render-moves-with-t), grad_attrib.json (per-component grad).")
 PY
 say "=== overnight DONE $(date -Iseconds) ==="
 python3 -c "from google.colab import runtime; runtime.unassign()" 2>/dev/null || say "(not Colab/already free)"
