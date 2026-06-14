@@ -150,7 +150,7 @@ class JointEncoding(nn.Module):
             return self.decoder(embed, embe_pos, embed_color)
         return self.decoder(embed, embe_pos)
     
-    def run_network(self, inputs, oracle_w=None):
+    def run_network(self, inputs, oracle_w=None, surf_w=None):
         """
         Run the network on a batch of inputs.
 
@@ -198,6 +198,10 @@ class JointEncoding(nn.Module):
             if oracle_w is not None:
                 ow = oracle_w.reshape(inputs.shape[0], 1, 1).expand(inputs.shape[0], inputs.shape[1], 1).reshape(-1, 1)
                 vox_motion = vox_motion * ow
+            # SURFACE/TRUNC BINDING: zero deformation away from the surface (surf_w per-sample in (0,1]),
+            # killing the unconstrained off-surface field explosion (battery-6 raw 108). None = off.
+            if surf_w is not None:
+                vox_motion = vox_motion * surf_w.reshape(-1, 1)
             inputs_flat = pts + vox_motion
             def_reg = (vox_motion ** 2).mean()   # ||Δx||^2 magnitude (differentiable -> time_net)
         
@@ -356,7 +360,15 @@ class JointEncoding(nn.Module):
             timestamps = torch.zeros(rays_o.shape[0], 1, device=rays_o.device, dtype=rays_o.dtype)
         timestamps = timestamps.repeat(1,pts.shape[1]).unsqueeze(-1)
         pts = torch.cat([pts,timestamps],dim=-1)
-        raw, edge_semantic, def_reg = self.run_network(pts, oracle_w=oracle_w)
+        # SURFACE/TRUNC BINDING (2026-06-14): restrict deformation to near the measured surface
+        # (|z - target_d| within k*trunc), killing the unconstrained off-surface field explosion.
+        # Flag deform_surface_bind=k (default 0=off ⇒ regression-safe). soft Gaussian falloff.
+        surf_w = None
+        _sb = self.config.get('deform_surface_bind', 0)
+        if _sb and _sb > 0 and target_d is not None:
+            _trunc_w = self.config['training']['trunc'] * self.config['data'].get('sc_factor', 1.0)
+            surf_w = torch.exp(-((z_vals - target_d) / (_sb * _trunc_w + 1e-9)) ** 2)  # [N_rays, N_samples]
+        raw, edge_semantic, def_reg = self.run_network(pts, oracle_w=oracle_w, surf_w=surf_w)
         rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map = self.raw2outputs(raw,edge_semantic, z_vals, self.config['training']['white_bkgd'])
 
         # Importance sampling

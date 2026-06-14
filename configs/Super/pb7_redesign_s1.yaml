@@ -1,0 +1,7 @@
+# Battery-7 redesign re-test, seed 1. See pb7_redesign_s0.yaml. Different seed → tests reproducibility.
+inherit_from: configs/Super/pb5_reg0p003_lrslow.yaml
+deform_surface_bind: 2.0
+seed: 1
+data:
+  output: output/pb7_redesign_s1
+  exp_name: demo

@@ -36,6 +36,11 @@ save_rendering_result=True
 class DDSSLAM():
     def __init__(self, config):
         self.config = config
+        # Determinism fix (2026-06-14): seed_everything was DEFINED but NEVER CALLED -> every run was
+        # nondeterministic, which on the bistable/underdetermined deformation field flipped DEAD<->LIVE
+        # across runs of the SAME config (battery-5 LIVE 0.12 vs battery-6 DEAD 5.9e-9). Seed it.
+        # (NOTE: reproducible != robust; robustness still needs the well-posing redesign below.)
+        self.seed_everything(int(self.config.get('seed', 0)))
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.dataset = get_dataset(config)
         
