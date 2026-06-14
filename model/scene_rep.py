@@ -78,6 +78,14 @@ class JointEncoding(nn.Module):
         self.edgenet_semantic = batchify(self.decoder.edgenet_semantic, None)
         self.time_net = batchify(self.decoder.time_net, None)
 
+        # --- ARM-2 stack flags (Inc-0 plumbing). Read once here; ALL default-OFF.
+        # These are inert attribute reads (no module, no RNG, no forward branch) so the
+        # build stays bit-identical to base. Inc-1+ will construct self.uncertainty_net /
+        # self.sni_film ONLY inside these guards (so flags-off consumes zero RNG).
+        self.unc_on  = bool(self.config.get('uncertainty', {}).get('enable', False))
+        self.nrgs_on = bool(self.config.get('nrgs', {}).get('enable', False))
+        self.sni_on  = bool(self.config.get('sni', {}).get('enable', False))
+
 
     def sdf2weights(self, sdf, z_vals, args=None):
         '''

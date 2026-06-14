@@ -113,4 +113,30 @@ mesh:
   voxel_eval: 0.03
   voxel_final: 0.03
   visualisation: False
-  
+
+# --- ARM-2 stack (Inc-0 plumbing; all default-OFF). When enable:false the modules
+# are NOT constructed (scene_rep.get_decoder), so they consume ZERO torch RNG at build
+# time => est_c2w + PSNR are bit-identical to base. Code reads every key via .get(...)
+# so configs that do NOT inherit Super.yaml (StereoMIS/CRCD) stay safe too.
+# Full design: Addons/docs/ARM2_STACK_DRAFT_20260614.md  diagram: Addons/docs/arm2_architecture.png
+uncertainty:          # WildGS-style learnt attribution (Inc-1/2/3) — the learnt core
+  enable: false
+  hidden_dim: 32
+  num_layers: 2
+  w_min: 0.1          # pose down-weight clamp lo:  weights = clip(1/sigma^2, w_min, w_max)
+  w_max: 10.0         # pose down-weight clamp hi
+  route_c: 1.0        # a_ray = sigma^2 / (sigma^2 + route_c)
+  route_lambda: 1.0   # eff_gate = max(a_ray, route_lambda * seg)   (lambda->0 = everything-learnt)
+  detach_pose_weight: true
+nrgs:                 # dual-hypothesis rigidity teacher (Inc-4, gated by the Inc-0.5 probe)
+  enable: false
+  alpha: 1.0          # seg-prior strength in w*
+  beta: 1.0           # rigid-vs-deform residual strength in w*
+  bce_weight: 1.0     # gate BCE supervision weight
+  field_weight: 1.0   # w* * E_deform field supervision weight
+  mask_def_reg: true  # mask def_reg by (1 - w*)  (ONE mask site)
+sni:                  # one-way feature conditioning (Inc-5, optional)
+  enable: false
+  mode: film          # film (default) | xattn (larger-data / CRCD cell)
+  feat_dim: 0
+
