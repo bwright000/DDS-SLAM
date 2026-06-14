@@ -36,8 +36,10 @@ ax.set_xlim(0, 20); ax.set_ylim(0, 12.6); ax.axis('off')
 
 ax.text(10, 12.2, 'Arm-2 stack on DDS-SLAM-Base  —  WildGS + NRGS + SNI as config-gated increments',
         ha='center', fontsize=15, weight='bold')
-ax.text(10, 11.75, 'grey = base (untouched)   blue = WildGS learnt core (Inc-1/2/3)   '
+ax.text(10, 11.78, 'grey = base (untouched)   blue = WildGS learnt core (Inc-1/2/3)   '
         'orange = NRGS gated (Inc-4)   green = SNI optional (Inc-5)', ha='center', fontsize=9.5, color='#444')
+ax.text(10, 11.5, 'σ² has THREE uses: (a) down-weight POSE   (b) ROUTE the field   (c) THROTTLE the MAP  '
+        '(c = Battery-7 refinement, pending probe)', ha='center', fontsize=9, color='#1f5fa8')
 
 # ---------------- BASE LOOP (centre) ----------------
 box(ax, 10, 11.0, 5.4, 0.7, 'rays (o, d, t)  +  target rgb / depth', C_IN, weight='bold')
@@ -49,8 +51,9 @@ box(ax, 10, 7.25, 6.2, 0.9, 'SDFNet -> sdf, geo_feat(15) -> color / edge heads\n
 box(ax, 10, 5.95, 6.2, 0.9, 'raw2outputs  (volume render, weights)\n-> rgb_map, depth, edge_map  [per-RAY]   scene_rep.py:104-128', C_BASE)
 box(ax, 7.0, 4.2, 4.4, 1.05,
     'TRACKING loss (pose only)\nrgb/depth/edge  scene_rep.py:448-464\noptimise POSE  ddsslam.py:575', C_LOSS)
-box(ax, 13.0, 4.2, 4.6, 1.05,
-    'MAPPING / BA loss (map + KF pose)\n+ def_reg  ddsslam.py:214\nforward  ddsslam.py:460', C_LOSS)
+box(ax, 13.0, 4.2, 4.8, 1.15,
+    'MAPPING / BA loss (map + KF pose)\n+ def_reg  ddsslam.py:214 · forward :460\n'
+    '(c) σ² THROTTLES map grad here [pending probe]', C_LOSS)
 arrow(ax, (10, 10.65), (10, 10.32)); arrow(ax, (10, 9.4), (10, 9.06))
 arrow(ax, (10, 8.05), (10, 7.71)); arrow(ax, (10, 6.8), (10, 6.41))
 arrow(ax, (8.7, 5.55), (7.6, 4.75)); arrow(ax, (11.3, 5.55), (12.4, 4.75))

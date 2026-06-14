@@ -32,6 +32,31 @@ The vet found one fatal measurement gap, one wiring bug, and ~2× scope. All fol
 
 ---
 
+## 0b. MAP-vs-FIELD COMPETITION — σ² gets a THIRD use (Battery-7 architecture read, 2026-06-14)
+
+Code-verified (scene_rep.py:177-214, decoder.py:423-442, ddsslam.py:677-689): the map
+(hash-grid + SDF + color) has **NO time input** — time enters ONLY via the TimeNet warp
+(`vox_motion`, :191; `pts+vox_motion`, :213). So the map **cannot store per-frame motion**; it
+fits a blurry **time-average** and **wins the gradient race** (hash/decoder lr 0.01 + huge
+capacity vs TimeNet lr 0.001 @ `lr_mult 0.1`). It absorbs the *gradient*, not the motion — claims
+the explanation budget first as blur and starves the field. (Battery-7: field surface-dead across
+3 seeds even with pose frozen → not the pose race; this is the cause.)
+
+**Consequence:** routing the field's capacity (ROUTE (b), `oracle_w` on `vox_motion`) is necessary
+but **NOT sufficient** — the faster, higher-capacity map keeps claiming moving pixels. So σ² needs
+a **THIRD use**, alongside pose-↓ and route:
+
+> **(c) THROTTLE THE MAP** — down-weight the *map's* photometric gradient at high-σ² (moving)
+> regions so the field is the only one left to explain them. WildGS-inverted applied to the
+> map-vs-field competition, not just pose.
+
+Mechanism options (decide after the probe): (i) weight the mapping rgb/depth loss for the
+**map params only** by `(1−a_ray).detach()` at high σ² (needs the map-grad path separated from the
+field-grad path — e.g. a stop-grad split, since one `rgb_loss` currently feeds both); or (ii) a
+**canonical/stationarity prior** (penalise the map for deviating from a reference frame, forcing
+deviations onto the field). **GATE:** only build this once the map-absorption probe confirms a real
+residual at the moving tissue (else there's nothing to reassign). See diagnosis/infra/map_absorption_probe.py.
+
 ## 1. THE INTEGRATED PICTURE (one diagram in words)
 
 ```
