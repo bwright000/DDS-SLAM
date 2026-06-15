@@ -415,24 +415,23 @@ class ColorSDFNet_v2(nn.Module):
                                 hidden_dim_color=config['decoder']['hidden_dim_color'],
                                 num_layers_color=config['decoder']['num_layers_color'])
 
-        # --- ARM-2 Inc-1: per-ray aleatoric uncertainty head (sigma^2).
-        # Mirrors edgenet_semantic 1:1 (same EdgeNet_Semantic class, n_output_dims=1,
-        # same cat([embed_pos, geo_feat]) input) so it draws RNG identically when on.
-        # CONSTRUCTED ONLY when uncertainty.enable -> with the flag OFF this branch
-        # is skipped, no module/RNG is created, and the Inc-0 bit-identity harness
-        # (RNG state + param count + state_dict keys) still PASSES.
+        self.sdf_net = SDFNet(config,
+                              input_ch=input_ch + input_ch_pos,
+                              geo_feat_dim=config['decoder']['geo_feat_dim'],
+                              hidden_dim=config['decoder']['hidden_dim'],
+                              num_layers=config['decoder']['num_layers'])
+
+        # --- ARM-2 Inc-1: per-ray aleatoric uncertainty head (sigma^2). Mirrors edgenet_semantic 1:1.
+        # CONSTRUCTED ONLY when uncertainty.enable, and CONSTRUCTED LAST (after ALL base modules:
+        # color/time/edge/sdf) so the ON run's base backbone draws the SAME RNG as base -> base-vs-uncert
+        # is a CLEAN single-variable A/B (only the head differs; fixes the audit's init-parity confound).
+        # Off-path: no module built -> bit-identical base -> Inc-0 harness PASSES.
         if config.get('uncertainty', {}).get('enable', False):
             self.uncertainty_net = EdgeNet_Semantic(config,
                                 input_ch=input_ch_pos,
                                 geo_feat_dim=config['decoder']['geo_feat_dim'],
                                 hidden_dim_color=config.get('uncertainty', {}).get('hidden_dim', 32),
                                 num_layers_color=config.get('uncertainty', {}).get('num_layers', 2))
-
-        self.sdf_net = SDFNet(config,
-                              input_ch=input_ch + input_ch_pos,
-                              geo_feat_dim=config['decoder']['geo_feat_dim'],
-                              hidden_dim=config['decoder']['hidden_dim'],
-                              num_layers=config['decoder']['num_layers'])
 
     def forward(self, embed, embed_pos):
 
