@@ -1,0 +1,8 @@
+# C_1/001 ARM-2 A/B CONTROL (uncertainty OFF). Matched to c1_001_uncert.yaml -> bit-identical
+# to the plain c1_001_paperfaith_lrfix base (head never constructed when enable:false).
+inherit_from: configs/CRCD/c1_001_paperfaith_lrfix.yaml
+data:
+  output: output/CRCD/C1_001_uncert_base
+  exp_name: demo
+uncertainty:
+  enable: false

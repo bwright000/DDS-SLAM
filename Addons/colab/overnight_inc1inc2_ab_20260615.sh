@@ -3,7 +3,8 @@
 # OVERNIGHT — Inc-1/Inc-2 tracking hedge A/B + field-finding confirm (T4). 2026-06-15.
 # Two-pronged (CRCD + SemSup; StereoMIS dropped):
 #   GATE  Inc-0 regression: flags-OFF build == pre-Inc-1 base (bit-identical) -> Inc-1/2 safe to trust.
-#   B(1)  CRCD c2_001 (largest motion) A/B: base vs +uncertainty -> ATE/tracking (the hedge, PRIORITY).
+#   B(1)  CRCD c1_001 (reference snippet) A/B: base vs +uncertainty -> tracking. NOTE c1_001 is deeply
+#         sub-SNR (~8.7x) -> read path-ratio/Pearson + render, not ATE alone (it's the consistency reference).
 #   B(2)  SemSup trail3_moge2 A/B: base vs +uncertainty -> render (ship ckpts+logs; metric post-hoc).
 #   A     Confirm "field gets ~0 gradient" on the GOOD model: verify_grad + grad_attrib + field3d
 #         on the freshly-trained SemSup base ckpt (good model, not the pb7 stabiliser).
@@ -65,13 +66,13 @@ if ! done_marker "$G"; then
 fi
 
 # ---- PRIORITY: CRCD c2_001 tracking A/B (base vs +uncertainty) ----
-say "########## B(1): CRCD c2_001 tracking A/B ##########"
-crcd_stage(){ local STAGED="$REPO/data/CRCD/C2_001"
+say "########## B(1): CRCD c1_001 tracking A/B (reference snippet; sub-SNR) ##########"
+crcd_stage(){ local STAGED="$REPO/data/CRCD/C1_001"
   [ -d "$STAGED/video_frames" ] && return 0
-  local SNIP=/content/drive/MyDrive/Datasets/CRCD-Published/C_2/snippet_001
+  local SNIP=/content/drive/MyDrive/Datasets/CRCD-Published/C_1/snippet_001
   local CALIB=/content/drive/MyDrive/Datasets/CRCD-Published/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl
-  local MOGE=/content/drive/MyDrive/Datasets/CRCD-Published-MoGe-2/C_2/snippet_001/depth
-  [ -d "$SNIP" ] && [ -f "$CALIB" ] && [ -d "$MOGE" ] || { say "  CRCD c2 prereqs MISSING -> SKIP CRCD A/B"; return 1; }
+  local MOGE=/content/drive/MyDrive/Datasets/CRCD-Published-MoGe-2/C_1/snippet_001/depth
+  [ -d "$SNIP" ] && [ -f "$CALIB" ] && [ -d "$MOGE" ] || { say "  CRCD c1 prereqs MISSING -> SKIP CRCD A/B"; return 1; }
   python Addons/preprocess/preprocess_crcd_published.py --snippet_dir "$SNIP" --calib_pkl "$CALIB" --output_dir "${STAGED}.tmp" 2>&1 | tee -a "$LOG" && mv "${STAGED}.tmp" "$STAGED" || return 1
   mkdir -p "$STAGED/depth.tmp"; python3 - "$MOGE" "$STAGED/depth.tmp" <<'PY'
 import os,sys,shutil
@@ -81,10 +82,9 @@ print('copied',len(os.listdir(dst)),'MoGe depth')
 PY
   rm -rf "$STAGED/depth" && mv "$STAGED/depth.tmp" "$STAGED/depth"; }
 if crcd_stage; then
-  for V in c2_001_uncert_base c2_001_uncert; do
+  for V in c1_001_uncert_base c1_001_uncert; do
     DST="$DRIVE/$V"; LW="$LWORK/$V"; done_marker "$DST" && { say "  $V done"; continue; }
-    mkdir -p "$LW" "$DST"; OUTB="output/CRCD/C2_001_${V#c2_001_}"
-    [ "$V" = "c2_001_uncert_base" ] && OUTB="output/CRCD/C2_001_uncert_base"
+    mkdir -p "$LW" "$DST"; OUTB="output/CRCD/C1_001_${V#c1_001_}"
     train "configs/CRCD/$V.yaml"; ship "$OUTB" "$LW" "$DST"; say "  $V shipped"
   done
 fi
@@ -133,9 +133,9 @@ def horn(m,d):
     mc,dc=m.mean(0),d.mean(0); mm,dd=m-mc,d-dc; H=mm.T@dd; U,S,Vt=np.linalg.svd(H)
     s=np.sign(np.linalg.det(Vt.T@U.T)); R=Vt.T@np.diag([1,1,s])@U.T
     sc=(S*np.array([1,1,s])).sum()/(mm*mm).sum(); return (sc*(R@m.T)).T+(dc-sc*R@mc), sc
-GT='/content/DDS-SLAM/data/CRCD/C2_001/groundtruth.txt'; g=tum(GT)
-print("CRCD c2_001 tracking A/B (Sim3 ATE mm | est/GT path ratio):")
-for V in ['c2_001_uncert_base','c2_001_uncert']:
+GT='/content/DDS-SLAM/data/CRCD/C1_001/groundtruth.txt'; g=tum(GT)
+print("CRCD c1_001 tracking A/B (Sim3 ATE mm | est/GT path ratio) -- sub-SNR, read with path-ratio/Pearson:")
+for V in ['c1_001_uncert_base','c1_001_uncert']:
     e=est(f'{LW}/{V}/est_c2w_data.txt')
     if len(e)<10 or len(g)<10: print(f"  {V:<22} (no est)"); continue
     n=min(len(e),len(g)); a,sc=horn(e[:n],g[:n]); ate=np.linalg.norm(a-g[:n],axis=1).mean()*1000

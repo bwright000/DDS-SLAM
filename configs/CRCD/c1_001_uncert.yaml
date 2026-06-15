@@ -1,0 +1,19 @@
+# C_1/001 ARM-2 A/B VARIANT (uncertainty ON: Inc-1 + Inc-2). C_1/001 = the canonical CRCD
+# REFERENCE snippet (360 frames; consistent with all prior CRCD + SNI-SLAM comparisons).
+# Inc-1: learnt per-ray aleatoric sigma^2 (mirrors edge head), NLL-trained on the mapping residual.
+# Inc-2: TRACKING-ONLY pose down-weight weights=clip(1/sigma^2,w_min,w_max).detach() into rgb/depth.
+# NOTE: C_1/001 is DEEPLY sub-SNR for tracking (~0.115 mm/f, ~8.7x below the tracker noise floor) ->
+# the ATE A/B will be weak/inconclusive; read path-ratio + dominant-axis Pearson + render
+# (PSNR/SSIM/LPIPS), NOT ATE alone. A/B vs c1_001_uncert_base.yaml. Deformation field untouched (hedge).
+inherit_from: configs/CRCD/c1_001_paperfaith_lrfix.yaml
+data:
+  output: output/CRCD/C1_001_uncert
+  exp_name: demo
+uncertainty:
+  enable: true
+  hidden_dim: 32
+  num_layers: 2
+  nll_weight: 0.1
+  w_min: 0.1
+  w_max: 10.0
+  detach_pose_weight: true
