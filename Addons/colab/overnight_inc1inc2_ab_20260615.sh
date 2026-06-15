@@ -3,8 +3,9 @@
 # OVERNIGHT — Inc-1/Inc-2 tracking hedge A/B + field-finding confirm (T4). 2026-06-15.
 # Two-pronged (CRCD + SemSup; StereoMIS dropped):
 #   GATE  Inc-0 regression: flags-OFF build == pre-Inc-1 base (bit-identical) -> Inc-1/2 safe to trust.
-#   B(1)  CRCD c1_001 (reference snippet) A/B: base vs +uncertainty -> tracking. NOTE c1_001 is deeply
-#         sub-SNR (~8.7x) -> read path-ratio/Pearson + render, not ATE alone (it's the consistency reference).
+#   B(1)  CRCD c1_001 (reference snippet) A/B: base vs +uncertainty -> tracking. base tracks c1_001 WELL
+#         overall but SPIKES error when deformation happens -> the metric is per-frame ATE max/p90 (does the
+#         uncertainty down-weight CUT the deformation-moment spikes), not mean ATE.
 #   B(2)  SemSup trail3_moge2 A/B: base vs +uncertainty -> render (ship ckpts+logs; metric post-hoc).
 #   A     Confirm "field gets ~0 gradient" on the GOOD model: verify_grad + grad_attrib + field3d
 #         on the freshly-trained SemSup base ckpt (good model, not the pb7 stabiliser).
@@ -66,7 +67,7 @@ if ! done_marker "$G"; then
 fi
 
 # ---- PRIORITY: CRCD c1_001 tracking A/B (base vs +uncertainty) ----
-say "########## B(1): CRCD c1_001 tracking A/B (reference snippet; sub-SNR) ##########"
+say "########## B(1): CRCD c1_001 tracking A/B (reference; spike-at-deformation) ##########"
 crcd_stage(){ local STAGED="$REPO/data/CRCD/C1_001"
   [ -d "$STAGED/video_frames" ] && return 0
   local SNIP=/content/drive/MyDrive/Datasets/CRCD-Published/C_1/snippet_001
@@ -134,15 +135,16 @@ def horn(m,d):
     s=np.sign(np.linalg.det(Vt.T@U.T)); R=Vt.T@np.diag([1,1,s])@U.T
     sc=(S*np.array([1,1,s])).sum()/(mm*mm).sum(); return (sc*(R@m.T)).T+(dc-sc*R@mc), sc
 GT='/content/DDS-SLAM/data/CRCD/C1_001/groundtruth.txt'; g=tum(GT)
-print("CRCD c1_001 tracking A/B (Sim3 ATE mm | est/GT path ratio) -- sub-SNR, read with path-ratio/Pearson:")
+print("CRCD c1_001 tracking A/B (Sim3-aligned per-frame ATE, mm). base tracks well overall -> watch the")
+print("SPIKES (ATE_max / ATE_p90 = the deformation moments), not the mean:")
 for V in ['c1_001_uncert_base','c1_001_uncert']:
     e=est(f'{LW}/{V}/est_c2w_data.txt')
     if len(e)<10 or len(g)<10: print(f"  {V:<22} (no est)"); continue
-    n=min(len(e),len(g)); a,sc=horn(e[:n],g[:n]); ate=np.linalg.norm(a-g[:n],axis=1).mean()*1000
+    n=min(len(e),len(g)); a,sc=horn(e[:n],g[:n]); pf=np.linalg.norm(a-g[:n],axis=1)*1000   # per-frame ATE mm
     pr=(np.linalg.norm(np.diff(e[:n],axis=0),axis=1).sum())/(np.linalg.norm(np.diff(g[:n],axis=0),axis=1).sum()+1e-9)
-    print(f"  {V:<22} ATE={ate:7.2f}  path_ratio={pr:5.2f}")
-print("\nHEDGE: uncert ATE < base ATE => the uncertainty pose down-weight helps tracking. CRCD sub-SNR ->")
-print("  treat ATE with the path-ratio/Pearson caveat. SemSup render A/B + field-finding: see per-cell jsons.")
+    print(f"  {V:<22} ATE_mean={pf.mean():6.2f}  ATE_p90={np.percentile(pf,90):6.2f}  ATE_max={pf.max():6.2f}  path_ratio={pr:5.2f}")
+print("\nHEDGE WORKS if uncert ATE_max/ATE_p90 < base (it CUTS the deformation-moment spikes), even if the")
+print("  means are similar. SemSup render A/B + field-finding: see per-cell jsons.")
 print("PRONG A (field on good model): trail3_moge2_uncert_base/{verify_grad,grad_attrib,field3d}.json")
 PY
 say "=== overnight DONE $(date -Iseconds) ==="

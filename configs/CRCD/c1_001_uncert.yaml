@@ -2,9 +2,10 @@
 # REFERENCE snippet (360 frames; consistent with all prior CRCD + SNI-SLAM comparisons).
 # Inc-1: learnt per-ray aleatoric sigma^2 (mirrors edge head), NLL-trained on the mapping residual.
 # Inc-2: TRACKING-ONLY pose down-weight weights=clip(1/sigma^2,w_min,w_max).detach() into rgb/depth.
-# NOTE: C_1/001 is DEEPLY sub-SNR for tracking (~0.115 mm/f, ~8.7x below the tracker noise floor) ->
-# the ATE A/B will be weak/inconclusive; read path-ratio + dominant-axis Pearson + render
-# (PSNR/SSIM/LPIPS), NOT ATE alone. A/B vs c1_001_uncert_base.yaml. Deformation field untouched (hedge).
+# WHY C_1/001 IS THE TEST SNIPPET: base DDS-SLAM tracks it WELL overall, but the pose error SPIKES
+# exactly when deformation happens. The signal is the per-frame error AT the deformation moments, not
+# the mean ATE. HEDGE works if Inc-2 cuts those spikes (per-frame ATE max/p90) vs c1_001_uncert_base.
+# Read per-frame ATE max/p90 + render (PSNR/SSIM/LPIPS). Deformation field untouched (this is the hedge).
 inherit_from: configs/CRCD/c1_001_paperfaith_lrfix.yaml
 data:
   output: output/CRCD/C1_001_uncert
