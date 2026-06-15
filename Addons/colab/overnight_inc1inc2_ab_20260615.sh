@@ -65,7 +65,7 @@ if ! done_marker "$G"; then
   sync; touch "$G/.DONE"
 fi
 
-# ---- PRIORITY: CRCD c2_001 tracking A/B (base vs +uncertainty) ----
+# ---- PRIORITY: CRCD c1_001 tracking A/B (base vs +uncertainty) ----
 say "########## B(1): CRCD c1_001 tracking A/B (reference snippet; sub-SNR) ##########"
 crcd_stage(){ local STAGED="$REPO/data/CRCD/C1_001"
   [ -d "$STAGED/video_frames" ] && return 0
