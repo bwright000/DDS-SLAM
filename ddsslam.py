@@ -462,7 +462,17 @@ class DDSSLAM():
             rays_d = rays_d.reshape(-1, 3)
             if self.config['dynamic']:
                 cur_id = (cur_frame_id*torch.ones(current_rays_batch.shape[0]))
-                timestamps = torch.cat([ids,cur_id],dim=0).to(self.device) 
+                timestamps = torch.cat([ids,cur_id],dim=0).to(self.device)
+                # --- global_BA TIME-CONVENTION FIX (audit wmkk74lpr). global_BA is the DOMINANT field
+                # trainer (mapping.iters per frame) yet it fed RAW integer frame_time, while tracking
+                # (:580) / first-frame-map / per-frame render normalize by num_frames when
+                # time_normalize:true. embed_time is a freq (sin/cos) encoder, so raw-int vs normalized
+                # hit UNRELATED phases -> TimeNet was trained on TWO conflicting time axes = a candidate
+                # cause of the dead field. Default OFF = legacy raw behaviour (regression-safe). With
+                # global_ba_time_fix:true AND time_normalize:true, normalize here too so ALL field-training
+                # paths share ONE time axis (mirrors the tracking normalization at :580).
+                if self.config['training'].get('time_normalize', False) and self.config['training'].get('global_ba_time_fix', False):
+                    timestamps = timestamps / self.dataset.num_frames
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
 
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic)

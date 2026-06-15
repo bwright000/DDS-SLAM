@@ -1,0 +1,12 @@
+# GLOBAL-BA TIME-CONVENTION EXPERIMENT — variant B (MIXED = THE BUG, current default behaviour).
+# time_normalize:true but global_ba_time_fix:false -> tracking/maps/render normalize frame_time by
+# num_frames while global_BA (the DOMINANT field trainer) feeds RAW integer ids -> TimeNet trained on
+# TWO conflicting time axes (freq encoder -> unrelated phases). This is the suspected dead-field state
+# (what pb5/pb6/pb7 ran). SemSup MoGe2 depth. uncertainty OFF.
+inherit_from: configs/Super/trail3_moge2.yaml
+data:
+  output: output/timeexp/trail3_moge2_timeB_mixed
+  exp_name: demo
+training:
+  time_normalize: true
+  global_ba_time_fix: false

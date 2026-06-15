@@ -1,0 +1,11 @@
+# GLOBAL-BA TIME-CONVENTION EXPERIMENT — variant A (RAW-consistent = pristine upstream convention).
+# time_normalize:false -> ALL field-training paths (global_BA, tracking, maps, render) feed RAW integer
+# frame_time -> single consistent time axis (same as DDS-SLAM-Base / IRMVLab upstream). Reference for
+# "is the field alive under a consistent (raw) time axis". SemSup MoGe2 depth. uncertainty OFF.
+inherit_from: configs/Super/trail3_moge2.yaml
+data:
+  output: output/timeexp/trail3_moge2_timeA_raw
+  exp_name: demo
+training:
+  time_normalize: false
+  global_ba_time_fix: false

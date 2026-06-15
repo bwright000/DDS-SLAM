@@ -1,0 +1,11 @@
+# GLOBAL-BA TIME-CONVENTION EXPERIMENT — variant C (FIXED = normalized-consistent).
+# time_normalize:true AND global_ba_time_fix:true -> global_BA ALSO normalizes by num_frames, so ALL
+# field-training paths share ONE (normalized) time axis. The fix for the audit's mixed-convention bug.
+# If C (and A) revive the field vs B (mixed) -> the bug killed it (FIXABLE, not structural). SemSup MoGe2.
+inherit_from: configs/Super/trail3_moge2.yaml
+data:
+  output: output/timeexp/trail3_moge2_timeC_fixed
+  exp_name: demo
+training:
+  time_normalize: true
+  global_ba_time_fix: true
