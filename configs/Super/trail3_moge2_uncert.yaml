@@ -1,0 +1,16 @@
+# SemSup trail_3 (mogev2) ARM-2 A/B VARIANT (uncertainty ON). The RENDER test.
+# SemSup pose GT is FICTIONAL (load_poses=identity) -> ATE is meaningless here; measure
+# PSNR/SSIM/LPIPS. Inc-1 (NLL-trained sigma^2) affects the MAP; Inc-2 pose down-weight is inert
+# on fictional pose. A/B vs trail3_moge2_uncert_base.yaml on render metrics. Deformation field untouched.
+inherit_from: configs/Super/trail3_moge2.yaml
+data:
+  output: output/trail3_moge2_uncert
+  exp_name: demo
+uncertainty:
+  enable: true
+  hidden_dim: 32
+  num_layers: 2
+  nll_weight: 0.1
+  w_min: 0.1
+  w_max: 10.0
+  detach_pose_weight: true

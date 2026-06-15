@@ -109,13 +109,14 @@ class JointEncoding(nn.Module):
         weights = weights * mask
         return weights / (torch.sum(weights, axis=-1, keepdims=True) + 1e-8)
     
-    def raw2outputs(self, raw, edge_semantic, z_vals, white_bkgd=False):
+    def raw2outputs(self, raw, edge_semantic, z_vals, white_bkgd=False, sigma2=None):
         '''
         Perform volume rendering using weights computed from sdf.
 
         Params:
             raw: [N_rays, N_samples, 4]
             z_vals: [N_rays, N_samples]
+            sigma2: [N_rays, N_samples, 1] raw per-sample uncertainty (Inc-1) or None
         Returns:
             rgb_map: [N_rays, 3]
             disp_map: [N_rays]
@@ -123,11 +124,25 @@ class JointEncoding(nn.Module):
             weights: [N_rays, N_samples]
         '''
         rgb = torch.sigmoid(raw[...,:3])  # [N_rays, N_samples, 3]
-        edge_semantic = torch.sigmoid(edge_semantic) 
+        edge_semantic = torch.sigmoid(edge_semantic)
 
         weights = self.sdf2weights(raw[..., 3], z_vals, args=self.config)
         rgb_map = torch.sum(weights[...,None] * rgb, -2)  # [N_rays, 3]
         edge_semantic_map = torch.sum(weights[...,None] * edge_semantic, -2)
+
+        # --- ARM-2 Inc-1: volume-render sigma^2 to a per-ray map, mirroring
+        # edge_semantic_map. softplus(+eps) in FP32 (geo_feat/tcnn can be fp16;
+        # softplus on half can over/underflow and 1/sigma^2 / log(sigma^2) must be
+        # finite). Guarded by `sigma2 is not None` so the off-path adds no ops and
+        # the 7-tuple return is unchanged when the head is absent.
+        sigma2_map = None
+        if sigma2 is not None:
+            sigma2 = torch.nn.functional.softplus(sigma2.float()) + 1e-6
+            sigma2_map = torch.sum(weights[...,None] * sigma2, -2)
+            # BUG-FIX (harden): the per-sample +1e-6 does NOT survive volume rendering — on
+            # empty/low-density rays sum(weights)=acc~0 so sigma2_map -> ~0, making log(sigma2)
+            # and 1/sigma2 in the NLL non-finite. Floor the PER-RAY map so both stay finite.
+            sigma2_map = torch.clamp_min(sigma2_map, 1e-6)
 
 
         depth_map = torch.sum(weights * z_vals, -1)
@@ -138,6 +153,8 @@ class JointEncoding(nn.Module):
         if white_bkgd:
             rgb_map = rgb_map + (1.-acc_map[...,None])
 
+        if sigma2_map is not None:
+            return rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map, sigma2_map
         return rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map
       
     def query_color_sdf(self, query_points):
@@ -217,10 +234,17 @@ class JointEncoding(nn.Module):
         if self.config['grid']['tcnn_encoding']:
             inputs_flat = (inputs_flat - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
 
-        outputs_flat, edge_semantic = batchify(self.query_color_sdf, None)(inputs_flat)
+        # ColorSDFNet_v2 ALWAYS returns a 3-tuple (sigma2_flat is None when the
+        # Inc-1 uncertainty head is absent) — arity is constant => flags-off control
+        # flow is byte-identical to base.
+        outputs_flat, edge_semantic, sigma2_flat = batchify(self.query_color_sdf, None)(inputs_flat)
         outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
         edge_semantic = torch.reshape(edge_semantic, list(inputs.shape[:-1]) + [edge_semantic.shape[-1]])
-        return outputs, edge_semantic, def_reg
+        # ARM-2 Inc-1: reshape sigma2 like edge_semantic; passthrough None when off.
+        sigma2 = None
+        if sigma2_flat is not None:
+            sigma2 = torch.reshape(sigma2_flat, list(inputs.shape[:-1]) + [sigma2_flat.shape[-1]])
+        return outputs, edge_semantic, sigma2, def_reg
     
     def query_sdf(self, query_points, return_geo=False, embed=False):
         '''
@@ -376,8 +400,15 @@ class JointEncoding(nn.Module):
         if _sb and _sb > 0 and target_d is not None:
             _trunc_w = self.config['training']['trunc'] * self.config['data'].get('sc_factor', 1.0)
             surf_w = torch.exp(-((z_vals - target_d) / (_sb * _trunc_w + 1e-9)) ** 2)  # [N_rays, N_samples]
-        raw, edge_semantic, def_reg = self.run_network(pts, oracle_w=oracle_w, surf_w=surf_w)
-        rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map = self.raw2outputs(raw,edge_semantic, z_vals, self.config['training']['white_bkgd'])
+        raw, edge_semantic, sigma2, def_reg = self.run_network(pts, oracle_w=oracle_w, surf_w=surf_w)
+        # ARM-2 Inc-1: raw2outputs returns an 8th element (sigma2_map) ONLY when
+        # sigma2 is not None (uncertainty head on); otherwise the 7-tuple unpack
+        # below is byte-identical to base.
+        sigma2_map = None
+        if sigma2 is not None:
+            rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map, sigma2_map = self.raw2outputs(raw, edge_semantic, z_vals, self.config['training']['white_bkgd'], sigma2=sigma2)
+        else:
+            rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map = self.raw2outputs(raw, edge_semantic, z_vals, self.config['training']['white_bkgd'])
 
         # Importance sampling
         if self.config['training']['n_importance'] > 0:
@@ -391,7 +422,10 @@ class JointEncoding(nn.Module):
             z_vals, _ = torch.sort(torch.cat([z_vals, z_samples], -1), -1)
             pts = rays_o[...,None,:] + rays_d[...,None,:] * z_vals[...,:,None] # [N_rays, N_samples + N_importance, 3]
 
-            raw, edge_semantic, def_reg = self.run_network(pts, oracle_w=oracle_w)
+            # NOTE: n_importance>0 branch is DEAD/BROKEN upstream (raw2outputs called
+            # with wrong arity, edge_map undefined). Kept disabled via n_importance:0.
+            # Unpack updated only to match run_network's new 4-tuple arity.
+            raw, edge_semantic, sigma2, def_reg = self.run_network(pts, oracle_w=oracle_w)
             rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_map,edge_semantic_map = self.raw2outputs(raw, z_vals, self.config['training']['white_bkgd'])
 
         # Return rendering outputs
@@ -404,6 +438,9 @@ class JointEncoding(nn.Module):
             'edge_semantic':edge_semantic_map,
             'def_reg': def_reg
         }
+        # ARM-2 Inc-1: per-ray sigma^2 map, only present when the head is on.
+        if sigma2_map is not None:
+            ret['sigma2'] = sigma2_map
         ret = {**ret, 'z_vals': z_vals}
         ret['raw'] = raw
 
@@ -421,7 +458,7 @@ class JointEncoding(nn.Module):
 
         return ret
     
-    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False):
+    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False):
         '''
         Params:
             rays_o: ray origins (Bs, 3)
@@ -452,10 +489,25 @@ class JointEncoding(nn.Module):
 
         # Get render loss
         if not render_only:
- 
-            rgb_loss = compute_loss(rend_dict["rgb"]*rgb_weight, target_rgb*rgb_weight)
+
+            # --- ARM-2 Inc-2: tracking-only pose down-weight from per-ray sigma^2.
+            # w = clip(1/sigma^2, w_min, w_max).detach() is passed via the compute_loss
+            # weights= kwarg (utils.py: linear loss*weights ONCE — NOT the rgb*w trick
+            # which squares to 1/sigma^4). .detach() stops the pose optimiser from gaming
+            # sigma^2. Fires ONLY when tracking AND the head is on, so mapping/BA and the
+            # flags-off base path are byte-identical (rgb_unc_w / depth_unc_w stay None).
+            rgb_unc_w = None
+            depth_unc_w = None
+            if tracking and getattr(self, 'unc_on', False) and ('sigma2' in rend_dict):
+                _wmin = self.config.get('uncertainty', {}).get('w_min', 0.1)
+                _wmax = self.config.get('uncertainty', {}).get('w_max', 10.0)
+                _w_ray = torch.clamp(1.0 / rend_dict['sigma2'], _wmin, _wmax).detach()  # [N_rays,1]
+                rgb_unc_w = _w_ray  # broadcasts over the 3 rgb channels
+                depth_unc_w = _w_ray.squeeze()[valid_depth_mask]  # match masked depth shape
+
+            rgb_loss = compute_loss(rend_dict["rgb"]*rgb_weight, target_rgb*rgb_weight, weights=rgb_unc_w)
             psnr = mse2psnr(rgb_loss)
-            depth_loss = compute_loss(rend_dict["depth"].squeeze()[valid_depth_mask], target_d.squeeze()[valid_depth_mask])
+            depth_loss = compute_loss(rend_dict["depth"].squeeze()[valid_depth_mask], target_d.squeeze()[valid_depth_mask], weights=depth_unc_w)
 
             if UseBorder is False:
                 edge_semantic_loss = compute_loss(
@@ -481,6 +533,19 @@ class JointEncoding(nn.Module):
             truncation = self.config['training']['trunc'] * self.config['data']['sc_factor']
             fs_loss, sdf_loss, sdf_stats = get_sdf_loss(z_vals, target_d, sdf, truncation, 'l2', grad=None)
 
+            # --- ARM-2 Inc-1: self-supervised aleatoric NLL on the photometric residual.
+            # L_nll = mean( 0.5 * (rgb_err^2 / sigma^2 + log sigma^2) ). Trains the
+            # uncertainty head on the SAME residual as rgb_loss (gradient flows into
+            # sigma^2 AND the photometric path; the dominant rgb_loss anchors it).
+            # Computed in fp32 over valid pixels. Stashed in ret['nll']; only ADDED to
+            # the total loss in get_loss_from_ret behind nll_weight (default 0), so the
+            # base path stays inert. Guarded by 'sigma2' so off-path adds no key.
+            if ('sigma2' in rend_dict) and (not tracking):   # NLL trains the head on MAPPING residual ONLY
+                _s2 = rend_dict['sigma2'].float()                            # [N_rays,1]
+                _rgb_err2 = ((rend_dict['rgb'] - target_rgb) ** 2).float()   # [N_rays,3]
+                _nll = 0.5 * (_rgb_err2 / _s2 + torch.log(_s2))              # broadcast [N_rays,3]
+                nll_loss = _nll[valid_depth_mask].mean()
+
         else:
             rgb_loss = depth_loss = edge_loss = edge_semantic_loss = sdf_loss = fs_loss = psnr = None
             sdf_stats = None
@@ -498,5 +563,12 @@ class JointEncoding(nn.Module):
             "psnr": psnr,
             "sdf_stats": sdf_stats,
         }
+
+        # --- ARM-2 Inc-1: surface the uncertainty map + NLL only when the head is on
+        # (keys absent on the base path => get_loss_from_ret's .get() guard skips them).
+        if 'sigma2' in rend_dict:
+            ret['sigma2'] = rend_dict['sigma2']
+            if (not render_only) and (not tracking):   # NLL is a MAPPING-only training signal, never on pose
+                ret['nll'] = nll_loss
 
         return ret

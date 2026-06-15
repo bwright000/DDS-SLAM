@@ -414,6 +414,20 @@ class ColorSDFNet_v2(nn.Module):
                                 geo_feat_dim=config['decoder']['geo_feat_dim'],
                                 hidden_dim_color=config['decoder']['hidden_dim_color'],
                                 num_layers_color=config['decoder']['num_layers_color'])
+
+        # --- ARM-2 Inc-1: per-ray aleatoric uncertainty head (sigma^2).
+        # Mirrors edgenet_semantic 1:1 (same EdgeNet_Semantic class, n_output_dims=1,
+        # same cat([embed_pos, geo_feat]) input) so it draws RNG identically when on.
+        # CONSTRUCTED ONLY when uncertainty.enable -> with the flag OFF this branch
+        # is skipped, no module/RNG is created, and the Inc-0 bit-identity harness
+        # (RNG state + param count + state_dict keys) still PASSES.
+        if config.get('uncertainty', {}).get('enable', False):
+            self.uncertainty_net = EdgeNet_Semantic(config,
+                                input_ch=input_ch_pos,
+                                geo_feat_dim=config['decoder']['geo_feat_dim'],
+                                hidden_dim_color=config.get('uncertainty', {}).get('hidden_dim', 32),
+                                num_layers_color=config.get('uncertainty', {}).get('num_layers', 2))
+
         self.sdf_net = SDFNet(config,
                               input_ch=input_ch + input_ch_pos,
                               geo_feat_dim=config['decoder']['geo_feat_dim'],
@@ -438,5 +452,17 @@ class ColorSDFNet_v2(nn.Module):
         else:
             edge_semantic = self.edgenet_semantic(torch.cat([geo_feat], dim=-1))
 
+        # --- ARM-2 Inc-1: per-sample raw uncertainty (mirrors edge_semantic input).
+        # ALWAYS-3-tuple with sigma2_raw=None when the head is absent: keeps the
+        # return ARITY constant (control flow byte-stable) so flags-off stays
+        # bit-identical to base while producing zero new tensors/ops when off.
+        # softplus(+eps) in fp32 is applied later in scene_rep.raw2outputs (the
+        # mirror site of the edge_semantic sigmoid), NOT here.
+        sigma2_raw = None
+        if hasattr(self, 'uncertainty_net'):
+            if embed_pos is not None:
+                sigma2_raw = self.uncertainty_net(torch.cat([embed_pos, geo_feat], dim=-1))
+            else:
+                sigma2_raw = self.uncertainty_net(torch.cat([geo_feat], dim=-1))
 
-        return torch.cat([rgb,sdf], -1),edge_semantic
+        return torch.cat([rgb,sdf], -1), edge_semantic, sigma2_raw

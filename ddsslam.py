@@ -214,6 +214,14 @@ class DDSSLAM():
         if self.config['training'].get('deformation_reg_weight', 0) > 0 and ret.get('def_reg') is not None:
             loss += self.config['training']['deformation_reg_weight'] * ret['def_reg']
 
+        # ARM-2 Inc-1: self-supervised aleatoric NLL on the photometric residual,
+        # trains the uncertainty head. Mirrors the def_reg optional-loss-behind-a-weight
+        # pattern above. nll_weight default 0 (+ ret['nll'] absent when the head is off)
+        # => zero contribution => regression-safe / bit-identical to base.
+        _nll_w = self.config.get('uncertainty', {}).get('nll_weight', 0)
+        if _nll_w > 0 and ret.get('nll') is not None:
+            loss += _nll_w * ret['nll']
+
         if smooth and self.config['training']['smooth_weight']>0:
             loss += self.config['training']['smooth_weight'] * self.smoothness(self.config['training']['smooth_pts'],
                                                                                   self.config['training']['smooth_vox'],
@@ -572,7 +580,11 @@ class DDSSLAM():
                 timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1]; flag default off = upstream behaviour
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
 
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, border=border, UseBorder=True)
+            # ARM-2 Inc-2: tracking=True enables the per-ray pose down-weight from
+            # sigma^2 (TRACKING-ONLY). Mapping/BA forwards (first_frame/current_frame/
+            # global_BA) leave tracking=False (default) so they are untouched. No-op
+            # when uncertainty.enable=false (forward guards on unc_on).
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, border=border, UseBorder=True, tracking=True)
             loss = self.get_loss_from_ret(ret)
             if i == 0:
                 loss_iter0 = float(loss.cpu().item())

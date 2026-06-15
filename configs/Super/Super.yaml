@@ -123,6 +123,7 @@ uncertainty:          # WildGS-style learnt attribution (Inc-1/2/3) — the lear
   enable: false
   hidden_dim: 32
   num_layers: 2
+  nll_weight: 0       # Inc-1: aleatoric NLL loss weight (0 = head not trained = base). Set >0 (e.g. 0.1) to enable.
   w_min: 0.1          # pose down-weight clamp lo:  weights = clip(1/sigma^2, w_min, w_max)
   w_max: 10.0         # pose down-weight clamp hi
   route_c: 1.0        # a_ray = sigma^2 / (sigma^2 + route_c)
