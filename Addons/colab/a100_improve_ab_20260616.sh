@@ -164,39 +164,48 @@ make_video(){ local RUN=$1 DDIR=$2 VT=$3 OUT=$4
     --seg_dir "$SEG" --seg_pattern "$SEGP" --skip_raw_seg $SEGEXTRA \
     --uncert_dir "$RUN/uncert" \
     --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$GT" --trajectory_raw \
-    --output "$OUT" --fps 15 2>&1 | tee -a "$LOG" || say "  WARN video failed ($OUT)"
+    --output "$OUT" --fps 15 2>&1 || echo "WARN video failed ($OUT)"
 }
 
 # ---------------------------------------------------------------------------
-# run_cell NAME GROUP DATADIR VT  -> trains n=3 seeds, video + render-eval + packages frames.
+# run_one NAME GROUP DATADIR VT SEED -> ONE (cell,seed): train + video + eval + package.
+# Self-contained + resume-safe (.DONE). ALL heavy output -> its OWN $DST/run.log so parallel
+# jobs never interleave (the shared $LOG only gets the one-line ship message). TF32 OFF + seed
+# via config (no repo edit). Designed to be backgrounded (run_one ... &) with a concurrency cap.
 # ---------------------------------------------------------------------------
-run_cell(){ local NAME=$1 GRP=$2 DDIR=$3 VT=$4
-  for S in $SEEDS; do
-    local CELL="${NAME}_s${S}"; local DST="$DRIVE/$CELL"; local LW="$LWORK/$CELL"
-    done_marker "$DST" && { say "  $CELL done"; continue; }
-    mkdir -p "$LW" "$DST"; local OUT="output/_a100/${CELL}"; local OVR="/content/_cfg_${CELL}.yaml"
-    cat > "$OVR" <<YML
+run_one(){ local NAME=$1 GRP=$2 DDIR=$3 VT=$4 S=$5
+  local CELL="${NAME}_s${S}" DST="$DRIVE/${NAME}_s${S}" LW="$LWORK/${NAME}_s${S}"
+  done_marker "$DST" && { say "  $CELL already done -> skip"; return 0; }
+  mkdir -p "$LW" "$DST"
+  local OUT="output/_a100/${CELL}" OVR="/content/_cfg_${CELL}.yaml" RUN="output/_a100/${CELL}/demo"
+  cat > "$OVR" <<YML
 inherit_from: configs/${GRP}/${NAME}.yaml
 seed: ${S}
 data:
   output: ${OUT}
   exp_name: demo
 YML
-    train "$OVR"
-    local RUN="$OUT/demo"
+  {   # ---- everything for THIS job into its own log (parallel-safe) ----
+    echo "=== $CELL START $(date -Iseconds) (seed $S, $GRP/$NAME) ==="
+    python -W ignore - "$OVR" <<'PY'
+import sys, runpy, torch
+torch.backends.cuda.matmul.allow_tf32=False
+torch.backends.cudnn.allow_tf32=False
+cfg=sys.argv[1]; sys.argv=['ddsslam.py','--config',cfg]
+runpy.run_path('ddsslam.py', run_name='__main__')
+PY
     make_video "$RUN" "$DDIR" "$VT" "$LW/${CELL}_6panel.mp4"
-    if [ "$VT" = "super" ]; then
-      python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$RUN" \
-        --name "$CELL" --sequence "Lab1 (trail3)" 2>&1 | tee "$LW/render_metrics.txt" || say "  WARN render-eval"
-    fi
-    local CK=$(ls -t "$RUN"/checkpoint*.pt 2>/dev/null | head -1); [ -n "$CK" ] && cp "$CK" "$LW/checkpoint.pt"
+    [ "$VT" = "super" ] && { python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$RUN" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"; }
+    CK=$(ls -t "$RUN"/checkpoint*.pt 2>/dev/null | head -1); [ -n "$CK" ] && cp "$CK" "$LW/checkpoint.pt"
     cp "$RUN"/est_c2w_data.txt "$RUN"/output.txt "$LW/" 2>/dev/null || true
     mkdir -p "$LW/frames_sample" "$LW/uncert_sample"
     for f in $(ls "$RUN"/[0-9]*.jpg 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/frames_sample/" 2>/dev/null; done
     for f in $(ls "$RUN"/uncert/[0-9]*.png 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/uncert_sample/" 2>/dev/null; done
-    tar czf "$DST/payload.tgz.partial" -C "$LW" . && mv "$DST/payload.tgz.partial" "$DST/payload.tgz"; sync; touch "$DST/.DONE"
-    say "  $CELL shipped"
-  done
+    echo "=== $CELL DONE $(date -Iseconds) ==="
+  } > "$DST/run.log" 2>&1
+  cp "$DST/run.log" "$LW/run.log" 2>/dev/null || true
+  tar czf "$DST/payload.tgz.partial" -C "$LW" . && mv "$DST/payload.tgz.partial" "$DST/payload.tgz"
+  sync; touch "$DST/.DONE"; say "  $CELL shipped (log: $CELL/run.log)"
 }
 
 # ---------------------------------------------------------------------------
@@ -204,16 +213,26 @@ cd "$REPO"; activate_dds_env
 parity_gate
 stage_semsup; crcd_stage || true
 
-if [ -d "$REPO/data/CRCD/C1_001/video_frames" ]; then
-  say "########## CRCD c1_001 A/B (canonical base; per-frame Sim3 ATE) ##########"
-  run_cell c1_001_canon_base   CRCD data/CRCD/C1_001 crcd
-  run_cell c1_001_canon_uncert CRCD data/CRCD/C1_001 crcd
-fi
-if [ -d "$REPO/data/Super/trail_3/depth/moge2" ]; then
-  say "########## SemSup trail3_moge2 A/B (our MoGe2; render PSNR/SSIM/LPIPS) ##########"
-  run_cell trail3_moge2_uncert_base Super data/Super/trail_3 super
-  run_cell trail3_moge2_uncert      Super data/Super/trail_3 super
-fi
+# ---- RUN: fan out ALL (cell x seed) jobs, PARALLEL at a time. A single DDS-SLAM run uses
+# ~1-3GB of the A100's 40GB and is CPU-bursty (GPU mostly idle), so concurrency fills the gaps.
+# env + parity + staging above are sequential/once; ONLY the runs parallelize. Override the cap:
+#   PARALLEL=8 bash Addons/colab/a100_improve_ab_20260616.sh   (watch `nvidia-smi`, bump if GPU/CPU spare)
+PARALLEL=${PARALLEL:-4}
+JOBS=()
+add_cell(){ for s in $SEEDS; do JOBS+=("$1|$2|$3|$4|$s"); done; }
+[ -d "$REPO/data/CRCD/C1_001/video_frames" ]      && { add_cell c1_001_canon_base CRCD data/CRCD/C1_001 crcd; add_cell c1_001_canon_uncert CRCD data/CRCD/C1_001 crcd; }
+[ -d "$REPO/data/Super/trail_3/depth/moge2" ]     && { add_cell trail3_moge2_uncert_base Super data/Super/trail_3 super; add_cell trail3_moge2_uncert Super data/Super/trail_3 super; }
+say "########## RUN ${#JOBS[@]} jobs (4 cells x ${SEEDS// /,} seeds), ${PARALLEL} in parallel ##########"
+running=0
+for spec in "${JOBS[@]}"; do
+  IFS='|' read -r n g d v s <<< "$spec"
+  run_one "$n" "$g" "$d" "$v" "$s" &
+  running=$((running+1))
+  if [ "$running" -ge "$PARALLEL" ]; then wait -n; running=$((running-1)); fi   # free a slot before launching the next
+  sleep 3   # stagger CUDA-context creation so launches don't thunder-herd the driver
+done
+wait
+say "########## all ${#JOBS[@]} jobs finished ##########"
 
 # ---------------------------------------------------------------------------
 # SUMMARY: n=3 mean+/-std A/B.  CRCD = Sim3 per-frame ATE; SemSup = render metrics.
