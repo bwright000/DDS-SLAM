@@ -1,0 +1,15 @@
+# Inc-1 v2 (DINO) arm for CRCD C_1/001. Identical to c1_001_canon_uncert (Inc-1 sigma^2 head +
+# Inc-2 pose down-weight ON) EXCEPT the uncertainty signal comes from per-PIXEL DINO features
+# instead of per-POINT geo_feat. The base/geo/dino A/B/C isolates the FEATURE SOURCE.
+# PREREQ: precompute DINO features -> data/CRCD/C1_001/dino/<stem>_dino.npy
+#   python Addons/dino/generate_dino_features.py --rgb_dir data/CRCD/C1_001/video_frames \
+#       --rgb_glob '*l.png' --out_dir data/CRCD/C1_001/dino --backbone dinov2_vits14
+inherit_from: configs/CRCD/c1_001_canon_uncert.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_dino
+  exp_name: demo
+uncertainty:
+  mode: dino
+  dino_dim: 384        # dinov2_vits14 (WildGS-faithful). Set 768 for vitb14 / dinov3_vitb16.
+  dino_subdir: dino
+  hidden_dim: 64       # match WildGS uncertainty MLP (uncertainty_model.py hidden_dim=64)

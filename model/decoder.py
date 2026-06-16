@@ -304,6 +304,49 @@ class EdgeNet_Semantic(nn.Module):
         return nn.Sequential(*nn.ModuleList(edge_net))
 
 
+class UncertaintyDINONet(nn.Module):
+    """Inc-1 v2 — per-PIXEL aleatoric sigma^2 from a C-dim DINO image feature.
+
+    Faithful reimplementation of WildGS-SLAM's uncertainty MLP
+    (WildGS-SLAM/src/utils/dyn_uncertainty/uncertainty_model.py:5-67):
+      * 2 dense layers in_dim->hidden->hidden, ReLU between (their net_depth=2, :14-25),
+      * he_uniform / kaiming_uniform init (:18-19,29),
+      * a final hidden->1 output layer (:28),
+      * softplus to make the output positive (:33,59).
+
+    DELIBERATE DIVERGENCES (each justified, each an A/B knob):
+      1. softplus + 1e-6 FLOOR is applied at the scene_rep call site, NOT here — this net returns
+         the RAW pre-softplus logit. That mirrors v1's raw->softplus split (raw2outputs:140) so the
+         geo-vs-dino A/B isolates the FEATURE SOURCE, not the floor constant. (WildGS floors with
+         clip(.,min=0.1)+1e-3 on sigma; that is a separate one-line A/B knob, not folded in here.)
+      2. dropout default 0 (deterministic est_c2w + Inc-0 bit-identity) vs WildGS's ALWAYS-ON p=0.2
+         (uncertainty_model.py:55). Exposed as uncertainty.dino_dropout for opt-in MC-dropout.
+    SUBSTRATE DIVERGENCE: WildGS is per-pixel Gaussian-splat; we feed the gathered per-RAY DINO
+    feature on a neural-SDF and reuse the EXISTING Inc-1 NLL + Inc-2 down-weight verbatim.
+    """
+    def __init__(self, in_dim, hidden_dim=64, num_layers=2, dropout=0.0):
+        super().__init__()
+        self.dropout = float(dropout)
+        layers = []
+        for l in range(num_layers):
+            lin = nn.Linear(in_dim if l == 0 else hidden_dim, hidden_dim)  # bias ON (WildGS)
+            nn.init.kaiming_uniform_(lin.weight, nonlinearity='relu')      # WildGS he_uniform :19
+            nn.init.zeros_(lin.bias)
+            layers.append(lin)
+        self.layers = nn.ModuleList(layers)
+        self.output_layer = nn.Linear(hidden_dim, 1)                       # WildGS :28
+        nn.init.kaiming_uniform_(self.output_layer.weight, nonlinearity='relu')
+        nn.init.zeros_(self.output_layer.bias)
+
+    def forward(self, feat):            # feat: [N, C]  ->  [N, 1] RAW (pre-softplus; floored at call site)
+        x = feat
+        for lin in self.layers:
+            x = torch.nn.functional.relu(lin(x))                          # WildGS :53-54
+            if self.dropout > 0:
+                x = torch.nn.functional.dropout(x, p=self.dropout, training=True)  # WildGS always-on :55
+        return self.output_layer(x)
+
+
 class ColorSDFNet(nn.Module):
     '''
     Color grid + SDF grid
@@ -426,7 +469,10 @@ class ColorSDFNet_v2(nn.Module):
         # color/time/edge/sdf) so the ON run's base backbone draws the SAME RNG as base -> base-vs-uncert
         # is a CLEAN single-variable A/B (only the head differs; fixes the audit's init-parity confound).
         # Off-path: no module built -> bit-identical base -> Inc-0 harness PASSES.
-        if config.get('uncertainty', {}).get('enable', False):
+        # v2 (mode:'dino') does NOT build this per-point head — it uses the per-PIXEL DINO head on
+        # scene_rep instead (UncertaintyDINONet). So geo+off keep the v1 head exactly; dino skips it.
+        if config.get('uncertainty', {}).get('enable', False) \
+                and config.get('uncertainty', {}).get('mode', 'geo') == 'geo':
             self.uncertainty_net = EdgeNet_Semantic(config,
                                 input_ch=input_ch_pos,
                                 geo_feat_dim=config['decoder']['geo_feat_dim'],

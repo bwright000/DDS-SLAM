@@ -121,6 +121,10 @@ mesh:
 # Full design: Addons/docs/ARM2_STACK_DRAFT_20260614.md  diagram: Addons/docs/arm2_architecture.png
 uncertainty:          # WildGS-style learnt attribution (Inc-1/2/3) — the learnt core
   enable: false
+  mode: geo           # Inc-1 v2: 'geo' (v1 per-POINT head on geo_feat, DEFAULT) | 'dino' (v2 per-PIXEL head on DINO feat)
+  dino_dim: 0         # DINO feature channel C (384=dinov2-vits14/WildGS-faithful, 768=vitb14/dinov3). REQUIRED for mode:dino.
+  dino_subdir: dino   # per-frame DINO feature dir under datadir (mirrors data.depth_subdir); files <stem>_dino.npy
+  dino_dropout: 0.0   # 0 = deterministic (default, Inc-0-safe). 0.2 = WildGS always-on MC-dropout (opt-in).
   hidden_dim: 32
   num_layers: 2
   nll_weight: 0       # Inc-1: aleatoric NLL loss weight (0 = head not trained = base). Set >0 (e.g. 0.1) to enable.
