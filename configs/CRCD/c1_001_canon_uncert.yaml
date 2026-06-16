@@ -1,0 +1,25 @@
+# C_1/001 A/B TREATMENT on the CANONICAL base (crcd_basecanon = crcd.yaml + authors'
+# surgical lr 1e-4) + Inc-1/2 uncertainty ON. The ONLY delta vs c1_001_canon_base is
+# the uncertainty head -> the metric delta is attributable to JUST our improvement.
+#   Inc-1: learnt per-ray aleatoric sigma^2 (mirrors edge head), NLL-trained on mapping residual.
+#   Inc-2: TRACKING-ONLY pose down-weight weights=clip(1/sigma^2,w_min,w_max).detach().
+# WHY C_1/001: base tracks it WELL overall but pose error SPIKES at deformation moments;
+# the hedge works if Inc-2 cuts those spikes (per-frame ATE max/p90), not the mean.
+inherit_from: configs/CRCD/crcd_basecanon.yaml
+timesteps: 360
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_canon_uncert
+  exp_name: demo
+uncertainty:
+  enable: true
+  hidden_dim: 32
+  num_layers: 2
+  nll_weight: 0.1
+  w_min: 0.1
+  w_max: 10.0
+  detach_pose_weight: true

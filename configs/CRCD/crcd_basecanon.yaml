@@ -1,0 +1,18 @@
+# CANONICAL IMPROVE BASE (locked 2026-06-16, user direction).
+# = crcd.yaml EXACTLY (authors' model logic + our documented CRCD config:
+#   hash19 / voxel_sdf0.001 / n_range_d16 / paper intrinsics) with the ONE
+#   change the authors THEMSELVES use for their surgical Super data:
+#   lr_rot/lr_trans 1e-3 -> 1e-4 (Super.yaml uses 1e-4 for surgical sequences;
+#   CRCD is surgical; 1e-3 is the F1 catastrophic-tracking regime on CRCD).
+# NOTHING ELSE is changed vs crcd.yaml (iters 20, first_iters 1000, freq 12 ALL
+# stay at the crcd.yaml value) so the Inc-1/2 A/B reads JUST the uncertainty head
+# against an authors-faithful base. render_freq:1 for the inline 6-panel video.
+# Model logic stays pristine (parity-gated vs IRMVLab 009977b at run time).
+inherit_from: configs/CRCD/crcd.yaml
+render_freq: 1
+mapping:
+  lr_rot: 0.0001
+  lr_trans: 0.0001
+tracking:
+  lr_rot: 0.0001
+  lr_trans: 0.0001

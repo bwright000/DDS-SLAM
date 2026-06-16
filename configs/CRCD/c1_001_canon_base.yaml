@@ -1,0 +1,16 @@
+# C_1/001 A/B CONTROL on the CANONICAL base (crcd_basecanon = crcd.yaml + authors'
+# surgical lr 1e-4). uncertainty OFF -> head NOT constructed -> bit-identical to the
+# pristine-logic base. This is the "DDS-SLAM as authors intended" baseline for the
+# Inc-1/2 improvement read. Per-snippet overrides ONLY (bound/datadir/timesteps).
+inherit_from: configs/CRCD/crcd_basecanon.yaml
+timesteps: 360                                 # full authoritative slice (F: GT, not stale local 271)
+mapping:
+  bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+  marching_cubes_bound: [[-0.08,0.13],[-0.02,0.18],[0.68,0.90]]
+data:
+  datadir: data/CRCD/C1_001
+  trainskip: 1
+  output: output/CRCD/C1_001_canon_base
+  exp_name: demo
+uncertainty:
+  enable: false
