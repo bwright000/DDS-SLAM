@@ -137,19 +137,21 @@ def load_trajectory(est_path, gt_path=None, gt_frames=None):
     return est_xyz, gt_xyz
 
 
-def horn_align(model, data):
-    """Horn's method: find rigid transform from model to data (both 3xN)."""
-    model_zc = model - model.mean(1, keepdims=True)
-    data_zc = data - data.mean(1, keepdims=True)
-    W = model_zc @ data_zc.T
-    U, d, Vh = np.linalg.svd(W.T)
-    S = np.eye(3)
-    if np.linalg.det(U) * np.linalg.det(Vh) < 0:
-        S[2, 2] = -1
-    rot = U @ S @ Vh
-    trans = data.mean(1, keepdims=True) - rot @ model.mean(1, keepdims=True)
-    aligned = rot @ model + trans
-    return aligned.T
+def horn_align(model, data, with_scale=True):
+    """Umeyama alignment of model->data (both 3xN). with_scale=True => Sim3: ALSO recovers the
+    SCALE factor s. This is essential when the estimate is up-to-scale (e.g. CRCD MoGe-depth runs,
+    where est is ~7x the GT scale) — rigid Horn leaves the est dwarfing the GT so the trajectories
+    don't overlay. Sim3 scales est onto GT so they line up. with_scale=False => rigid SE3.
+    Returns [N,3]. Same Sim3 the runbook ATE uses (verified)."""
+    m, d = model.T, data.T                          # [N,3]
+    mc, dc = m.mean(0), d.mean(0)
+    mm, dd = m - mc, d - dc
+    H = mm.T @ dd
+    U, S, Vt = np.linalg.svd(H)
+    sgn = np.sign(np.linalg.det(Vt.T @ U.T))
+    R = Vt.T @ np.diag([1, 1, sgn]) @ U.T
+    sc = (S * np.array([1, 1, sgn])).sum() / (mm * mm).sum() if with_scale else 1.0
+    return (sc * (R @ m.T)).T + (dc - sc * R @ mc)  # [N,3]
 
 
 # CRCD 4-class palette (RGB): bg=black (not overlaid), Liver=green, Gallbladder=blue, Tool=red.
@@ -429,8 +431,8 @@ def main():
 
     if args.trajectory_est:
         if not args.skip_horn_traj:
-            panels.append('Trajectory (Horn-aligned)')
-            print("Trajectory: enabled (Horn-aligned)")
+            panels.append('Trajectory (Sim3-aligned)')
+            print("Trajectory: enabled (Sim3-aligned)")
         if args.trajectory_raw:
             panels.append('Trajectory Raw')
             print("Trajectory Raw: enabled (no alignment)")
@@ -462,7 +464,7 @@ def main():
             gt_all = np.array(gt_all)
             gt_xyz = eval(f"gt_all[{args.gt_frame_slice}]")[:len(est_xyz)]
         if not args.skip_horn_traj:
-            panel_lengths['Trajectory (Horn-aligned)'] = len(est_xyz)
+            panel_lengths['Trajectory (Sim3-aligned)'] = len(est_xyz)
         if args.trajectory_raw:
             panel_lengths['Trajectory Raw'] = len(est_xyz)
 
@@ -513,7 +515,7 @@ def main():
             y0 = row * panel_size[0]
             x0 = col * panel_size[1]
 
-            if panel_name == 'Trajectory (Horn-aligned)':
+            if panel_name == 'Trajectory (Sim3-aligned)':
                 pose_idx = min(frame_idx * trajectory_stride, len(est_xyz) - 1)
                 azim = frame_idx * args.rotation_speed
                 img = render_trajectory_frame(est_xyz, gt_xyz, pose_idx,
