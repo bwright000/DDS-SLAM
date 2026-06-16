@@ -30,7 +30,7 @@ PARALLEL=${PARALLEL:-2}                        # CONSERVATIVE: sharing GPU/CPU w
 NPROC=$(nproc 2>/dev/null || echo 8)
 THREADS=${THREADS:-2}
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
-say "  CPU threads/job capped at $THREADS (nproc=$NPROC). Co-scheduled with IMPROVE? keep total jobs*threads <= $NPROC."
+# (threads/co-scheduling note is in the start banner below; say() is not defined yet at this line)
 DDIR=data/Super/trail_3
 DRIVE=/content/drive/MyDrive/Outputs/a100_fix_time_${DATE}
 LWORK=/content/fixtime; mkdir -p "$DRIVE" "$LWORK"
@@ -38,7 +38,7 @@ LOG="$DRIVE/runbook.log"; exec > >(tee -a "$LOG") 2>&1
 say(){ echo ""; echo "[$(date +%H:%M:%S)] $*"; }
 done_marker(){ [ -f "$1/.DONE" ]; }
 cd "$REPO"
-say "=== FIX-ARM time A/B/C start $(date -Iseconds)  HEAD=$(git rev-parse --short HEAD)  PARALLEL=$PARALLEL ==="
+say "=== FIX-ARM time A/B/C start $(date -Iseconds)  HEAD=$(git rev-parse --short HEAD)  PARALLEL=$PARALLEL  THREADS=$THREADS/job (nproc=$NPROC; co-scheduled? keep improve+fix jobs*threads <= $NPROC) ==="
 [ -d /content/drive/MyDrive ] || { say "FATAL: Drive not mounted"; exit 1; }
 
 # ---- env: SHARED session — verify only, do NOT rebuild ----
@@ -69,7 +69,7 @@ run_one(){ local CFG=$1 S=$2
   local CELL="${CFG}_s${S}" DST="$DRIVE/${CFG}_s${S}" LW="$LWORK/${CFG}_s${S}"
   done_marker "$DST" && { say "  $CELL already done -> skip"; return 0; }
   mkdir -p "$LW" "$DST"
-  local OUT="output/_fixtime/${CELL}" OVR="/content/_fixcfg_${CELL}.yaml" RUN="output/_fixtime/${CELL}/demo"
+  local OUT="output/_fixtime/${CELL}" OVR="/content/_fixcfg_${CELL}.yaml" RUN="output/_fixtime/${CELL}/demo" PYRC=1 NPOSE=0
   cat > "$OVR" <<YML
 inherit_from: configs/Super/${CFG}.yaml
 seed: ${S}
@@ -87,6 +87,7 @@ torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS', '2')))   # avoid CPU
 cfg=sys.argv[1]; sys.argv=['ddsslam.py','--config',cfg]
 runpy.run_path('ddsslam.py', run_name='__main__')
 PY
+    PYRC=$?; [ "$PYRC" -ne 0 ] && echo "!!! TRAIN CRASHED rc=$PYRC -- this cell will NOT be marked .DONE"
     make_video "$RUN" "$LW/${CELL}_6panel.mp4"
     python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$RUN" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"
     CK=$(ls -t "$RUN"/checkpoint*.pt 2>/dev/null | head -1); [ -n "$CK" ] && cp "$CK" "$LW/checkpoint.pt"
@@ -96,7 +97,13 @@ PY
   } > "$LW/run.log" 2>&1
   cp "$LW/run.log" "$DST/run.log" 2>/dev/null || true
   tar czf "$DST/payload.tgz.partial" -C "$LW" . && mv "$DST/payload.tgz.partial" "$DST/payload.tgz"
-  sync; touch "$DST/.DONE"; say "  $CELL shipped (live log: $LW/run.log)"
+  NPOSE=$(grep -cvE '^[[:space:]]*#|^[[:space:]]*$' "$RUN/est_c2w_data.txt" 2>/dev/null); NPOSE=${NPOSE:-0}
+  if [ "${PYRC:-1}" -eq 0 ] && [ "${NPOSE:-0}" -ge 1 ]; then
+    sync; touch "$DST/.DONE"; rm -f "$DST/.FAILED"; say "  $CELL shipped OK (${NPOSE} poses)"
+  else
+    rm -f "$DST/.DONE"; echo "rc=${PYRC:-?} npose=${NPOSE:-0} $(date -Iseconds)" > "$DST/.FAILED"
+    say "  $CELL FAILED (rc=${PYRC:-?}, ${NPOSE:-0} poses) -> will RE-RUN next launch. see $LW/run.log"
+  fi
 }
 
 # ---- fan out timeA/B/C x seeds ----

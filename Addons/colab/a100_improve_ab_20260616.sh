@@ -177,7 +177,7 @@ run_one(){ local NAME=$1 GRP=$2 DDIR=$3 VT=$4 S=$5
   local CELL="${NAME}_s${S}" DST="$DRIVE/${NAME}_s${S}" LW="$LWORK/${NAME}_s${S}"
   done_marker "$DST" && { say "  $CELL already done -> skip"; return 0; }
   mkdir -p "$LW" "$DST"
-  local OUT="output/_a100/${CELL}" OVR="/content/_cfg_${CELL}.yaml" RUN="output/_a100/${CELL}/demo"
+  local OUT="output/_a100/${CELL}" OVR="/content/_cfg_${CELL}.yaml" RUN="output/_a100/${CELL}/demo" PYRC=1 NPOSE=0
   cat > "$OVR" <<YML
 inherit_from: configs/${GRP}/${NAME}.yaml
 seed: ${S}
@@ -195,6 +195,7 @@ torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS', '2')))   # avoid CPU
 cfg=sys.argv[1]; sys.argv=['ddsslam.py','--config',cfg]
 runpy.run_path('ddsslam.py', run_name='__main__')
 PY
+    PYRC=$?; [ "$PYRC" -ne 0 ] && echo "!!! TRAIN CRASHED rc=$PYRC -- this cell will NOT be marked .DONE"
     make_video "$RUN" "$DDIR" "$VT" "$LW/${CELL}_6panel.mp4"
     [ "$VT" = "super" ] && { python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$RUN" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"; }
     CK=$(ls -t "$RUN"/checkpoint*.pt 2>/dev/null | head -1); [ -n "$CK" ] && cp "$CK" "$LW/checkpoint.pt"
@@ -206,7 +207,13 @@ PY
   } > "$LW/run.log" 2>&1
   cp "$LW/run.log" "$DST/run.log" 2>/dev/null || true
   tar czf "$DST/payload.tgz.partial" -C "$LW" . && mv "$DST/payload.tgz.partial" "$DST/payload.tgz"
-  sync; touch "$DST/.DONE"; say "  $CELL shipped (live log: $LW/run.log)"
+  NPOSE=$(grep -cvE '^[[:space:]]*#|^[[:space:]]*$' "$RUN/est_c2w_data.txt" 2>/dev/null); NPOSE=${NPOSE:-0}
+  if [ "${PYRC:-1}" -eq 0 ] && [ "${NPOSE:-0}" -ge 1 ]; then
+    sync; touch "$DST/.DONE"; rm -f "$DST/.FAILED"; say "  $CELL shipped OK (${NPOSE} poses)"
+  else
+    rm -f "$DST/.DONE"; echo "rc=${PYRC:-?} npose=${NPOSE:-0} $(date -Iseconds)" > "$DST/.FAILED"
+    say "  $CELL FAILED (rc=${PYRC:-?}, ${NPOSE:-0} poses) -> will RE-RUN next launch. see $LW/run.log"
+  fi
 }
 
 # ---------------------------------------------------------------------------
