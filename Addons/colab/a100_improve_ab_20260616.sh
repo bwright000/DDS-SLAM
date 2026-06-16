@@ -163,7 +163,7 @@ make_video(){ local RUN=$1 DDIR=$2 VT=$3 OUT=$4
     --depth_output_dir "$RUN/depth" --depth_norm robust \
     --seg_dir "$SEG" --seg_pattern "$SEGP" --skip_raw_seg $SEGEXTRA \
     --uncert_dir "$RUN/uncert" \
-    --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$GT" --trajectory_raw \
+    --trajectory_est "$RUN/demo/est_c2w_data.txt" --trajectory_gt "$GT" --trajectory_raw \
     --output "$OUT" --fps 15 2>&1 || echo "WARN video failed ($OUT)"
 }
 
@@ -196,13 +196,16 @@ cfg=sys.argv[1]; sys.argv=['ddsslam.py','--config',cfg]
 runpy.run_path('ddsslam.py', run_name='__main__')
 PY
     PYRC=$?; [ "$PYRC" -ne 0 ] && echo "!!! TRAIN CRASHED rc=$PYRC -- this cell will NOT be marked .DONE"
-    make_video "$RUN" "$DDIR" "$VT" "$LW/${CELL}_6panel.mp4"
-    [ "$VT" = "super" ] && { python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$RUN" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"; }
+    # NOTE: ddsslam writes renders to $OUT/*.jpg, depth to $OUT/depth, uncert to $OUT/uncert (the
+    # config output root); est_c2w + checkpoint go to $OUT/demo ($RUN). Eval/video read renders from
+    # $OUT (NOT $RUN) -- pointing them at $RUN/demo gave the bogus "3 images" PSNR.
+    make_video "$OUT" "$DDIR" "$VT" "$LW/${CELL}_6panel.mp4"
+    [ "$VT" = "super" ] && { python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$OUT" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"; }
     CK=$(ls -t "$RUN"/checkpoint*.pt 2>/dev/null | head -1); [ -n "$CK" ] && cp "$CK" "$LW/checkpoint.pt"
     cp "$RUN"/est_c2w_data.txt "$RUN"/output.txt "$LW/" 2>/dev/null || true
     mkdir -p "$LW/frames_sample" "$LW/uncert_sample"
-    for f in $(ls "$RUN"/[0-9]*.jpg 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/frames_sample/" 2>/dev/null; done
-    for f in $(ls "$RUN"/uncert/[0-9]*.png 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/uncert_sample/" 2>/dev/null; done
+    for f in $(ls "$OUT"/[0-9]*.jpg 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/frames_sample/" 2>/dev/null; done
+    for f in $(ls "$OUT"/uncert/[0-9]*.png 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/uncert_sample/" 2>/dev/null; done
     echo "=== $CELL DONE $(date -Iseconds) ==="
   } > "$LW/run.log" 2>&1
   cp "$LW/run.log" "$DST/run.log" 2>/dev/null || true

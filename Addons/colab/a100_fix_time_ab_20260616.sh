@@ -60,7 +60,7 @@ make_video(){ local RUN=$1 OUT=$2
     --depth_input_dir "$DDIR/depth/moge2" \
     --depth_output_dir "$RUN/depth" --depth_norm robust \
     --seg_dir "$DDIR/seg/png_masks" --seg_pattern '*left.png' --skip_raw_seg \
-    --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DDIR/groundtruth.txt" --trajectory_raw --skip_horn_traj \
+    --trajectory_est "$RUN/demo/est_c2w_data.txt" --trajectory_gt "$DDIR/groundtruth.txt" --trajectory_raw --skip_horn_traj \
     --output "$OUT" --fps 15 2>&1 || echo "WARN video failed ($OUT)"
 }
 
@@ -88,11 +88,12 @@ cfg=sys.argv[1]; sys.argv=['ddsslam.py','--config',cfg]
 runpy.run_path('ddsslam.py', run_name='__main__')
 PY
     PYRC=$?; [ "$PYRC" -ne 0 ] && echo "!!! TRAIN CRASHED rc=$PYRC -- this cell will NOT be marked .DONE"
-    make_video "$RUN" "$LW/${CELL}_6panel.mp4"
-    python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$RUN" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"
+    # renders/depth in $OUT (config root); est/ckpt in $OUT/demo ($RUN). Eval reads renders from $OUT.
+    make_video "$OUT" "$LW/${CELL}_6panel.mp4"
+    python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$OUT" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"
     CK=$(ls -t "$RUN"/checkpoint*.pt 2>/dev/null | head -1); [ -n "$CK" ] && cp "$CK" "$LW/checkpoint.pt"
     cp "$RUN"/est_c2w_data.txt "$RUN"/output.txt "$LW/" 2>/dev/null || true
-    mkdir -p "$LW/frames_sample"; for f in $(ls "$RUN"/[0-9]*.jpg 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/frames_sample/" 2>/dev/null; done
+    mkdir -p "$LW/frames_sample"; for f in $(ls "$OUT"/[0-9]*.jpg 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/frames_sample/" 2>/dev/null; done
     echo "=== $CELL DONE $(date -Iseconds) ==="
   } > "$LW/run.log" 2>&1
   cp "$LW/run.log" "$DST/run.log" 2>/dev/null || true
