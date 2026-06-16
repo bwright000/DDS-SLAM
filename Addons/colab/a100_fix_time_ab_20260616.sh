@@ -23,6 +23,14 @@ DATE=$(date +%Y%m%d)
 REPO=/content/DDS-SLAM
 SEEDS="0 1 2"                                  # field is bistable -> n=3 to not be fooled by a seed
 PARALLEL=${PARALLEL:-2}                        # CONSERVATIVE: sharing GPU/CPU with the IMPROVE run
+# Cap CPU threads/job — PyTorch/OpenMP default to ALL cores, so parallel jobs oversubscribe ~Nx
+# (the GPU is idle; the CPU thrashes). This is the SECONDARY run sharing the box with the IMPROVE
+# run, so default to a small, polite value. The two runbooks DON'T coordinate threads: keep
+# (improve_jobs*improve_threads + fix_jobs*THREADS) <= nproc. Running ALONE? set THREADS=$((nproc/PARALLEL)).
+NPROC=$(nproc 2>/dev/null || echo 8)
+THREADS=${THREADS:-2}
+export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
+say "  CPU threads/job capped at $THREADS (nproc=$NPROC). Co-scheduled with IMPROVE? keep total jobs*threads <= $NPROC."
 DDIR=data/Super/trail_3
 DRIVE=/content/drive/MyDrive/Outputs/a100_fix_time_${DATE}
 LWORK=/content/fixtime; mkdir -p "$DRIVE" "$LWORK"
@@ -72,9 +80,10 @@ YML
   {
     echo "=== $CELL START $(date -Iseconds) ==="
     python -W ignore - "$OVR" <<'PY'
-import sys, runpy, torch
+import os, sys, runpy, torch
 torch.backends.cuda.matmul.allow_tf32=False
 torch.backends.cudnn.allow_tf32=False
+torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS', '2')))   # avoid CPU oversubscription across parallel jobs
 cfg=sys.argv[1]; sys.argv=['ddsslam.py','--config',cfg]
 runpy.run_path('ddsslam.py', run_name='__main__')
 PY
@@ -84,10 +93,10 @@ PY
     cp "$RUN"/est_c2w_data.txt "$RUN"/output.txt "$LW/" 2>/dev/null || true
     mkdir -p "$LW/frames_sample"; for f in $(ls "$RUN"/[0-9]*.jpg 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/frames_sample/" 2>/dev/null; done
     echo "=== $CELL DONE $(date -Iseconds) ==="
-  } > "$DST/run.log" 2>&1
-  cp "$DST/run.log" "$LW/run.log" 2>/dev/null || true
+  } > "$LW/run.log" 2>&1
+  cp "$LW/run.log" "$DST/run.log" 2>/dev/null || true
   tar czf "$DST/payload.tgz.partial" -C "$LW" . && mv "$DST/payload.tgz.partial" "$DST/payload.tgz"
-  sync; touch "$DST/.DONE"; say "  $CELL shipped (log: $CELL/run.log)"
+  sync; touch "$DST/.DONE"; say "  $CELL shipped (live log: $LW/run.log)"
 }
 
 # ---- fan out timeA/B/C x seeds ----

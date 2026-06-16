@@ -188,9 +188,10 @@ YML
   {   # ---- everything for THIS job into its own log (parallel-safe) ----
     echo "=== $CELL START $(date -Iseconds) (seed $S, $GRP/$NAME) ==="
     python -W ignore - "$OVR" <<'PY'
-import sys, runpy, torch
+import os, sys, runpy, torch
 torch.backends.cuda.matmul.allow_tf32=False
 torch.backends.cudnn.allow_tf32=False
+torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS', '2')))   # avoid CPU oversubscription across parallel jobs
 cfg=sys.argv[1]; sys.argv=['ddsslam.py','--config',cfg]
 runpy.run_path('ddsslam.py', run_name='__main__')
 PY
@@ -202,10 +203,10 @@ PY
     for f in $(ls "$RUN"/[0-9]*.jpg 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/frames_sample/" 2>/dev/null; done
     for f in $(ls "$RUN"/uncert/[0-9]*.png 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/uncert_sample/" 2>/dev/null; done
     echo "=== $CELL DONE $(date -Iseconds) ==="
-  } > "$DST/run.log" 2>&1
-  cp "$DST/run.log" "$LW/run.log" 2>/dev/null || true
+  } > "$LW/run.log" 2>&1
+  cp "$LW/run.log" "$DST/run.log" 2>/dev/null || true
   tar czf "$DST/payload.tgz.partial" -C "$LW" . && mv "$DST/payload.tgz.partial" "$DST/payload.tgz"
-  sync; touch "$DST/.DONE"; say "  $CELL shipped (log: $CELL/run.log)"
+  sync; touch "$DST/.DONE"; say "  $CELL shipped (live log: $LW/run.log)"
 }
 
 # ---------------------------------------------------------------------------
@@ -218,6 +219,13 @@ stage_semsup; crcd_stage || true
 # env + parity + staging above are sequential/once; ONLY the runs parallelize. Override the cap:
 #   PARALLEL=8 bash Addons/colab/a100_improve_ab_20260616.sh   (watch `nvidia-smi`, bump if GPU/CPU spare)
 PARALLEL=${PARALLEL:-4}
+# Cap CPU threads PER job: PyTorch/OpenMP/MKL each default to ALL cores for intra-op work, so N
+# parallel processes oversubscribe ~Nx -> ~Nx slower per iter (the GPU is idle; the CPU thrashes).
+# threads ~= cores/PARALLEL keeps total threads ~= cores.
+NPROC=$(nproc 2>/dev/null || echo 8)
+THREADS=${THREADS:-$(( NPROC/PARALLEL > 0 ? NPROC/PARALLEL : 1 ))}
+export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
+say "  CPU threads/job capped at $THREADS (nproc=$NPROC / PARALLEL=$PARALLEL) to avoid oversubscription"
 JOBS=()
 add_cell(){ for s in $SEEDS; do JOBS+=("$1|$2|$3|$4|$s"); done; }
 [ -d "$REPO/data/CRCD/C1_001/video_frames" ]      && { add_cell c1_001_canon_base CRCD data/CRCD/C1_001 crcd; add_cell c1_001_canon_uncert CRCD data/CRCD/C1_001 crcd; }
