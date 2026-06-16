@@ -152,6 +152,45 @@ def horn_align(model, data):
     return aligned.T
 
 
+# CRCD 4-class palette (RGB): bg=black (not overlaid), Liver=green, Gallbladder=blue, Tool=red.
+CLASS_PALETTE = {0: (0, 0, 0), 1: (40, 200, 60), 2: (60, 120, 230), 3: (230, 60, 60)}
+
+
+def colorize_classmap(seg, palette=CLASS_PALETTE):
+    """Map a single-channel class-index image (values 0..K) to an RGB image via a palette.
+    bg (0) -> black so overlay_mask_on_rgb leaves it unblended (sum==0). Exact per-class
+    lookup (no interpolation), so call BEFORE any resize of the index map."""
+    if seg.ndim == 3:
+        seg = seg[..., 0]
+    out = np.zeros((seg.shape[0], seg.shape[1], 3), dtype=np.uint8)
+    for k, c in palette.items():
+        out[seg == k] = c
+    return out
+
+
+def colormap_scalar(path, target_size=None, cmap=cv2.COLORMAP_INFERNO, robust=True):
+    """Colormap a single-channel scalar map (e.g. the model's volume-rendered sigma^2
+    uncertainty saved as uint16). robust=True -> median-anchored p2..p98 so a few hot
+    pixels don't flatten the bulk. INFERNO: dark=confident, bright=uncertain."""
+    img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        return None
+    f = np.squeeze(img).astype(np.float32)
+    valid = f[f > 0]
+    if len(valid) == 0:
+        colored = np.zeros((f.shape[0], f.shape[1], 3), dtype=np.uint8)
+    else:
+        if robust:
+            vmin, vmax = np.percentile(valid, 2), np.percentile(valid, 98)
+        else:
+            vmin, vmax = valid.min(), valid.max()
+        norm = np.clip((f - vmin) / (vmax - vmin + 1e-8) * 255, 0, 255).astype(np.uint8)
+        colored = cv2.cvtColor(cv2.applyColorMap(norm, cmap), cv2.COLOR_BGR2RGB)
+    if target_size and colored.shape[:2] != target_size:
+        colored = cv2.resize(colored, (target_size[1], target_size[0]))
+    return colored
+
+
 def overlay_mask_on_rgb(rgb, mask, alpha=0.5):
     """Blend coloured mask over RGB."""
     if rgb.dtype != np.uint8:
@@ -307,6 +346,14 @@ def main():
                         help='Suppress the raw Segmentation panel; show only the Seg Overlay. '
                              'Use when --seg_dir contains rich semantic maps you only want '
                              'compositted on the rendered RGB, not displayed separately.')
+    parser.add_argument('--seg_classmap', action='store_true',
+                        help='Treat --seg_dir images as single-channel class-index maps '
+                             '(CRCD semantic_class: 0=bg,1=Liver,2=Gallbladder,3=Tool) and '
+                             'colorize via the class palette (NEAREST, before resize).')
+    parser.add_argument('--uncert_dir', type=str, default=None,
+                        help='Directory of the model-rendered per-pixel uncertainty (sigma^2) '
+                             'uint16 PNGs (ddsslam output/<exp>/uncert). Adds an "Uncertainty" '
+                             'panel (inferno, robust). Empty/missing dir -> panel omitted.')
     args = parser.parse_args()
 
     panel_size = (args.panel_height, args.panel_width)
@@ -371,6 +418,14 @@ def main():
                 panels.append('Seg Overlay')
                 panel_data['Seg Overlay'] = (panel_data['Rendered RGB'], paths)
                 print(f"Seg Overlay: enabled (rendered RGB + seg)")
+
+    if args.uncert_dir:
+        paths = sorted(glob.glob(os.path.join(args.uncert_dir, '*.png')))
+        paths = _slice(paths, args.input_frame_slice)
+        if paths:
+            panels.append('Uncertainty')
+            panel_data['Uncertainty'] = paths
+            print(f"Uncertainty: {len(paths)} frames")
 
     if args.trajectory_est:
         if not args.skip_horn_traj:
@@ -475,11 +530,24 @@ def main():
                 ri = min(frame_idx, len(rgb_paths) - 1)
                 si = min(frame_idx // panel_stride.get('Segmentation', 1), len(seg_paths) - 1)
                 rgb = load_image(rgb_paths[ri], panel_size)
-                seg = load_image(seg_paths[si], panel_size)
+                if args.seg_classmap:
+                    seg = colorize_classmap(load_image(seg_paths[si], None))   # palette BEFORE resize
+                    seg = cv2.resize(seg, (panel_size[1], panel_size[0]), interpolation=cv2.INTER_NEAREST)
+                else:
+                    seg = load_image(seg_paths[si], panel_size)
                 if rgb is not None and seg is not None:
                     img = overlay_mask_on_rgb(rgb, seg, alpha=args.seg_alpha)
                 else:
                     img = rgb if rgb is not None else seg
+            elif panel_name == 'Segmentation' and args.seg_classmap:
+                paths = panel_data[panel_name]
+                idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
+                img = colorize_classmap(load_image(paths[idx], None))
+                img = cv2.resize(img, (panel_size[1], panel_size[0]), interpolation=cv2.INTER_NEAREST)
+            elif panel_name == 'Uncertainty':
+                paths = panel_data[panel_name]
+                idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
+                img = colormap_scalar(paths[idx], panel_size)
             elif panel_name in ('Input Depth', 'Output Depth'):
                 paths = panel_data[panel_name]
                 idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)

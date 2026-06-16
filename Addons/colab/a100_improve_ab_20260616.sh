@@ -151,15 +151,18 @@ PY
 # 6-panel INLINE video (median-scaled output depth). Auto-discovers panels.
 # ---------------------------------------------------------------------------
 make_video(){ local RUN=$1 DDIR=$2 VT=$3 OUT=$4
-  local RGBIN RGBP DI SEG SEGP GT
-  if [ "$VT" = "crcd" ]; then RGBIN="$DDIR/video_frames"; RGBP='*l.png'; DI="$DDIR/depth"; SEG="$DDIR/semantic_class"; SEGP='*.png'; GT="$DDIR/groundtruth.txt"
+  local RGBIN RGBP DI SEG SEGP GT SEGEXTRA=""
+  if [ "$VT" = "crcd" ]; then RGBIN="$DDIR/video_frames"; RGBP='*l.png'; DI="$DDIR/depth"; SEG="$DDIR/semantic_class"; SEGP='*.png'; GT="$DDIR/groundtruth.txt"; SEGEXTRA="--seg_classmap"
   else RGBIN="$DDIR/rgb"; RGBP='*left.png'; DI="$DDIR/depth/moge2"; SEG="$DDIR/seg/png_masks"; SEGP='*left.png'; GT="$DDIR/groundtruth.txt"; fi
+  # --uncert_dir is harmless on base cells (no uncert/ -> panel omitted); on +uncertainty cells
+  # it adds the model's volume-rendered sigma^2 panel (inferno, robust = the uncertainty render).
   python Addons/viz/generate_video.py \
     --rgb_input_dir "$RGBIN" --rgb_input_pattern "$RGBP" \
     --rgb_output_dir "$RUN" --rgb_output_pattern '[0-9]*.jpg' \
     --depth_input_dir "$DI" \
     --depth_output_dir "$RUN/depth" --depth_norm robust \
-    --seg_dir "$SEG" --seg_pattern "$SEGP" --skip_raw_seg \
+    --seg_dir "$SEG" --seg_pattern "$SEGP" --skip_raw_seg $SEGEXTRA \
+    --uncert_dir "$RUN/uncert" \
     --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$GT" --trajectory_raw \
     --output "$OUT" --fps 15 2>&1 | tee -a "$LOG" || say "  WARN video failed ($OUT)"
 }
@@ -188,7 +191,9 @@ YML
     fi
     local CK=$(ls -t "$RUN"/checkpoint*.pt 2>/dev/null | head -1); [ -n "$CK" ] && cp "$CK" "$LW/checkpoint.pt"
     cp "$RUN"/est_c2w_data.txt "$RUN"/output.txt "$LW/" 2>/dev/null || true
-    mkdir -p "$LW/frames_sample"; for f in $(ls "$RUN"/[0-9]*.jpg 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/frames_sample/" 2>/dev/null; done
+    mkdir -p "$LW/frames_sample" "$LW/uncert_sample"
+    for f in $(ls "$RUN"/[0-9]*.jpg 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/frames_sample/" 2>/dev/null; done
+    for f in $(ls "$RUN"/uncert/[0-9]*.png 2>/dev/null | sort | awk 'NR%30==1'); do cp "$f" "$LW/uncert_sample/" 2>/dev/null; done
     tar czf "$DST/payload.tgz.partial" -C "$LW" . && mv "$DST/payload.tgz.partial" "$DST/payload.tgz"; sync; touch "$DST/.DONE"
     say "  $CELL shipped"
   done

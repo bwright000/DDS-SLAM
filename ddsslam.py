@@ -818,6 +818,7 @@ class DDSSLAM():
 
         rgb = []
         depth_chunks = []
+        sigma_chunks = []   # ARM-2 Inc-1: per-pixel sigma^2 (only when the head is on)
         ray_batch_size = 240
 
         for i in range(0, rays_d.shape[0], ray_batch_size):
@@ -835,6 +836,8 @@ class DDSSLAM():
             rgb.append(ret['rgb'].detach().clone().cpu())
             if 'depth' in ret:
                 depth_chunks.append(ret['depth'].detach().clone().cpu())
+            if 'sigma2' in ret:
+                sigma_chunks.append(ret['sigma2'].detach().clone().cpu())
 
         color = torch.cat(rgb, dim=0)
         color = color.reshape(H, W, 3)
@@ -871,6 +874,21 @@ class DDSSLAM():
                                                    cam_cfg.get('png_depth_scale', 10000.0)))
             depth_uint16 = np.clip(depth_render * output_depth_scale, 0, 65535).astype(np.uint16)
             cv2.imwrite(os.path.join(depth_dir, '{:04d}.png'.format(frame_id)), depth_uint16)
+
+        # ARM-2 Inc-1: save the model's volume-rendered per-pixel uncertainty (sigma^2)
+        # EXACTLY as the model computes it on THIS render -- same estimated pose, same
+        # depth-guided sampling (target_d), same un-normalised rays as the RGB above ->
+        # a faithful "how the model sees its own uncertainty" map. Present ONLY when the
+        # head is on (sigma_chunks empty otherwise), so base runs are byte-unchanged.
+        # uint16 = sigma^2 * uncert_save_scale (recoverable); generate_video.py colormaps
+        # it (inferno, robust p2..p98). Default scale 10000 like output depth.
+        if sigma_chunks:
+            unc_dir = os.path.join(self.config['data']['output'], 'uncert')
+            os.makedirs(unc_dir, exist_ok=True)
+            sig = torch.cat(sigma_chunks, dim=0).reshape(H, W).numpy()
+            unc_scale = float(self.config.get('uncertainty', {}).get('save_scale', 10000.0))
+            sig_uint16 = np.clip(sig * unc_scale, 0, 65535).astype(np.uint16)
+            cv2.imwrite(os.path.join(unc_dir, '{:04d}.png'.format(frame_id)), sig_uint16)
 
 
 if __name__ == '__main__':

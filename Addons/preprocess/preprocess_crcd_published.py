@@ -86,6 +86,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(os.path.join(args.output_dir, "video_frames"), exist_ok=True)
     os.makedirs(os.path.join(args.output_dir, "masks"), exist_ok=True)
+    os.makedirs(os.path.join(args.output_dir, "semantic_class"), exist_ok=True)
 
     # 1. Load rectification maps + write rectified_calib.txt
     maps = load_stereo_maps(args.calib_pkl)
@@ -134,6 +135,12 @@ def main():
             mask = (sem_rect == args.tool_pixel_value).astype(np.uint8) * 255
             out_m = os.path.join(args.output_dir, "masks", f"{i:06d}.png")
             cv2.imwrite(out_m, mask)
+            # Full rectified 4-class map (bg=0, Liver=1, Gallbladder=2, Tool=3 per
+            # info_semantic.json; pixel = coco_id+1) -> drives the seg-overlay video
+            # panel. Saved alongside the binary tool mask; NEAREST-rectified above so
+            # class IDs stay integer. (generate_video.py --seg_classmap colorizes it.)
+            cv2.imwrite(os.path.join(args.output_dir, "semantic_class", f"{i:06d}.png"),
+                        np.clip(sem_rect, 0, 255).astype(np.uint8))
 
     # 4. Copy groundtruth.txt verbatim
     shutil.copy(
