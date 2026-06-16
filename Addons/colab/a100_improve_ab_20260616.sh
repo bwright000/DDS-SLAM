@@ -201,6 +201,11 @@ PY
     # $OUT (NOT $RUN) -- pointing them at $RUN/demo gave the bogus "3 images" PSNR.
     make_video "$OUT" "$DDIR" "$VT" "$LW/${CELL}_6panel.mp4"
     [ "$VT" = "super" ] && { python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$OUT" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"; }
+    # CRCD has REAL GT -> Sim3 ATE (scale-corrected). The pipeline output.txt uses tools/eval_ate.py
+    # which is RIGID (no scale): on up-to-scale MoGe depth that is dominated by the ~8x scale mismatch
+    # and even INVERTS the A/B. sim3_ate.py reports the scale-corrected ATE + scale + path-ratio +
+    # dominant-axis Pearson (the metrics our methodology mandates for sub-SNR CRCD). DO headline these.
+    [ "$VT" != "super" ] && { python Addons/eval/sim3_ate.py --est "$RUN/est_c2w_data.txt" --gt "$DDIR/groundtruth.txt" --name "$CELL" --out "$LW/sim3_metrics.txt" || echo "WARN sim3-ate"; }
     CK=$(ls -t "$RUN"/checkpoint*.pt 2>/dev/null | head -1); [ -n "$CK" ] && cp "$CK" "$LW/checkpoint.pt"
     cp "$RUN"/est_c2w_data.txt "$RUN"/output.txt "$LW/" 2>/dev/null || true
     mkdir -p "$LW/frames_sample" "$LW/uncert_sample"
