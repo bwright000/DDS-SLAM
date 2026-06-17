@@ -94,6 +94,10 @@ def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     dtype = torch.float32 if args.fp32 else torch.float16
     model, patch, family = load_backbone(args.backbone, device, args.dinov3_repo, args.dinov3_weights)
+    if dtype == torch.float16:
+        model = model.half()   # cast MODEL to fp16 too, else conv sees fp16 input vs fp32 bias ->
+                               # "Input type (c10::Half) and bias type (float) should be the same".
+                               # On T4 prefer --fp32 (fp16 DINO convs can NaN; vits14 fp32 is cheap).
     files = sorted(glob.glob(os.path.join(args.rgb_dir, args.rgb_glob)))
     assert files, f'no frames matched {args.rgb_dir}/{args.rgb_glob}'
     print(f'[dino] backbone={args.backbone} family={family} patch={patch} dtype={dtype} '

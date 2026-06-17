@@ -130,7 +130,7 @@ ensure_dino(){ local DD=$1 RGBSUB=$2 GLOB=$3 N=$4
   [ -d "$DD/$RGBSUB" ] || { say "  WARN $DD/$RGBSUB missing -> cannot bake DINO (cell will skip)"; return 1; }
   say "  baking DINOv2 (dinov2_vits14, C=384) from $DD/$RGBSUB (have $have/$N)"
   $DINO_PY "$REPO/Addons/dino/generate_dino_features.py" \
-    --rgb_dir "$DD/$RGBSUB" --rgb_glob "$GLOB" --out_dir "$OUT" --backbone dinov2_vits14 2>&1 | tail -8
+    --rgb_dir "$DD/$RGBSUB" --rgb_glob "$GLOB" --out_dir "$OUT" --backbone dinov2_vits14 --fp32 2>&1 | tail -8
   local now=$(ls "$OUT"/*_dino.npy 2>/dev/null | wc -l)
   [ "$now" -ge "$N" ] && { say "  DINO baked: $now grids"; return 0; } || { say "  WARN DINO bake incomplete ($now/$N)"; return 1; }
 }
