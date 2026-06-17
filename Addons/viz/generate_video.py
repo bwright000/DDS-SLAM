@@ -154,9 +154,8 @@ def horn_align(model, data, with_scale=True):
     return (sc * (R @ m.T)).T + (dc - sc * R @ mc)  # [N,3]
 
 
-# CRCD 4-class palette (RGB): bg=black (not overlaid), Liver=green, Gallbladder=blue, Tool=red.
-CLASS_PALETTE = {0: (0, 0, 0), 1: (40, 200, 60), 2: (60, 120, 230), 3: (230, 60, 60)}
-
+# CRCD 4-class palette (RGB): bg=black (not overlaid), Liver=red, Gallbladder=green, Tool=blue.
+CLASS_PALETTE = {0: (0, 0, 0), 1: (230, 60, 60), 2: (40, 200, 60), 3: (60, 120, 230)}
 
 def colorize_classmap(seg, palette=CLASS_PALETTE):
     """Map a single-channel class-index image (values 0..K) to an RGB image via a palette.
@@ -233,7 +232,7 @@ def render_trajectory_frame(est_xyz, gt_xyz, current_frame, panel_size, azim_off
     if gt_xyz is not None:
         gt_mm = gt_xyz * 1000
         ax.plot(gt_mm[:, 0], gt_mm[:, 1], gt_mm[:, 2],
-                '--', color='#888888', linewidth=1.5, alpha=0.7)
+                '--', color='#888888', linewidth=1.5, alpha=0.9)
 
     # Estimated trail up to current frame (jet colormap)
     if n > 1:

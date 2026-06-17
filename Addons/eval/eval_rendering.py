@@ -54,6 +54,9 @@ PAPER_REFERENCES = {
     # --sequence without argparse errors.
     'CRCD (C1_001)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
     'CRCD (C2_001)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
+    'CRCD (C3_001)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
+    'CRCD (E3_005)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
+    'CRCD (G3_001)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
     'CRCD (F1_002)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
     'CRCD (F3_007)':    {'PSNR': None, 'SSIM': None, 'LPIPS': None},
 }

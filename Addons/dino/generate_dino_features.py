@@ -117,7 +117,6 @@ def main():
         fh.write(f'backbone={args.backbone}\nfamily={family}\npatch={patch}\nC={C}\nn_frames={len(files)}\n')
     print(f'[dino] DONE {len(files)} grids -> {args.out_dir}  (backbone={args.backbone}, C={C}). '
           f'Set uncertainty.dino_dim: {C} in the dino config.')
-
-
+    
 if __name__ == '__main__':
     main()
