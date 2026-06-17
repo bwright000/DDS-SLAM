@@ -105,21 +105,16 @@ class BaseDataset(Dataset):
         raise NotImplementedError()
 
     def _attach_dino(self, ret, index, edge):
-        """Inc-1 v2 (mode:'dino'): load the per-frame DINO feature grid and resample to EXACTLY the
-        final depth shape (interpolate to the full post-downsample FOV, then apply the same crop), so
-        ret['dino'] is pixel-aligned with rgb/depth for any downsample/crop. No-op (no key added) when
-        dino is off -> base/geo bit-identical. Shared by StereoMISDataset + SuperDataset."""
+        """Inc-1 v2 (WildGS-faithful, mode:'dino'): attach the COMPACT DINO patch-grid [gh,gw,C]. The
+        ray sites bilinear-SAMPLE it on-demand at their pixel coords (ddsslam.sample_dino_grid) ->
+        ~13ms vs a 944ms/472MB full-frame upsample, and nothing per-pixel is stored. The grid covers
+        the full image FOV; sites normalise by (H,W) and add any crop offset (crop_edge==0 in our
+        configs). No-op (no key added) when dino is off -> base/geo bit-identical. Shared by
+        StereoMISDataset + SuperDataset."""
         if getattr(self, 'dino_paths', None) is None:
             return ret
-        Hf, Wf = int(ret["depth"].shape[-2]), int(ret["depth"].shape[-1])   # final post-crop shape
-        Hful, Wful = Hf + 2 * edge, Wf + 2 * edge                           # pre-crop full FOV
         grid = np.load(self.dino_paths[index]).astype(np.float32)           # [gh,gw,C] (fp16 on disk)
-        t = torch.from_numpy(grid).permute(2, 0, 1).unsqueeze(0)            # [1,C,gh,gw]
-        t = F.interpolate(t, size=(Hful, Wful), mode='bilinear', align_corners=False)
-        dino = t.squeeze(0).permute(1, 2, 0).contiguous()                   # [Hful,Wful,C]
-        if edge > 0:
-            dino = dino[edge:-edge, edge:-edge]
-        ret["dino"] = dino                                                  # [Hf,Wf,C]
+        ret["dino_grid"] = torch.from_numpy(grid)
         return ret
 
 class StereoMISDataset(BaseDataset):

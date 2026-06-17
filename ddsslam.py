@@ -33,6 +33,23 @@ import matplotlib.pyplot as plt
 
 save_rendering_result=True
 
+
+def sample_dino_grid(grid, hh, ww, H, W):
+    """Inc-1 v2 (WildGS-faithful): bilinear-sample a COMPACT DINO patch-grid [gh,gw,C] at pixel
+    coords (hh,ww) -> per-ray feature [N,C]. Mirrors WildGS's store-grid-then-upsample, but samples
+    ONLY at the rays we use (~13ms vs a 944ms/472MB full-frame upsample). hh/ww are pixel rows/cols
+    in [0,H)x[0,W); the grid covers the full image FOV. Returns on the grid's device (CPU here)."""
+    gh, gw, C = grid.shape
+    g = grid.float().permute(2, 0, 1).unsqueeze(0)                  # [1,C,gh,gw]
+    hh = torch.as_tensor(hh, dtype=torch.float32)
+    ww = torch.as_tensor(ww, dtype=torch.float32)
+    gy = (hh / max(H - 1, 1)) * 2 - 1
+    gx = (ww / max(W - 1, 1)) * 2 - 1
+    coords = torch.stack([gx, gy], dim=-1).view(1, -1, 1, 2)        # [1,N,1,2] (grid_sample x=cols,y=rows)
+    out = F.grid_sample(g, coords, mode='bilinear', align_corners=True)  # [1,C,N,1]
+    return out.squeeze(0).squeeze(-1).permute(1, 0).contiguous()    # [N,C]
+
+
 class DDSSLAM():
     def __init__(self, config):
         self.config = config
@@ -259,7 +276,7 @@ class DDSSLAM():
             target_edge_semantic = batch['edge_semantic'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             target_d = batch['depth'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             # Inc-1 v2: per-ray DINO feature [N,C] (None unless mode:'dino' -> forward stays base/geo).
-            target_dino = batch['dino'].squeeze(0)[indice_h, indice_w, :].to(self.device) if 'dino' in batch else None
+            target_dino = sample_dino_grid(batch['dino_grid'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device) if 'dino_grid' in batch else None
 
             rays_o = c2w[None, :3, -1].repeat(self.config['mapping']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w[:3, :3], -1)
@@ -344,7 +361,7 @@ class DDSSLAM():
             target_edge_semantic = batch['edge_semantic'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             target_d = batch['depth'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             # Inc-1 v2: per-ray DINO feature [N,C] (None unless mode:'dino').
-            target_dino = batch['dino'].squeeze(0)[indice_h, indice_w, :].to(self.device) if 'dino' in batch else None
+            target_dino = sample_dino_grid(batch['dino_grid'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device) if 'dino_grid' in batch else None
 
             rays_o = c2w_est[..., :3, -1].repeat(self.config['mapping']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[: ,:3, :3], -1)
@@ -459,9 +476,9 @@ class DDSSLAM():
             target_s = rays[..., 3:6].to(self.device)
             target_d = rays[..., 6:7].to(self.device)
             target_edge_semantic = rays[..., 7:8].to(self.device)
-            # Inc-1 v2: DINO feature lives in the keyframe-DB ray TAIL [8:8+C] (packed in keyframe.py).
-            # ray_w==8 (base/geo) -> None -> forward untouched.
-            target_dino = rays[..., 8:].to(self.device) if rays.shape[-1] > 8 else None
+            # Inc-1 v2 (WildGS-faithful): global_BA is DINO-FREE -- the head trains via per-frame
+            # current_frame mapping, not the keyframe DB. rays stay width 8, so no sigma2 here.
+            target_dino = None
 
             # [N, Bs, 1, 3] * [N, 1, 3, 3] = (N, Bs, 3)
             rays_d = torch.sum(rays_d_cam[..., None, None, :] * poses_all[ids_all, None, :3, :3], -1)
@@ -588,8 +605,9 @@ class DDSSLAM():
             target_d = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
             target_edge_semantic = batch['edge_semantic'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
             border = batch['border'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
-            # Inc-1 v2: per-ray DINO feature [N,C] (Inc-2 down-weights pose by sigma^2 in tracking).
-            target_dino = batch['dino'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device) if 'dino' in batch else None
+            # Inc-1 v2 (WildGS-faithful): sample the compact DINO grid; tracking samples the ignore-edge
+            # cropped frame, so offset the pixel coords by (iH,iW) into the full-FOV grid.
+            target_dino = sample_dino_grid(batch['dino_grid'].squeeze(0), indice_h + iH, indice_w + iW, self.dataset.H, self.dataset.W).to(self.device) if 'dino_grid' in batch else None
 
             rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1)
@@ -821,9 +839,14 @@ class DDSSLAM():
         # target_edge_semantic = batch['edge_semantic'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
 
         target_edge_semantic = batch['edge_semantic'].squeeze(0).to(self.device).unsqueeze(-1)
-        # Inc-1 v2: full-frame DINO feature flattened [H*W,C] (row-major, matches rays_d.view(-1,3)),
-        # chunked alongside rays below so render_only surfaces the sigma^2 viz. None unless mode:'dino'.
-        target_dino_full = batch['dino'].squeeze(0).reshape(-1, batch['dino'].shape[-1]).to(self.device) if 'dino' in batch else None
+        # Inc-1 v2 (WildGS-faithful): sample the compact DINO grid at ALL pixels (row-major, matching
+        # rays_d.view(-1,3)) -> [H*W,C]; chunked alongside rays below so render surfaces the sigma^2 viz.
+        if 'dino_grid' in batch:
+            _Hh, _Ww = self.dataset.H, self.dataset.W
+            _hh = torch.arange(_Hh).repeat_interleave(_Ww); _ww = torch.arange(_Ww).repeat(_Hh)
+            target_dino_full = sample_dino_grid(batch['dino_grid'].squeeze(0), _hh, _ww, _Hh, _Ww).to(self.device)
+        else:
+            target_dino_full = None
 
         rays_o = c2w_est[..., :3, -1].repeat(H * W, 1)
         rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1).view(-1, 3)
