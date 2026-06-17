@@ -272,7 +272,18 @@ if [ -d "$REPO/data/Super/trail_3/depth/moge2" ]; then
   case " $CELLS " in *" geo "*)  add_cell trail3_moge2_uncert Super data/Super/trail_3 super;; esac
   [ "$HAVE_SEMSUP_DINO" = 1 ] && case " $CELLS " in *" dino "*) add_cell trail3_moge2_uncert_dino Super data/Super/trail_3 super;; esac
 fi
-say "########## RUN ${#JOBS[@]} jobs (cells: $CELLS x ${SEEDS// /,} seeds), $PARALLEL parallel ##########"
+# --- multi-T4 sharding: SHARD=i/N -> this instance runs ONLY matrix jobs where (index % N == i).
+# Launch N Colab T4 instances with SHARD=0/N, SHARD=1/N, ... SHARD=(N-1)/N to cover the full matrix
+# disjointly. They all write the SAME Drive output dir; the per-cell .DONE gating dedupes any overlap,
+# and each instance still runs its own parity + smoke gate (independent env verification).
+SHARD="${SHARD:-0/1}"; SHARD_I="${SHARD%/*}"; SHARD_N="${SHARD#*/}"
+{ [ "$SHARD_N" -ge 1 ] && [ "$SHARD_I" -ge 0 ] && [ "$SHARD_I" -lt "$SHARD_N" ]; } \
+  || { say "FATAL bad SHARD=$SHARD (want i/N with 0<=i<N)"; exit 1; }
+if [ "$SHARD_N" -gt 1 ]; then
+  MINE=(); for i in "${!JOBS[@]}"; do [ $(( i % SHARD_N )) -eq "$SHARD_I" ] && MINE+=("${JOBS[$i]}"); done
+  JOBS=("${MINE[@]}")
+fi
+say "########## RUN ${#JOBS[@]} jobs [shard $SHARD_I/$SHARD_N] (cells: $CELLS x ${SEEDS// /,} seeds), $PARALLEL parallel ##########"
 running=0
 for spec in "${JOBS[@]}"; do
   IFS='|' read -r n g d v s <<< "$spec"
@@ -330,7 +341,7 @@ for cond in ['c1_001_canon_base','c1_001_canon_uncert','c1_001_canon_uncert_dino
         if not os.path.isfile(t): continue
         s=open(t).read()
         def grab(k):
-            m=re.search(k+r'[^0-9-]*([0-9.]+)', s); return float(m.group(1)) if m else None
+            m=re.search(k+r':\s+([0-9][0-9.]*)', s); return float(m.group(1)) if m else None  # 'KEY: <digit>' -> skips [LPIPS]/v[0.1]/'available'
         nf,ps,ss,lp=grab('Rendered'),grab('PSNR'),grab('SSIM'),grab('LPIPS')
         if ps: P.append((ps,ss or 0,lp or 0,nf or 0))
     tag={'c1_001_canon_base':'base','c1_001_canon_uncert':'geo(v1)','c1_001_canon_uncert_dino':'dino(v2)'}[cond]
@@ -345,7 +356,7 @@ for cond in ['trail3_moge2_uncert_base','trail3_moge2_uncert','trail3_moge2_unce
         if not os.path.isfile(t): continue
         s=open(t).read()
         def grab(k):
-            m=re.search(k+r'[^0-9-]*([0-9.]+)', s); return float(m.group(1)) if m else None
+            m=re.search(k+r':\s+([0-9][0-9.]*)', s); return float(m.group(1)) if m else None  # 'KEY: <digit>' -> skips [LPIPS]/v[0.1]/'available'
         ps,ss,lp=grab('PSNR'),grab('SSIM'),grab('LPIPS')
         if ps: P.append((ps,ss or 0,lp or 0))
     tag={'trail3_moge2_uncert_base':'base','trail3_moge2_uncert':'geo(v1)','trail3_moge2_uncert_dino':'dino(v2)'}[cond]

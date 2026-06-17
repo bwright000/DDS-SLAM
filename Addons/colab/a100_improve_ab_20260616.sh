@@ -305,7 +305,7 @@ for cond in ['c1_001_canon_base','c1_001_canon_uncert']:
         if not os.path.isfile(t): continue
         s=open(t).read()
         def grab(k):
-            m=re.search(k+r'[^0-9-]*([0-9.]+)', s); return float(m.group(1)) if m else None
+            m=re.search(k+r':\s+([0-9][0-9.]*)', s); return float(m.group(1)) if m else None  # 'KEY: <digit>' -> skips [LPIPS]/v[0.1]
         nf,ps,ss,lp=grab('Rendered'),grab('PSNR'),grab('SSIM'),grab('LPIPS')
         if ps: P.append((ps,ss or 0,lp or 0,nf or 0))
     if not P: print(f"  {cond:<24} (no render metrics)"); continue
@@ -320,7 +320,7 @@ for cond in ['trail3_moge2_uncert_base','trail3_moge2_uncert']:
         if not os.path.isfile(t): continue
         s=open(t).read()
         def grab(k):
-            m=re.search(k+r'[^0-9-]*([0-9.]+)', s)
+            m=re.search(k+r':\s+([0-9][0-9.]*)', s)   # 'KEY: <digit>' -> skips [LPIPS]/v[0.1]/'available'
             return float(m.group(1)) if m else None
         ps,ss,lp=grab('PSNR'),grab('SSIM'),grab('LPIPS')
         if ps: P.append((ps,ss or 0,lp or 0))
