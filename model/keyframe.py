@@ -7,11 +7,17 @@ class KeyFrameDatabase(object):
         self.config = config
         self.keyframes = {}
         self.device = device
-        # Inc-1 v2: per-ray pack widens by C (DINO feature) appended at the TAIL [8:8+C] ONLY in dino
-        # mode; base layout stays [dir3,rgb3,depth1,edge1]=8 (depth@6, edge@7). off/geo => ray_w=8 =>
-        # keyframe DB byte-identical to base.
+        # Inc-1 v2: storing the C-dim DINO feature on every SAVED ray bloats the keyframe DB ~50x
+        # (e.g. 73 kf x 46080 rays x 392 floats = 5.3 GB) -> RAM swap -> ~50s/iter on a 16GB T4. So by
+        # DEFAULT the DINO tail is NOT stored: the head still trains via the per-FRAME mapping paths
+        # (first/current-frame) + Inc-2 in tracking, and global_BA gets target_dino=None automatically
+        # (its sampled rays stay width 8). Set uncertainty.dino_in_keyframe:true to store it (A100/
+        # large-RAM only, to ALSO train the head in global_BA). off/geo/default => ray_w=8 => DB
+        # byte-identical to base.
         _unc = config.get('uncertainty', {})
-        self.dino_c = int(_unc.get('dino_dim', 0)) if (_unc.get('enable', False) and _unc.get('mode', 'geo') == 'dino') else 0
+        _dino_kf = (_unc.get('enable', False) and _unc.get('mode', 'geo') == 'dino'
+                    and _unc.get('dino_in_keyframe', False))
+        self.dino_c = int(_unc.get('dino_dim', 0)) if _dino_kf else 0
         self.ray_w = 8 + self.dino_c
         self.rays = torch.zeros((num_kf, num_rays_to_save, self.ray_w))
         self.num_rays_to_save = num_rays_to_save
@@ -62,7 +68,7 @@ class KeyFrameDatabase(object):
         # base pack [dir3,rgb3,depth1,edge1]; Inc-1 v2 appends the per-ray DINO feature [C] at the TAIL
         # so depth@6/edge@7 are preserved and the global_BA unpack reads target_dino = rays[..,8:].
         _parts = [batch['direction'], batch['rgb'], batch['depth'][..., None], batch['edge_semantic'][..., None]]
-        if 'dino' in batch:
+        if self.dino_c > 0 and 'dino' in batch:   # only when dino_in_keyframe (OFF by default -> avoids the 5GB DB)
             _parts.append(batch['dino'])
         rays = torch.cat(_parts, dim=-1)
         rays = rays.reshape(1, -1, rays.shape[-1])
