@@ -27,7 +27,7 @@ set -uo pipefail
 DATE=$(date +%Y%m%d)
 REPO=/content/DDS-SLAM
 SEEDS="0 1 2"                                  # field is bistable / seed-sensitive -> n=3 (never trust n=1)
-PARALLEL=${PARALLEL:-2}                        # polite: sharing GPU/CPU with the ARM-1 run
+PARALLEL=${PARALLEL:-1}                        # T4-share: 1 cell/terminal so 3 GPU procs don't OOM (A100: set PARALLEL=2+)
 NPROC=$(nproc 2>/dev/null || echo 8)
 THREADS=${THREADS:-2}                          # co-scheduled: keep (arm1_jobs*arm1_thr + this_jobs*THREADS) <= nproc
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
@@ -42,10 +42,11 @@ cd "$REPO"
 say "=== ARM-2 FIELD DIAGNOSIS start $(date -Iseconds)  HEAD=$(git rev-parse --short HEAD)  PARALLEL=$PARALLEL  THREADS=$THREADS/job (nproc=$NPROC) ==="
 [ -d /content/drive/MyDrive ] || { say "FATAL: Drive not mounted"; exit 1; }
 
-# ---- env: SHARED session — verify only, do NOT rebuild ----
+# ---- env: SHARED session built by t4_setup_shared — verify only, do NOT rebuild ----
+[ -f /content/.dds_setup_done ] || say "WARN: shared setup marker missing -> run t4_setup_shared_20260617.sh first"
 export LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
 python -c "import torch, tinycudann; assert torch.cuda.is_available()" \
-  || { say "FATAL: env not ready. Start the ARM-1 run first (it builds the modern stack + tcnn sm_80)."; exit 1; }
+  || { say "FATAL: env not ready. Run Addons/colab/t4_setup_shared_20260617.sh first (it builds the modern stack + tcnn for the live GPU)."; exit 1; }
 python -c "import lpips" 2>/dev/null || pip install -q lpips || true
 
 # ---- data: reuse what ARM-1 staged — verify, do NOT re-stage ----
