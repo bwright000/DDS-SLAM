@@ -205,7 +205,8 @@ PY
     # which is RIGID (no scale): on up-to-scale MoGe depth that is dominated by the ~8x scale mismatch
     # and even INVERTS the A/B. sim3_ate.py reports the scale-corrected ATE + scale + path-ratio +
     # dominant-axis Pearson (the metrics our methodology mandates for sub-SNR CRCD). DO headline these.
-    [ "$VT" != "super" ] && { python Addons/eval/sim3_ate.py --est "$RUN/est_c2w_data.txt" --gt "$DDIR/groundtruth.txt" --name "$CELL" --out "$LW/sim3_metrics.txt" || echo "WARN sim3-ate"; }
+    [ "$VT" != "super" ] && { python Addons/eval/sim3_ate.py --est "$RUN/est_c2w_data.txt" --gt "$DDIR/groundtruth.txt" --name "$CELL" --out "$LW/sim3_metrics.txt" || echo "WARN sim3-ate"; \
+        python Addons/eval/eval_rendering.py --gt_dir "$DDIR/video_frames" --render_dir "$OUT" --name "$CELL" --sequence "CRCD (C1_001)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN crcd render-eval"; }
     CK=$(ls -t "$RUN"/checkpoint*.pt 2>/dev/null | head -1); [ -n "$CK" ] && cp "$CK" "$LW/checkpoint.pt"
     cp "$RUN"/est_c2w_data.txt "$RUN"/output.txt "$LW/" 2>/dev/null || true
     mkdir -p "$LW/frames_sample" "$LW/uncert_sample"
@@ -296,6 +297,21 @@ for cond in ['c1_001_canon_base','c1_001_canon_uncert']:
     print(f"  {cond:<24} n={len(rows)}  mean={A[:,0].mean():5.2f}+/-{A[:,0].std():.2f}  "
           f"p90={A[:,1].mean():5.2f}+/-{A[:,1].std():.2f}  max={A[:,2].mean():6.2f}+/-{A[:,2].std():.2f}")
 print("  (base seed-std = the kernel-noise floor; uncert helps if its max/p90 mean < base by > that std)")
+print("\n--- CRCD c1_001 render (PSNR/SSIM/LPIPS; frames shown -> spot a mispair) ---")
+for cond in ['c1_001_canon_base','c1_001_canon_uncert']:
+    P=[]
+    for d in sorted(glob.glob(f'{LW}/{cond}_s*')):
+        t=f'{d}/render_metrics.txt'
+        if not os.path.isfile(t): continue
+        s=open(t).read()
+        def grab(k):
+            m=re.search(k+r'[^0-9-]*([0-9.]+)', s); return float(m.group(1)) if m else None
+        nf,ps,ss,lp=grab('Rendered'),grab('PSNR'),grab('SSIM'),grab('LPIPS')
+        if ps: P.append((ps,ss or 0,lp or 0,nf or 0))
+    if not P: print(f"  {cond:<24} (no render metrics)"); continue
+    A=np.array(P)
+    print(f"  {cond:<24} n={len(P)}  PSNR={A[:,0].mean():5.2f}+/-{A[:,0].std():.2f}  "
+          f"SSIM={A[:,1].mean():.3f}  LPIPS={A[:,2].mean():.3f}  (frames~{int(A[:,3].mean())})")
 print("\n--- SemSup trail3_moge2 render (PSNR/SSIM/LPIPS) ---")
 for cond in ['trail3_moge2_uncert_base','trail3_moge2_uncert']:
     P=[]
