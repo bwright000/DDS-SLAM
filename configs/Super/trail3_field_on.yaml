@@ -1,0 +1,8 @@
+# ARM-2 FIELD DIAGNOSIS — cell "field_on": the PRISTINE deformable DDS-SLAM (uncertainty OFF,
+# dynamic:True inherited from Super.yaml, timenet_weight_decay default 1e-6). This is the reference
+# the field_off / field_on_wd0 cells are diffed against. Thin wrapper for naming symmetry only:
+# bit-identical to trail3_moge2_uncert_base.
+inherit_from: configs/Super/trail3_moge2_uncert_base.yaml
+data:
+  output: output/trail3_field_on
+  exp_name: demo

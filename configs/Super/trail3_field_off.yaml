@@ -1,0 +1,11 @@
+# ARM-2 FIELD DIAGNOSIS — cell "field_off": deformation field DISABLED (dynamic:False).
+# SINGLE VARIABLE vs field_on = the deformation field itself. dynamic:False drops the timestamp
+# 4th-column on the ray (ddsslam.py:283/368/487), so render_rays never feeds TimeNet -> the model
+# is static Co-SLAM (canonical map + per-frame pose, NO warp). If field_on ~= field_off on every
+# metric, the field is contributing nothing on the metric (the inert-field hypothesis); a gap is
+# the field doing something. Uncertainty stays OFF (this is the pristine-base FIX branch).
+inherit_from: configs/Super/trail3_moge2_uncert_base.yaml
+dynamic: False
+data:
+  output: output/trail3_field_off
+  exp_name: demo

@@ -1,0 +1,15 @@
+# ARM-2 FIELD DIAGNOSIS — cell "field_on_wd0": deformable field ON but TimeNet weight-decay = 0.
+# SINGLE VARIABLE vs field_on = timenet_weight_decay (1e-6 default -> 0.0). The output Linear of
+# TimeNet is bias-free with no zero-init; under wd=1e-6 (plain-Adam L2, denormal-collapse path) the
+# weights can decay toward 0 with no map competition -> a DEAD field that is a wd ARTEFACT, not a
+# starvation/gauge problem. If field_on_wd0 revives the field (post-hoc: TimeNet ||W|| up, field-
+# warped pin EPE down) where field_on does not, the cause is wd-collapse (cheap fix). If identical,
+# wd is exonerated -> the cause is starvation / no-teacher / encoding-collapse (needs a real signal).
+# lr_mult deliberately UNCHANGED (1.0) so this isolates wd alone (cf. hyp2_pf_revive which confounds
+# wd=0 WITH lr_mult=10).
+inherit_from: configs/Super/trail3_moge2_uncert_base.yaml
+training:
+  timenet_weight_decay: 0.0
+data:
+  output: output/trail3_field_on_wd0
+  exp_name: demo
