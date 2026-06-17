@@ -258,6 +258,8 @@ class DDSSLAM():
             target_s = batch['rgb'].squeeze(0)[indice_h, indice_w, :].to(self.device)
             target_edge_semantic = batch['edge_semantic'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             target_d = batch['depth'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
+            # Inc-1 v2: per-ray DINO feature [N,C] (None unless mode:'dino' -> forward stays base/geo).
+            target_dino = batch['dino'].squeeze(0)[indice_h, indice_w, :].to(self.device) if 'dino' in batch else None
 
             rays_o = c2w[None, :3, -1].repeat(self.config['mapping']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w[:3, :3], -1)
@@ -266,7 +268,7 @@ class DDSSLAM():
                 timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1] (else freq-encoder parity-collapse); flag default off = upstream behaviour
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
             # Forward
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, notFirstMap=False)
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, notFirstMap=False)
             loss = self.get_loss_from_ret(ret)
             loss.backward()
             self.map_optimizer.step()
@@ -341,6 +343,8 @@ class DDSSLAM():
             target_s = batch['rgb'].squeeze(0)[indice_h, indice_w, :].to(self.device)
             target_edge_semantic = batch['edge_semantic'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             target_d = batch['depth'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
+            # Inc-1 v2: per-ray DINO feature [N,C] (None unless mode:'dino').
+            target_dino = batch['dino'].squeeze(0)[indice_h, indice_w, :].to(self.device) if 'dino' in batch else None
 
             rays_o = c2w_est[..., :3, -1].repeat(self.config['mapping']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[: ,:3, :3], -1)
@@ -349,7 +353,7 @@ class DDSSLAM():
                 timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1]; flag default off = upstream behaviour
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
             # Forward
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d,target_edge_semantic=target_edge_semantic)
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d,target_edge_semantic=target_edge_semantic, target_dino=target_dino)
             loss = self.get_loss_from_ret(ret)
             loss.backward()
             self.cur_map_optimizer.step()
@@ -455,6 +459,9 @@ class DDSSLAM():
             target_s = rays[..., 3:6].to(self.device)
             target_d = rays[..., 6:7].to(self.device)
             target_edge_semantic = rays[..., 7:8].to(self.device)
+            # Inc-1 v2: DINO feature lives in the keyframe-DB ray TAIL [8:8+C] (packed in keyframe.py).
+            # ray_w==8 (base/geo) -> None -> forward untouched.
+            target_dino = rays[..., 8:].to(self.device) if rays.shape[-1] > 8 else None
 
             # [N, Bs, 1, 3] * [N, 1, 3, 3] = (N, Bs, 3)
             rays_d = torch.sum(rays_d_cam[..., None, None, :] * poses_all[ids_all, None, :3, :3], -1)
@@ -475,7 +482,7 @@ class DDSSLAM():
                     timestamps = timestamps / self.dataset.num_frames
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
 
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic)
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino)
 
             loss = self.get_loss_from_ret(ret, smooth=True)
             
@@ -581,6 +588,8 @@ class DDSSLAM():
             target_d = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
             target_edge_semantic = batch['edge_semantic'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
             border = batch['border'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
+            # Inc-1 v2: per-ray DINO feature [N,C] (Inc-2 down-weights pose by sigma^2 in tracking).
+            target_dino = batch['dino'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device) if 'dino' in batch else None
 
             rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1)
@@ -594,7 +603,7 @@ class DDSSLAM():
             # sigma^2 (TRACKING-ONLY). Mapping/BA forwards (first_frame/current_frame/
             # global_BA) leave tracking=False (default) so they are untouched. No-op
             # when uncertainty.enable=false (forward guards on unc_on).
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, border=border, UseBorder=True, tracking=True)
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, border=border, UseBorder=True, tracking=True)
             loss = self.get_loss_from_ret(ret)
             if i == 0:
                 loss_iter0 = float(loss.cpu().item())
@@ -812,6 +821,9 @@ class DDSSLAM():
         # target_edge_semantic = batch['edge_semantic'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
 
         target_edge_semantic = batch['edge_semantic'].squeeze(0).to(self.device).unsqueeze(-1)
+        # Inc-1 v2: full-frame DINO feature flattened [H*W,C] (row-major, matches rays_d.view(-1,3)),
+        # chunked alongside rays below so render_only surfaces the sigma^2 viz. None unless mode:'dino'.
+        target_dino_full = batch['dino'].squeeze(0).reshape(-1, batch['dino'].shape[-1]).to(self.device) if 'dino' in batch else None
 
         rays_o = c2w_est[..., :3, -1].repeat(H * W, 1)
         rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1).view(-1, 3)
@@ -826,13 +838,14 @@ class DDSSLAM():
             rays_o1 = rays_o[i:i + ray_batch_size]
             rays_d1 = rays_d[i:i + ray_batch_size]
             target_d1 = target_d[i:i + ray_batch_size]
+            target_dino1 = target_dino_full[i:i + ray_batch_size] if target_dino_full is not None else None
             if self.config['dynamic']:
                 cur_id = (frame_id*torch.ones(rays_o1.shape[0]))
                 timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1]; flag default off = upstream behaviour
                 rays_o1 = torch.cat([rays_o1,timestamps.unsqueeze(-1)],dim=1)
             # ret = self.model.render_rays(rays_o1, rays_d1, target_d1)
             ret = self.model.forward(rays_o1, rays_d1, target_s, target_d1,
-                                     target_edge_semantic=target_edge_semantic, notFirstMap=False,render_only=True)
+                                     target_edge_semantic=target_edge_semantic, target_dino=target_dino1, notFirstMap=False,render_only=True)
             rgb.append(ret['rgb'].detach().clone().cpu())
             if 'depth' in ret:
                 depth_chunks.append(ret['depth'].detach().clone().cpu())

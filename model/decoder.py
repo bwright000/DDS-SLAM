@@ -478,6 +478,20 @@ class ColorSDFNet_v2(nn.Module):
                                 geo_feat_dim=config['decoder']['geo_feat_dim'],
                                 hidden_dim_color=config.get('uncertainty', {}).get('hidden_dim', 32),
                                 num_layers_color=config.get('uncertainty', {}).get('num_layers', 2))
+        # Inc-1 v2 (mode:'dino') — per-PIXEL DINO uncertainty head. Built LAST (after every base
+        # module, like the v1 head) so the ON backbone draws identical RNG -> clean A/B. Lives ON THE
+        # DECODER (not scene_rep) so it lands in map_optimizer via _dec_groups() which enumerates
+        # decoder.named_parameters() (ddsslam:703); a head on scene_rep would get ZERO gradient.
+        # scene_rep.forward calls self.decoder.dino_unc_net(target_dino) with the gathered per-ray DINO
+        # feature. Mutually exclusive with the v1 geo head (mode gate). off/geo -> not built -> no RNG
+        # draw -> base/geo bit-identical (Inc-0).
+        elif config.get('uncertainty', {}).get('enable', False) \
+                and config.get('uncertainty', {}).get('mode', 'geo') == 'dino':
+            self.dino_unc_net = UncertaintyDINONet(
+                in_dim=int(config['uncertainty']['dino_dim']),
+                hidden_dim=config.get('uncertainty', {}).get('hidden_dim', 64),
+                num_layers=config.get('uncertainty', {}).get('num_layers', 2),
+                dropout=config.get('uncertainty', {}).get('dino_dropout', 0.0))
 
     def forward(self, embed, embed_pos):
 

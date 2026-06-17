@@ -7,7 +7,13 @@ class KeyFrameDatabase(object):
         self.config = config
         self.keyframes = {}
         self.device = device
-        self.rays = torch.zeros((num_kf, num_rays_to_save, 8)) 
+        # Inc-1 v2: per-ray pack widens by C (DINO feature) appended at the TAIL [8:8+C] ONLY in dino
+        # mode; base layout stays [dir3,rgb3,depth1,edge1]=8 (depth@6, edge@7). off/geo => ray_w=8 =>
+        # keyframe DB byte-identical to base.
+        _unc = config.get('uncertainty', {})
+        self.dino_c = int(_unc.get('dino_dim', 0)) if (_unc.get('enable', False) and _unc.get('mode', 'geo') == 'dino') else 0
+        self.ray_w = 8 + self.dino_c
+        self.rays = torch.zeros((num_kf, num_rays_to_save, self.ray_w))
         self.num_rays_to_save = num_rays_to_save
         self.frame_ids = None
         self.H = H
@@ -27,8 +33,10 @@ class KeyFrameDatabase(object):
         if option == 'random':
             idxs = random.sample(range(0, self.H*self.W), self.num_rays_to_save)
         elif option == 'filter_depth':
-            valid_depth_mask = (rays[..., -2] > 0.0) & (rays[..., -2] <= self.config["cam"]["depth_trunc"])
-            rays_valid = rays[valid_depth_mask, :]  # [n_valid, 8]
+            # depth is at absolute index 6 ([dir3,rgb3,depth1,...]); was [...,-2] which only equals 6
+            # when ray_w==8 -- with the DINO tail appended that would wrongly read a DINO channel.
+            valid_depth_mask = (rays[..., 6] > 0.0) & (rays[..., 6] <= self.config["cam"]["depth_trunc"])
+            rays_valid = rays[valid_depth_mask, :]  # [n_valid, ray_w]
             num_valid = len(rays_valid)
             idxs = random.sample(range(0, num_valid), self.num_rays_to_save)
 
@@ -51,7 +59,12 @@ class KeyFrameDatabase(object):
         Add keyframe rays to the keyframe database
         '''
         # batch direction (Bs=1, H*W, 3)
-        rays = torch.cat([batch['direction'], batch['rgb'], batch['depth'][..., None], batch['edge_semantic'][..., None]], dim=-1)
+        # base pack [dir3,rgb3,depth1,edge1]; Inc-1 v2 appends the per-ray DINO feature [C] at the TAIL
+        # so depth@6/edge@7 are preserved and the global_BA unpack reads target_dino = rays[..,8:].
+        _parts = [batch['direction'], batch['rgb'], batch['depth'][..., None], batch['edge_semantic'][..., None]]
+        if 'dino' in batch:
+            _parts.append(batch['dino'])
+        rays = torch.cat(_parts, dim=-1)
         rays = rays.reshape(1, -1, rays.shape[-1])
         if filter_depth:
             rays = self.sample_single_keyframe_rays(rays, 'filter_depth')
@@ -72,7 +85,7 @@ class KeyFrameDatabase(object):
         '''
         num_kf = self.__len__()
         idxs = torch.tensor(random.sample(range(num_kf * self.num_rays_to_save), bs))
-        sample_rays = self.rays[:num_kf].reshape(-1, 8)[idxs]
+        sample_rays = self.rays[:num_kf].reshape(-1, self.ray_w)[idxs]
 
         frame_ids = self.frame_ids[idxs//self.num_rays_to_save]
 

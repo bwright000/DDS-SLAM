@@ -458,7 +458,7 @@ class JointEncoding(nn.Module):
 
         return ret
     
-    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False):
+    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None):
         '''
         Params:
             rays_o: ray origins (Bs, 3)
@@ -478,6 +478,17 @@ class JointEncoding(nn.Module):
         # to avoid the full-image vs ray-batch shape mismatch at the eval call).
         oracle_w = target_edge_semantic if (self.config.get('oracle_routing', False) and target_edge_semantic is not None and not render_only) else None
         rend_dict = self.render_rays(rays_o, rays_d, target_d=target_d, oracle_w=oracle_w)
+
+        # Inc-1 v2 (mode:'dino'): per-PIXEL DINO uncertainty. The per-point geo head is ABSENT in dino
+        # mode (run_network returns sigma2=None -> render_rays writes no 'sigma2'); instead derive
+        # sigma2 from the gathered per-ray DINO feature via the decoder-owned head, writing the SAME
+        # rend_dict['sigma2'] key the NLL (~line 543), the Inc-2 down-weight (~501) and the render viz
+        # (~569) consume. softplus(.float())+1e-6 then floor mirrors raw2outputs. Placed BEFORE the
+        # eval early-return so render_only also surfaces sigma2 for the viz. Gated on (target_dino present
+        # AND head built) -> off/geo add no key/op -> byte-identical base (Inc-0).
+        if target_dino is not None and hasattr(self.decoder, 'dino_unc_net'):
+            _sig = torch.nn.functional.softplus(self.decoder.dino_unc_net(target_dino).float()) + 1e-6
+            rend_dict['sigma2'] = torch.clamp_min(_sig, 1e-6)
 
         if not self.training:
             return rend_dict

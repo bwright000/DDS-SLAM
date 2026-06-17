@@ -100,9 +100,27 @@ class BaseDataset(Dataset):
     
     def __len__(self):
         raise NotImplementedError()
-    
+
     def __getitem__(self, index):
         raise NotImplementedError()
+
+    def _attach_dino(self, ret, index, edge):
+        """Inc-1 v2 (mode:'dino'): load the per-frame DINO feature grid and resample to EXACTLY the
+        final depth shape (interpolate to the full post-downsample FOV, then apply the same crop), so
+        ret['dino'] is pixel-aligned with rgb/depth for any downsample/crop. No-op (no key added) when
+        dino is off -> base/geo bit-identical. Shared by StereoMISDataset + SuperDataset."""
+        if getattr(self, 'dino_paths', None) is None:
+            return ret
+        Hf, Wf = int(ret["depth"].shape[-2]), int(ret["depth"].shape[-1])   # final post-crop shape
+        Hful, Wful = Hf + 2 * edge, Wf + 2 * edge                           # pre-crop full FOV
+        grid = np.load(self.dino_paths[index]).astype(np.float32)           # [gh,gw,C] (fp16 on disk)
+        t = torch.from_numpy(grid).permute(2, 0, 1).unsqueeze(0)            # [1,C,gh,gw]
+        t = F.interpolate(t, size=(Hful, Wful), mode='bilinear', align_corners=False)
+        dino = t.squeeze(0).permute(1, 2, 0).contiguous()                   # [Hful,Wful,C]
+        if edge > 0:
+            dino = dino[edge:-edge, edge:-edge]
+        ret["dino"] = dino                                                  # [Hf,Wf,C]
+        return ret
 
 class StereoMISDataset(BaseDataset):
     def __init__(self, cfg, basedir, trainskip=1, 
@@ -123,6 +141,18 @@ class StereoMISDataset(BaseDataset):
         self.semantic_paths = sorted(
            glob.glob(os.path.join(
            self.basedir, 'masks', '*.png')))[-2000:]
+
+        # Inc-1 v2 (mode:'dino'): per-frame DINO feature grids, globbed from THIS run's basedir and
+        # sliced with the SAME [-4000:] as img_files so frame i <-> dino_paths[i]. CRCD and StereoMIS
+        # are DIFFERENT datasets that merely share this loader class (crcd.yaml dataset:'stereomis'),
+        # so the path is per-run, never hardcoded. None => no 'dino' key => base/geo bit-identical.
+        self.dino_paths = None
+        _unc = self.config.get('uncertainty', {})
+        if _unc.get('enable', False) and _unc.get('mode', 'geo') == 'dino':
+            _sub = _unc.get('dino_subdir', 'dino')
+            self.dino_paths = sorted(glob.glob(f'{self.basedir}/{_sub}/*_dino.npy'))[-4000:]
+            assert len(self.dino_paths) == len(self.img_files), \
+                f"DINO features {len(self.dino_paths)} != frames {len(self.img_files)} in {self.basedir}/{_sub}"
 
         self.load_poses(self.basedir)
 
@@ -203,6 +233,7 @@ class StereoMISDataset(BaseDataset):
             "border": border_data,
             "direction": self.rays_d
         }
+        ret = self._attach_dino(ret, index, edge)
 
         return ret
 
@@ -287,6 +318,16 @@ class SuperDataset(BaseDataset):
         self.depth_paths = sorted(
             glob.glob(f'{self.basedir}/{depth_subdir}/*left_depth.npy'))
         self.semantic_paths=sorted(glob.glob(f'{self.basedir}/seg/png_masks/*left.png'))
+
+        # Inc-1 v2 (mode:'dino'): per-frame DINO grids (SemSup; NO [-4000:] slice, unlike StereoMIS).
+        # None => no 'dino' key => base/geo bit-identical.
+        self.dino_paths = None
+        _unc = self.config.get('uncertainty', {})
+        if _unc.get('enable', False) and _unc.get('mode', 'geo') == 'dino':
+            _sub = _unc.get('dino_subdir', 'dino')
+            self.dino_paths = sorted(glob.glob(f'{self.basedir}/{_sub}/*_dino.npy'))
+            assert len(self.dino_paths) == len(self.img_files), \
+                f"DINO features {len(self.dino_paths)} != frames {len(self.img_files)} in {self.basedir}/{_sub}"
 
         self.load_poses(os.path.join(self.basedir, 'pose'))
         
@@ -375,6 +416,7 @@ class SuperDataset(BaseDataset):
             "border": border_data,
             "direction": self.rays_d
         }
+        ret = self._attach_dino(ret, index, edge)
 
         return ret
 
