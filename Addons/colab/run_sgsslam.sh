@@ -39,8 +39,8 @@ echo "=== run_sgsslam.sh phase=$PHASE scene=${SCENE_ARG:-<all>} $(date -Iseconds
 # --- env: clone + README conda stack + rasterizer (idempotent) ------------------------------
 build_env(){
   [ -d "$SGS/.git" ] || git clone --recursive "$SGS_URL" "$SGS" || { echo "FATAL clone $SGS_URL"; exit 30; }
-  if [ -x "$ENV_PY" ] && PYTHONPATH= "$ENV_PY" -c "import diff_gaussian_rasterization" 2>/dev/null; then
-    echo "[env] $ENV_NAME ready (rasterizer imports)"; return 0; fi
+  if [ "${REBUILD_RAST:-0}" != 1 ] && [ -x "$ENV_PY" ] && PYTHONPATH= "$ENV_PY" -c "import diff_gaussian_rasterization" 2>/dev/null; then
+    echo "[env] $ENV_NAME ready (rasterizer imports; REBUILD_RAST=1 to recompile for this GPU)"; return 0; fi
   if [ ! -x "$CONDA_ROOT/bin/conda" ]; then
     echo "[env] installing miniconda -> $CONDA_ROOT"
     wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/mc.sh
@@ -75,9 +75,16 @@ build_env(){
     PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/sgs_constraints.txt pytorch-msssim torchmetrics lpips \
        opencv-python imageio matplotlib kornia natsort pyyaml plyfile tqdm pandas wandb || echo "[env] WARN some deps failed"; }
   PYTHONPATH= "$ENV_PY" -m pip install -q "numpy<2" || true   # re-assert: a dep may have bumped it
-  echo "[env] rasterizer build @cb65e4b (--no-build-isolation so setup.py sees the env's torch; sm_80)"
-  PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="8.0" \
-     "$ENV_PY" -m pip install -q --no-build-isolation \
+  # Build the rasterizer for THIS GPU's compute capability (+PTX). sm_80-only -> garbage kernel
+  # -> "numel: integer multiplication overflow" on a non-A100 (L4 8.9 / H100 9.0 / 4090 8.9).
+  local CC ARCH
+  CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ')
+  [ -n "$CC" ] || CC=8.0
+  ARCH="${CC}+PTX"
+  echo "[env] GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1) compute_cap=$CC -> arch $ARCH"
+  echo "[env] rasterizer build @cb65e4b (--no-build-isolation, force-reinstall, arch=$ARCH)"
+  PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="$ARCH" \
+     "$ENV_PY" -m pip install -q --no-build-isolation --force-reinstall --no-deps \
      "git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git@cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110" \
      || echo "[env] WARN rasterizer build FAILED (see compile log above)"
   echo "[env] smoke import:"
