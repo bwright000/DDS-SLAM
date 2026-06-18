@@ -3,120 +3,127 @@
 # run_sgsslam.sh <phase> [scene]   -  Arm 4 Stage 1: SGS-SLAM (ECCV 2024) onboarding.
 #   phase: env | repro | crcd | eval | all
 #
-# PHASE-A (repro) = Replica via the repo's OWN eval (paper-faithful), gate REPORT-ONLY
-#   vs verified paper averages (SGS-SLAM_eval_spec.md):
-#     PSNR 34.66 | MS-SSIM 0.973 | LPIPS 0.096 | Depth-L1 0.356cm | ATE 0.412cm | mIoU 92.72%
-#   Metrics are parsed from scripts/slam.py STDOUT, which prints (eval_helpers.py:770,793-798):
-#     "Average PSNR: X"  "Average MS-SSIM: X"  "Average LPIPS: X"  "Average Depth L1: X cm"
-#     "Final Average ATE RMSE: X cm"  "Average mIoU: X"   (mIoU as fraction 0-1)
-#   Scope (user 2026-06-18): validate room0 first (`repro room0`), then full 8 (`repro`).
+# ENV: SGS-SLAM is a py3.9 / torch2.0.1 / cu11.8 repo (README). Colab ships py3.12 /
+#   torch2.11 / cu12.8, where its pinned deps (open3d==0.16.0 -> numpy 1.21.6) DO NOT install
+#   and the rasterizer won't match. So we build the README's CONDA env (miniconda -> py3.9 ->
+#   cuda-toolkit 11.8 -> torch 2.0.1+cu118 -> requirements.txt incl. the JonathonLuiten
+#   diff-gaussian-rasterization-w-depth @cb65e4b). repro runs through that env's python.
 #
-# CRCD (Phase B) is STUBBED here - needs CRCDGradSLAMDataset + semantic_ids/colors emission
-#   + npz->est & render-rename adapters (ARM4 A4-1.3/1.4). Runs once those land.
+# PHASE-A (repro) = Replica via the repo's OWN eval (paper-faithful), gate REPORT-ONLY vs
+#   verified paper avgs (SGS-SLAM_eval_spec.md): PSNR 34.66 | MS-SSIM 0.973 | LPIPS 0.096 |
+#   Depth-L1 0.356cm | ATE 0.412cm | mIoU 92.72%. Metrics parsed from slam.py STDOUT.
+#   Scope: validate room0 first (`repro room0`), then full 8 (`repro`).
 #
-# RUNS ON COLAB/A100. The `env` phase (3DGS rasterizer build) is the fragile part and may
-# need on-instance iteration - it is best-effort and fails LOUD, it does not fake success.
+# CRCD (Phase B) STUBBED (needs CRCDGradSLAMDataset + adapters, A4-1.3/1.4).
+# RUNS ON COLAB/A100. The conda build is slow (~20-30 min, one-time) and fails LOUD.
 #
-# Usage (on the tunnel):
-#   bash Addons/colab/run_sgsslam.sh env
-#   bash Addons/colab/run_sgsslam.sh repro room0      # validate one scene
-#   bash Addons/colab/run_sgsslam.sh repro            # full 8-scene gate
+# Usage:  bash Addons/colab/run_sgsslam.sh env
+#         bash Addons/colab/run_sgsslam.sh repro room0
+#         bash Addons/colab/run_sgsslam.sh repro
 # ============================================================================
 set -uo pipefail
 PHASE=${1:-all}; SCENE_ARG=${2:-}
 SGS=${SGS:-/content/SGS-SLAM}
-SGS_URL=${SGS_URL:-https://github.com/IRMVLab/SGS-SLAM.git}
-REPLICA=${REPLICA:-/content/data/Replica}          # Replica-with-GT-semantics (README Dropbox)
-DRIVE_REPLICA=${DRIVE_REPLICA:-/content/drive/MyDrive/Datasets/Replica}
+SGS_URL=${SGS_URL:-https://github.com/ShuhongLL/SGS-SLAM}     # NOT IRMVLab (that is SemGauss/SNI/DDS)
+REPLICA=${REPLICA:-/content/data/Replica}                     # local staged scenes (room0, ...)
+DRIVE_REPLICA_ZIPS=${DRIVE_REPLICA_ZIPS:-/content/drive/MyDrive/Datasets/Replica/SGS}  # the 2 zips
+CONDA_ROOT=${CONDA_ROOT:-/content/miniconda3}
+ENV_NAME=${ENV_NAME:-sgs-slam}
+ENV_PY="$CONDA_ROOT/envs/$ENV_NAME/bin/python"
 DATE=$(date +%Y%m%d)
 DRIVE=${DRIVE:-/content/drive/MyDrive/Outputs/SGS-SLAM_repro_${DATE}}
-PY=${PY:-python}
 ALL_SCENES="room0 room1 room2 office0 office1 office2 office3 office4"
 
 echo "=== run_sgsslam.sh phase=$PHASE scene=${SCENE_ARG:-<all>} $(date -Iseconds) ==="
 
-# --- env -------------------------------------------------------------------------------------
+# --- env: clone + README conda stack + rasterizer (idempotent) ------------------------------
 build_env(){
-  [ -d "$SGS/.git" ] || git clone --recursive "$SGS_URL" "$SGS"
-  cd "$SGS"
-  # The diff-gaussian-rasterization-w-depth (SplaTAM fork, pin cb65e4b) + deps. This is the
-  # fragile 3DGS step; requirements.txt pulls the rasterizer via pip VCS.
-  $PY -c "import diff_gaussian_rasterization" 2>/dev/null && { echo "[env] rasterizer present"; } || {
-    echo "[env] installing requirements + rasterizer (slow; may need cuda-11.8 toolkit)"
-    pip install -q -r requirements.txt || echo "[env] WARN requirements.txt had failures"
-  }
+  [ -d "$SGS/.git" ] || git clone --recursive "$SGS_URL" "$SGS" || { echo "FATAL clone $SGS_URL"; exit 30; }
+  if [ -x "$ENV_PY" ] && "$ENV_PY" -c "import diff_gaussian_rasterization" 2>/dev/null; then
+    echo "[env] $ENV_NAME ready (rasterizer imports)"; return 0; fi
+  if [ ! -x "$CONDA_ROOT/bin/conda" ]; then
+    echo "[env] installing miniconda -> $CONDA_ROOT"
+    wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/mc.sh
+    bash /tmp/mc.sh -b -p "$CONDA_ROOT" || { echo "FATAL miniconda"; exit 30; }
+  fi
+  source "$CONDA_ROOT/etc/profile.d/conda.sh"
+  conda config --set channel_priority flexible 2>/dev/null || true
+  # accept Anaconda ToS (defaults channels) if the gate is present (known Colab trap)
+  conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
+  conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
+  conda env list | grep -q "^$ENV_NAME " || conda create -y -n "$ENV_NAME" -c conda-forge python=3.9 \
+     || { echo "FATAL conda create"; exit 30; }
+  conda activate "$ENV_NAME"
+  echo "[env] cuda-toolkit 11.8 (nvcc for the rasterizer)"
+  conda install -y -c "nvidia/label/cuda-11.8.0" cuda-toolkit || echo "[env] WARN cuda-toolkit install issue"
+  echo "[env] torch 2.0.1 + cu118"
+  pip install -q torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118 \
+     || { echo "FATAL torch install"; exit 30; }
+  echo "[env] requirements.txt (open3d/numpy pins resolve on py3.9) + rasterizer build (sm_80)"
+  TORCH_CUDA_ARCH_LIST="8.0" pip install -q -r "$SGS/requirements.txt" || echo "[env] WARN requirements had failures"
   echo "[env] smoke import:"
-  $PY - <<'PY'
+  "$ENV_PY" - <<'PY'
 import importlib, sys
 ok = True
-for m in ("torch", "diff_gaussian_rasterization"):
-    try:
-        importlib.import_module(m); print(f"  {m}: OK")
-    except Exception as e:
-        ok = False; print(f"  {m}: FAIL -> {e}")
+for m in ("torch", "diff_gaussian_rasterization", "pytorch_msssim", "torchmetrics"):
+    try: importlib.import_module(m); print(f"  {m}: OK")
+    except Exception as e: ok = False; print(f"  {m}: FAIL -> {e}")
 import torch; print("  torch", torch.__version__, "cuda", torch.version.cuda, "avail", torch.cuda.is_available())
 sys.exit(0 if ok else 30)
 PY
-  local rc=$?
-  [ "$rc" -eq 0 ] || { echo "FATAL[env]: rasterizer/torch import failed (exit 30). Likely a torch/CUDA"\
-                       " mismatch - the repo wants torch 2.0.1 / cu11.8 (README). Build cuda-11.8 toolkit"\
-                       " and rebuild the rasterizer for sm_80, then re-run."; exit 30; }
-  echo "[env] OK"
+  [ $? -eq 0 ] || { echo "FATAL[env]: smoke import failed (exit 30). Inspect the rasterizer build log above."; exit 30; }
+  echo "[env] OK -> $ENV_PY"
 }
 
-# --- stage Replica (if not already local) ----------------------------------------------------
-stage_replica(){
-  [ -d "$REPLICA/$1" ] && { echo "[$1] Replica scene present"; return 0; }
-  if [ -d "$DRIVE_REPLICA/$1" ]; then
-    mkdir -p "$REPLICA"; echo "[$1] copying Replica scene from Drive (local SSD for speed)"
-    cp -rn "$DRIVE_REPLICA/$1" "$REPLICA/"; return 0
+# --- stage Replica: unzip the 2 SGS zips once, locate scene dirs -----------------------------
+stage_replica_all(){
+  [ -d "$REPLICA/room0" ] && { echo "[replica] already staged"; return 0; }
+  local zips=("$DRIVE_REPLICA_ZIPS"/*.zip)
+  [ -e "${zips[0]}" ] || { echo "[replica] no zips at $DRIVE_REPLICA_ZIPS -> stage the 2 Replica-with-GT-semantics zips there"; return 1; }
+  mkdir -p "$REPLICA"
+  for z in "${zips[@]}"; do echo "[replica] unzip $(basename "$z")"; unzip -n -q "$z" -d "$REPLICA" || echo "[replica] WARN unzip $z"; done
+  if [ ! -d "$REPLICA/room0" ]; then   # flatten if scenes nested under a top dir
+    local nest; nest=$(dirname "$(find "$REPLICA" -maxdepth 3 -type d -name room0 2>/dev/null | head -1)")
+    [ -n "$nest" ] && [ "$nest" != "$REPLICA" ] && [ "$nest" != "." ] && { echo "[replica] flatten from $nest"; mv "$nest"/* "$REPLICA"/ 2>/dev/null || true; }
   fi
-  echo "[$1] Replica scene not found at $REPLICA/$1 or $DRIVE_REPLICA/$1 -> stage the"\
-       " Replica-with-GT-semantics download (README Dropbox) to one of those. skipping."; return 1
+  [ -d "$REPLICA/room0" ] && echo "[replica] staged ($(ls -d "$REPLICA"/*/ 2>/dev/null | wc -l) scene dirs)" \
+    || { echo "[replica] FATAL: room0 not found after unzip"; return 1; }
 }
 
 # --- one scene -------------------------------------------------------------------------------
 run_scene(){
   local s=$1 dst="$DRIVE/$s"
-  stage_replica "$s" || return 1
+  [ -d "$REPLICA/$s" ] || { echo "[$s] scene dir missing -> skip"; return 1; }
   mkdir -p "$dst"
-  # per-scene config: set scene_name, disable wandb, point basedir at the local Replica
   local cfg="/content/sgs_cfg_${s}.py"
   sed -e "s/^scene_name = .*/scene_name = \"$s\"/" \
       -e "s/use_wandb=True/use_wandb=False/" \
       -e "s#basedir=\"./data/Replica\"#basedir=\"$REPLICA\"#" \
       "$SGS/configs/replica/slam.py" > "$cfg"
-  echo "[$s] running SGS-SLAM (this is a full SLAM pass; minutes-to-hours on A100)"
-  ( cd "$SGS" && $PY scripts/slam.py "$cfg" ) 2>&1 | tee "$dst/slam.log"
-  local rc=${PIPESTATUS[0]}
-  [ "$rc" -eq 0 ] || { echo "[$s] FAIL rc=$rc" | tee "$dst/status.txt"; return 1; }
-  # parse the 6 metrics from the eval stdout
-  $PY - "$dst/slam.log" "$dst/metrics.json" "$s" <<'PY'
+  echo "[$s] running SGS-SLAM (full SLAM pass; minutes-to-hours on A100)"
+  ( cd "$SGS" && "$ENV_PY" scripts/slam.py "$cfg" ) 2>&1 | tee "$dst/slam.log"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "[$s] FAIL" | tee "$dst/status.txt"; return 1; }
+  "$ENV_PY" - "$dst/slam.log" "$dst/metrics.json" "$s" <<'PY'
 import sys, re, json
 log, out, scene = sys.argv[1], sys.argv[2], sys.argv[3]
 t = open(log, encoding='utf-8', errors='ignore').read()
-def g(pat):
-    m = re.search(pat, t)
-    return float(m.group(1)) if m else None
-psnr  = g(r'Average PSNR:\s*([0-9.]+)')
-ssim  = g(r'Average MS-SSIM:\s*([0-9.]+)')
-lpips = g(r'Average LPIPS:\s*([0-9.]+)')
-dl1   = g(r'Average Depth L1:\s*([0-9.]+)\s*cm')          # already cm
-ate   = g(r'Final Average ATE RMSE:\s*([0-9.]+)\s*cm')    # already cm
-miou  = g(r'Average mIoU:\s*([0-9.]+)')                   # fraction 0-1
-miou_pct = miou * 100 if miou is not None else None
-d = dict(scene=scene, psnr=psnr, ssim=ssim, lpips=lpips, depth_l1_cm=dl1, ate_rmse_cm=ate, miou_pct=miou_pct)
+def g(p):
+    m = re.search(p, t); return float(m.group(1)) if m else None
+miou = g(r'Average mIoU:\s*([0-9.]+)')
+d = dict(scene=scene, psnr=g(r'Average PSNR:\s*([0-9.]+)'), ssim=g(r'Average MS-SSIM:\s*([0-9.]+)'),
+         lpips=g(r'Average LPIPS:\s*([0-9.]+)'), depth_l1_cm=g(r'Average Depth L1:\s*([0-9.]+)\s*cm'),
+         ate_rmse_cm=g(r'Final Average ATE RMSE:\s*([0-9.]+)\s*cm'), miou_pct=miou*100 if miou is not None else None)
 json.dump(d, open(out, 'w'), indent=2)
 print(f"[{scene}] " + " ".join(f"{k}={v}" for k, v in d.items() if k != 'scene'))
-if ate == 100.0:
-    print(f"[{scene}] WARN ATE=100.0 sentinel -> trajectory alignment FAILED (tracking diverged)")
+if d['ate_rmse_cm'] == 100.0: print(f"[{scene}] WARN ATE=100 sentinel -> tracking diverged")
 PY
   echo "PASS" > "$dst/status.txt"
 }
 
 # --- aggregate vs paper (REPORT-ONLY gate) ---------------------------------------------------
 aggregate(){
-  $PY - "$DRIVE" <<'PY'
+  local py="$ENV_PY"; [ -x "$py" ] || py=python
+  "$py" - "$DRIVE" <<'PY'
 import sys, os, json, glob
 root = sys.argv[1]
 paper = dict(psnr=34.66, ssim=0.973, lpips=0.096, depth_l1_cm=0.356, ate_rmse_cm=0.412, miou_pct=92.72)
@@ -127,21 +134,17 @@ if not ms:
     print("no per-scene metrics yet"); raise SystemExit
 keys = ['psnr','ssim','lpips','depth_l1_cm','ate_rmse_cm','miou_pct']
 def mean(k):
-    vs = [m[k] for m in ms if m.get(k) is not None]
-    return sum(vs)/len(vs) if vs else None
-lines = [f"SGS-SLAM Replica repro - {len(ms)} scene(s): {[m['scene'] for m in ms]}", ""]
-lines.append(f"{'metric':<12}{'repro':>10}{'paper':>10}{'band':>12}{'verdict':>9}")
+    vs = [m[k] for m in ms if m.get(k) is not None]; return sum(vs)/len(vs) if vs else None
+L = [f"SGS-SLAM Replica repro - {len(ms)} scene(s): {[m['scene'] for m in ms]}", "",
+     f"{'metric':<12}{'repro':>10}{'paper':>10}{'band':>12}{'verdict':>9}"]
 allpass = True
 for k in keys:
     r = mean(k); p = paper[k]; op, th = band[k]
-    if r is None: lines.append(f"{k:<12}{'--':>10}{p:>10}{op+str(th):>12}{'n/a':>9}"); continue
-    ok = (r >= th) if op == '>=' else (r <= th)
-    allpass = allpass and ok
-    lines.append(f"{k:<12}{r:>10.3f}{p:>10.3f}{(op+str(th)):>12}{('PASS' if ok else 'MISS'):>9}")
-lines += ["", f"GATE (report-only): {'PASS' if allpass else 'BELOW-BAND'} "
-              f"(headline ATE-RMSE + PSNR; does NOT block CRCD - CONTRACT s8)"]
-txt = "\n".join(lines); print("\n"+txt)
-open(os.path.join(root, 'COMBINED.txt'), 'w').write(txt+"\n")
+    if r is None: L.append(f"{k:<12}{'--':>10}{p:>10}{op+str(th):>12}{'n/a':>9}"); continue
+    ok = (r >= th) if op == '>=' else (r <= th); allpass = allpass and ok
+    L.append(f"{k:<12}{r:>10.3f}{p:>10.3f}{(op+str(th)):>12}{('PASS' if ok else 'MISS'):>9}")
+L += ["", f"GATE (report-only): {'PASS' if allpass else 'BELOW-BAND'} (headline ATE+PSNR; does NOT block CRCD - CONTRACT s8)"]
+txt = "\n".join(L); print("\n"+txt); open(os.path.join(root, 'COMBINED.txt'), 'w').write(txt+"\n")
 PY
 }
 
@@ -149,14 +152,15 @@ case "$PHASE" in
   env)   build_env ;;
   repro|all)
     [ "$PHASE" = all ] && build_env
+    [ -x "$ENV_PY" ] || { echo "FATAL: env not built ($ENV_PY missing) - run 'env' first"; exit 30; }
+    stage_replica_all || { echo "FATAL: Replica not staged"; exit 1; }
     mkdir -p "$DRIVE"
-    SCENES="${SCENE_ARG:-$ALL_SCENES}"
-    for s in $SCENES; do run_scene "$s" || echo "[$s] skipped/failed (see $DRIVE/$s)"; done
+    for s in ${SCENE_ARG:-$ALL_SCENES}; do run_scene "$s" || echo "[$s] skipped/failed (see $DRIVE/$s)"; done
     aggregate
     echo "DONE repro -> $DRIVE (COMBINED.txt + per-scene metrics.json/slam.log)" ;;
   crcd)
-    echo "CRCD (Phase B) NOT WIRED yet: needs CRCDGradSLAMDataset + semantic_ids/colors"\
-         " emission + npz->est & render-rename adapters (ARM4 A4-1.3/1.4). Stub - exiting." ; exit 0 ;;
+    echo "CRCD (Phase B) NOT WIRED yet: needs CRCDGradSLAMDataset + semantic_ids/colors emission"\
+         " + npz->est & render-rename adapters (ARM4 A4-1.3/1.4). Stub - exiting."; exit 0 ;;
   eval)  aggregate ;;
   *) echo "usage: run_sgsslam.sh env|repro|crcd|eval|all [scene]"; exit 2 ;;
 esac
