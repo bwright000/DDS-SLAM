@@ -39,6 +39,7 @@ def main():
     ap.add_argument('--norm_thresh', type=float, default=150.0, help='Darcet abs threshold (ViT-g); we ALSO report a data-driven knee')
     ap.add_argument('--stride', type=int, default=3)
     ap.add_argument('--out_fig', default='')
+    ap.add_argument('--pca_n', type=int, default=0, help='ALSO render first-3-PCA-as-RGB for N sample frames (plain vs reg) = the literal blotch view; the visual that motivated dino_reg')
     args = ap.parse_args()
 
     P = sorted(glob.glob(os.path.join(args.dino_dir, args.dino_glob)))
@@ -105,6 +106,27 @@ def main():
         plt.tight_layout(); plt.savefig(out, dpi=90); print(f"figure -> {out}")
     except Exception as e:
         print(f"(no figure: {e})")
+
+    # ---- PCA blotch view (the literal thing the user observed) ----
+    if args.pca_n > 0:
+        try:
+            import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
+            def pca_rgb(g):                                  # (Hp,Wp,C) -> first-3-PCA as RGB in [0,1]
+                H, W, C = g.shape; X = g.reshape(-1, C).astype(np.float32); X = X - X.mean(0)
+                Vt = np.linalg.svd(X, full_matrices=False)[2]
+                Y = X @ Vt[:3].T
+                Y = (Y - Y.min(0)) / (np.ptp(Y, 0) + 1e-9)
+                return Y.reshape(H, W, 3)
+            idx = np.linspace(0, len(P) - 1, args.pca_n).astype(int)
+            cols = 2 if PR else 1
+            fig, ax = plt.subplots(args.pca_n, cols, figsize=(4.5 * cols, 3 * args.pca_n), squeeze=False)
+            for r, i in enumerate(idx):
+                ax[r][0].imshow(pca_rgb(load_grid(P[i]))); ax[r][0].set_title(f'plain f{i}'); ax[r][0].axis('off')
+                if PR: ax[r][1].imshow(pca_rgb(load_grid(PR[i]))); ax[r][1].set_title(f'reg f{i}'); ax[r][1].axis('off')
+            outp = os.path.join(os.path.dirname(args.dino_dir.rstrip('/')), f'{args.name}_dino_PCA.png')
+            plt.suptitle(f'DINO PCA (first 3 comps as RGB) — {args.name}: do registers clean the blotches?'); plt.tight_layout(); plt.savefig(outp, dpi=90); print(f"PCA figure -> {outp}")
+        except Exception as e:
+            print(f"(no PCA figure: {e})")
 
 
 if __name__ == '__main__':
