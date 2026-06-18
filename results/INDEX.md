@@ -3,8 +3,8 @@
 The result **payloads** (videos, checkpoints, renders, zips) live in the dated folders below but are
 **gitignored** (GBs, over GitHub's 100 MB limit). Only this INDEX is tracked. Reverse-chronological.
 
-> Reclaim space: `results/_zips/` holds the redundant `.zip` archives (duplicates of the already-
-> extracted folders) — safe to delete (~3.8 GB). `results/_misc/` holds stray/junk (see bottom).
+> `results/_misc/` holds stray/junk (CRCD fragments, temp extracts, non-run docs — see bottom).
+> _(The redundant `.zip` archives were deleted 2026-06-18 — the extracted folders are the live copy.)_
 
 | Folder | Date | What it is | Key result |
 |---|---|---|---|
