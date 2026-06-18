@@ -51,10 +51,11 @@ for p in sorted(glob.glob(c+'/_mo/*-left_depth.npy')):
     st=os.path.basename(p).split('-')[0]; cv2.imwrite(f'{c}/depth/{st}.png', np.clip(np.load(p).astype(np.float32),0,65535).astype(np.uint16))
 print('depth pngs:', len(glob.glob(c+'/depth/*.png')))
 PY
-  # seg (CRCD loader collapses it to a Canny-edge channel) — raw semantic_instance -> semantic_class/*l.png
-  if [ -d "$SRC/semantic_instance" ]; then mkdir -p "$CRCD/semantic_class"; j=0
-    for sf in $(ls "$SRC/semantic_instance"/*.png|sort); do printf -v sn '%06dl.png' "$j"; cp "$sf" "$CRCD/semantic_class/$sn"; j=$((j+1)); done
-    say "  seg masks: $(ls "$CRCD/semantic_class"/*l.png 2>/dev/null|wc -l)"; fi
+  # seg (CRCD loader collapses it to a Canny-edge channel) — raw semantic_instance -> masks/*l.png
+  # (StereoMISDataset globs {basedir}/masks/*.png at dataset.py:138 — NOT semantic_class/)
+  if [ -d "$SRC/semantic_instance" ]; then mkdir -p "$CRCD/masks"; j=0
+    for sf in $(ls "$SRC/semantic_instance"/*.png|sort); do printf -v sn '%06dl.png' "$j"; cp "$sf" "$CRCD/masks/$sn"; j=$((j+1)); done
+    say "  seg masks: $(ls "$CRCD/masks"/*l.png 2>/dev/null|wc -l)"; fi
   rm -rf "$CRCD/_mi" "$CRCD/_mo"; touch "$CRCD/.RL_DONE"
 fi
 

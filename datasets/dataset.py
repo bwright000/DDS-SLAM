@@ -172,7 +172,7 @@ class StereoMISDataset(BaseDataset):
         if len(self.semantic_paths) >= len(self.img_files):
             semantic_path = self.semantic_paths[min(index, len(self.semantic_paths) - 1)]
         else:
-            semantic_path = self.semantic_paths[index // 2]
+            semantic_path = self.semantic_paths[min(index // 2, len(self.semantic_paths) - 1)]
 
         color_data = cv2.imread(color_path)
         if '.png' in depth_path:
