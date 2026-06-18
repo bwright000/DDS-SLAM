@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Train ONE CRCD 4-class DINOv2 seg-head -> dinov2_crcd.pth (Arm-4 item A4-0.3).
+
+WHY ONE TRAINER SERVES BOTH SNI-SLAM AND SemGauss-SLAM
+------------------------------------------------------
+Verified 2026-06-17 against the local repos: SNI-SLAM's `DINO2SEG`
+(sni-slam/src/networks/dinov2_seg.py) and SemGauss-SLAM's `DINO2SEG`
+(SemGauss-SLAM/utils/dinov2_seg.py) are the SAME architecture:
+  - backbone = DINOv2 `vit_base` (dinov2_vitb14, embed=768, patch=14), blocks 0-3
+    FROZEN, blocks 4+ trainable (identical requires_grad loop);
+  - head = segmentation_conv = Sequential(Upsample(x4), Conv2d(768->dim),
+    Upsample(H-2e,W-2e), Conv2d(dim->n_cls)); dim=16 in BOTH method configs.
+The only differences are parameter-FREE: the `Upsample` target sizes, the mode-enum
+names (SNI {mapping, train/result} == SemGauss {get_feature, get_semantic, classification}),
+and `crop_edge`. None of those enter the state_dict. The learnable parameter shapes depend
+only on {embed=768, dim=16, n_cls}. So with **n_cls=4, dim=16** a single state_dict has
+identical keys+shapes for both, and the SAME `dinov2_crcd.pth` loads into:
+  - SemGauss `Segmentation.get_dinov2` -> `load_state_dict(strict=True)`  (exact match), and
+  - SNI `ModelManager.get_dinov2`      -> `load_state_dict(strict=False)` (nothing dropped,
+    because the final conv is now [4,16,3,3] == SNI's CRCD n_classes=4; this also FIXES the
+    bug that SNI's fused 16-d `sem_feat` was Replica-trained, see AUDIT §4.2).
+
+REQUIREMENT for the single .pth to load strict into BOTH: the SNI and SemGauss CRCD configs
+must BOTH set n_classes=4, c_dim=16, crop_edge=0 (SNI crcd_sni_base.yaml already does; the
+SemGauss CRCD config authored in A4-3.5 must match). crop_edge only changes parameter-free
+Upsample sizes, so a mismatch would still LOAD, but keep them equal for fidelity.
+
+WHAT THIS TRAINS
+----------------
+Per the SemGauss per-scene convention (`dinov2_{scene}.pth`) and SNI's one-head-per-dataset
+convention (`dinov2_replica.pth`): by default ONE head over all CRCD snippets found (one
+surgical domain, shared 4 classes). Pass --snippets to restrict (e.g. per-snippet head).
+GT = `semantic_class/*.png` (4-class {0=bg,1=Liver,2=Gallbladder,3=Tool}; preprocess_crcd
+_published.py:138-143). RGB = `video_frames/*l.png` (rectified left = the SLAM input).
+
+The backbone is initialised from the OFFICIAL DINOv2 vitb14 pretrained weights (torch.hub,
+or --backbone_weights <path>) so blocks 0-3 are frozen at good features and blocks 4+ +
+the conv head fine-tune on CRCD. Training a ViT from random init on small CRCD data would be
+useless, so a successful backbone init is REQUIRED (the script exits non-zero if it fails).
+
+RUNS ON COLAB (GPU + staged CRCD). This machine can only syntax-check it.
+
+Usage:
+  python Addons/seg/train_dinov2_crcd.py \
+      --crcd_root data/CRCD --dinov2_main /content/sni-slam/seg/facebookresearch_dinov2_main \
+      --out seg/dinov2_crcd.pth --epochs 40 --img_h 720 --img_w 1280 --crop_edge 0 \
+      --n_classes 4 --dim 16 --val_frac 0.1
+  # quick wiring check (few iters, tiny):
+  python Addons/seg/train_dinov2_crcd.py --crcd_root data/CRCD --dinov2_main <path> --out /tmp/x.pth --smoke
+"""
+import argparse
+import glob
+import os
+import sys
+
+import numpy as np
+
+try:
+    import cv2
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import Dataset, DataLoader
+except ImportError as e:  # pragma: no cover - environment guard
+    print(f"[train_dinov2_crcd] missing dep: {e}. Run inside the torch2 env (colab_setup.sh).")
+    raise
+
+IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32)
+IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32)
+
+
+# --- the seg head (param-name-identical to BOTH repos' DINO2SEG; see module docstring) ----
+def make_vit_base(dinov2_main):
+    if dinov2_main and dinov2_main not in sys.path:
+        sys.path.append(dinov2_main)
+    try:
+        from dinov2.models import vision_transformer as vits
+    except ImportError as e:
+        raise RuntimeError(
+            f"could not import dinov2 from --dinov2_main='{dinov2_main}'. Point it at a vendored "
+            f"facebookresearch_dinov2_main (e.g. sni-slam/seg/facebookresearch_dinov2_main). {e}")
+    return vits.__dict__["vit_base"](img_size=518, patch_size=14, init_values=1.0,
+                                     ffn_layer="mlp", block_chunks=0)
+
+
+class DINO2SEG(nn.Module):
+    """Same param layout as SNI/SemGauss DINO2SEG: backbone.* + segmentation_conv.{1,3}.*"""
+    def __init__(self, img_h, img_w, num_cls, dinov2_main, edge=0, dim=16):
+        super().__init__()
+        self.embedding_size, self.patch_size = 768, 14
+        self.num_class, self.img_h, self.img_w = num_cls, img_h, img_w
+        self.backbone = make_vit_base(dinov2_main)
+        # freeze blocks 0-3, train 4+ (identical to both repos' loop)
+        switch = False
+        for name, param in self.backbone.named_parameters():
+            if 'blocks.4.' in name:
+                switch = True
+            param.requires_grad = bool(switch)
+        self.segmentation_conv = nn.Sequential(
+            nn.Upsample(scale_factor=4),
+            nn.Conv2d(self.embedding_size, dim, (3, 3), padding=(1, 1)),
+            nn.Upsample((img_h - 2 * edge, img_w - 2 * edge)),
+            nn.Conv2d(dim, num_cls, (3, 3), padding=(1, 1)),
+        )
+        bh = ((img_h - 2 * edge) // 14) * 14
+        bw = ((img_w - 2 * edge) // 14) * 14
+        self.upsample = nn.Upsample((bh, bw))
+
+    def forward(self, x):  # full head -> per-pixel logits (= 'get_semantic'/'train' mode)
+        x = self.upsample(x)
+        bs = x.shape[0]
+        gh, gw = int(x.shape[2] / self.patch_size), int(x.shape[3] / self.patch_size)
+        out = self.backbone.forward_features(x.float())["x_norm_patchtokens"]
+        out = out.reshape(bs, self.embedding_size, gh, gw)
+        return self.segmentation_conv(out)  # [B, n_cls, H-2e, W-2e]
+
+
+def init_backbone(model, weights):
+    """Load official DINOv2 vitb14 pretrained weights into model.backbone (REQUIRED)."""
+    if weights and weights != 'hub':
+        sd = torch.load(weights, map_location='cpu')
+    else:
+        hub = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14')
+        sd = hub.state_dict()
+    miss, unexp = model.backbone.load_state_dict(sd, strict=False)
+    loaded = len(sd) - len(unexp)
+    print(f"[backbone init] loaded {loaded}/{len(sd)} tensors (missing={len(miss)} unexpected={len(unexp)})")
+    if loaded < 0.5 * len(sd):
+        raise RuntimeError("backbone init loaded <50% of DINOv2 weights — key mismatch; aborting "
+                           "(fine-tuning a random ViT on CRCD is useless).")
+
+
+# --- data --------------------------------------------------------------------------------
+class CRCDSeg(Dataset):
+    def __init__(self, pairs, img_h, img_w, n_classes):
+        self.pairs, self.img_h, self.img_w, self.n_classes = pairs, img_h, img_w, n_classes
+
+    def __len__(self):
+        return len(self.pairs)
+
+    def __getitem__(self, i):
+        rgb_p, lab_p = self.pairs[i]
+        rgb = cv2.cvtColor(cv2.imread(rgb_p, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        rgb = cv2.resize(rgb, (self.img_w, self.img_h), interpolation=cv2.INTER_LINEAR)
+        rgb = (rgb.astype(np.float32) / 255.0 - IMAGENET_MEAN) / IMAGENET_STD
+        rgb = torch.from_numpy(rgb.transpose(2, 0, 1))
+        lab = cv2.imread(lab_p, cv2.IMREAD_UNCHANGED)
+        if lab.ndim == 3:
+            lab = lab[..., 0]
+        u = np.unique(lab)
+        assert u.max() < self.n_classes, (
+            f"{lab_p}: label ids {u.tolist()} exceed n_classes={self.n_classes} — "
+            f"semantic_class must be the 4-class {{0,1,2,3}} map (§0 Decision 3).")
+        lab = cv2.resize(lab.astype(np.uint8), (self.img_w, self.img_h),
+                         interpolation=cv2.INTER_NEAREST)
+        return rgb, torch.from_numpy(lab.astype(np.int64))
+
+
+def gather_pairs(crcd_root, snippets):
+    names = snippets or sorted(
+        d for d in os.listdir(crcd_root)
+        if os.path.isdir(os.path.join(crcd_root, d, 'video_frames'))
+        and os.path.isdir(os.path.join(crcd_root, d, 'semantic_class')))
+    pairs = []
+    for nm in names:
+        rgbs = sorted(glob.glob(os.path.join(crcd_root, nm, 'video_frames', '*l.png')))
+        labs = sorted(glob.glob(os.path.join(crcd_root, nm, 'semantic_class', '*.png')))
+        n = min(len(rgbs), len(labs))
+        if len(rgbs) != len(labs):
+            print(f"[data] WARN {nm}: {len(rgbs)} rgb vs {len(labs)} labels; pairing first {n}.")
+        pairs += list(zip(rgbs[:n], labs[:n]))
+    if not pairs:
+        raise RuntimeError(f"no (RGB, semantic_class) pairs under {crcd_root} (snippets={names}). "
+                           f"Run preprocess_crcd_published.py first.")
+    print(f"[data] {len(pairs)} frames over snippets={names}")
+    return pairs
+
+
+def miou(model, loader, n_classes, device):
+    model.eval()
+    inter = np.zeros(n_classes); union = np.zeros(n_classes)
+    with torch.no_grad():
+        for rgb, lab in loader:
+            pred = model(rgb.to(device)).argmax(1).cpu().numpy()
+            gt = lab.numpy()
+            for c in range(n_classes):
+                p, g = pred == c, gt == c
+                inter[c] += np.logical_and(p, g).sum()
+                union[c] += np.logical_or(p, g).sum()
+    ious = inter / np.maximum(union, 1)
+    return float(ious.mean()), ious
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('--crcd_root', required=True, help='dir of preprocessed CRCD snippet folders')
+    ap.add_argument('--dinov2_main', required=True, help='path to a vendored facebookresearch_dinov2_main')
+    ap.add_argument('--out', required=True, help='output dinov2_crcd.pth')
+    ap.add_argument('--snippets', nargs='+', default=None, help='restrict to these NAME dirs (default: all)')
+    ap.add_argument('--backbone_weights', default='hub', help="'hub' (torch.hub dinov2_vitb14) or a .pth path")
+    ap.add_argument('--n_classes', type=int, default=4)
+    ap.add_argument('--dim', type=int, default=16)
+    ap.add_argument('--img_h', type=int, default=720)
+    ap.add_argument('--img_w', type=int, default=1280)
+    ap.add_argument('--crop_edge', type=int, default=0)
+    ap.add_argument('--epochs', type=int, default=40)
+    ap.add_argument('--batch_size', type=int, default=2)
+    ap.add_argument('--lr', type=float, default=1e-4)
+    ap.add_argument('--val_frac', type=float, default=0.1)
+    ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--smoke', action='store_true', help='2 epochs, <=16 frames, batch 1 — wiring check')
+    a = ap.parse_args()
+
+    torch.manual_seed(a.seed); np.random.seed(a.seed)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    pairs = gather_pairs(a.crcd_root, a.snippets)
+    if a.smoke:
+        pairs = pairs[:16]; a.epochs = 2; a.batch_size = 1
+    rng = np.random.default_rng(a.seed); idx = rng.permutation(len(pairs))
+    nval = max(1, int(len(pairs) * a.val_frac))
+    val = [pairs[i] for i in idx[:nval]]; train = [pairs[i] for i in idx[nval:]]
+
+    tr = DataLoader(CRCDSeg(train, a.img_h, a.img_w, a.n_classes), batch_size=a.batch_size,
+                    shuffle=True, num_workers=2, drop_last=True)
+    vl = DataLoader(CRCDSeg(val, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2)
+
+    model = DINO2SEG(a.img_h, a.img_w, a.n_classes, a.dinov2_main, edge=a.crop_edge, dim=a.dim)
+    init_backbone(model, a.backbone_weights)
+    model = model.to(device)
+    opt = torch.optim.Adam([p for p in model.parameters() if p.requires_grad], lr=a.lr)
+    ce = nn.CrossEntropyLoss()
+
+    best = -1.0
+    for ep in range(a.epochs):
+        model.train(); tot = 0.0
+        for rgb, lab in tr:
+            opt.zero_grad()
+            loss = ce(model(rgb.to(device)), lab.to(device))
+            loss.backward(); opt.step(); tot += float(loss)
+        m, ious = miou(model, vl, a.n_classes, device)
+        print(f"[ep {ep:03d}] train_loss={tot/max(1,len(tr)):.4f}  val_mIoU={m:.4f}  "
+              f"perclass={np.round(ious,3).tolist()}")
+        if m >= best:
+            best = m
+            os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
+            torch.save(model.state_dict(), a.out)
+    print(f"[done] best val_mIoU={best:.4f}  saved -> {a.out}")
+    print("[load-compat] strict-loadable by SemGauss Segmentation.get_dinov2 and (strict=False, "
+          "0 dropped) by SNI ModelManager.get_dinov2 — requires both CRCD configs n_classes=4, c_dim=16.")
+
+
+if __name__ == '__main__':
+    main()

@@ -1,3 +1,5 @@
+> 🔒 **Plumbing now governed by [CONTRACT.md](CONTRACT.md) (2026-06-17).** §0 resolved decisions + the metric law below remain authoritative, but the CLI/output/exit-code/filename details in §6/§7 are superseded by CONTRACT.md where they differ (canonical render-metric files are `render_eval.{csv,txt}`, not `render_metrics.txt`; aggregator is `aggregate_crcd_generic.py`).
+
 # 00_COMMON.md — Shared Run Book for the CRCD Semantic-SLAM Benchmark
 
 ## ⚙️ Resolved Benchmark Decisions (authoritative — override any "escalate"/"open question" below)

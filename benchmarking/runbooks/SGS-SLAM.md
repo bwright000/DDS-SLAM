@@ -34,8 +34,8 @@ Everything must be driven by a single `run_sgsslam.sh` line (Section 7) with per
 
 ## 1. Orientation / required reading (do this first, in order)
 
-### 1.1 Shared harness doc (NON-BLOCKING)
-- Read **`00_COMMON.md`** at the benchmark root if present. **As of this writing it does not exist in this repo** (`find . -iname "00_COMMON*"` returns nothing). **This is NON-BLOCKING.** Per Section 0.2, an item with a safe interim default is non-blocking: **Section 7 of this document IS the authoritative interim CLI/output contract.** Proceed using Section 7, log a one-line note to `_escalations.log` (`ESCALATE [orient] 00_COMMON.md absent; using Section 7 as interim contract | blocking=no`), and surface it in Section 10 open questions. Do **not** exit 42 for this.
+### 1.1 Shared harness docs (AUTHORITATIVE — read first)
+- **`CONTRACT.md` and `00_COMMON.md` both EXIST** at `benchmarking/runbooks/` and are AUTHORITATIVE. (A previous version of this book wrongly claimed 00_COMMON was absent — **corrected 2026-06-17**.) **Read [`CONTRACT.md`](CONTRACT.md) in full FIRST:** it governs the CLI signature, output layout, artifact filenames, exit codes, and aggregation, and **SUPERSEDES Section 7 of this document** wherever they differ — notably escalate exit code `42`→**`20`**, the calib path (`cam_calib/`, not `_calib/`), and the render-metric filenames (`render_eval.{csv,txt}`, not `render_metrics.txt`). Then read [`00_COMMON.md`](00_COMMON.md) §0 (resolved decisions) + the metric law. Where this book disagrees with CONTRACT.md on plumbing, CONTRACT.md wins; where they disagree on a load-bearing scientific fact, STOP and escalate (Section 0.2, code **20**).
 
 ### 1.2 SGS-SLAM paper (read these sections, in this order)
 - **Abstract + Method** — confirm the per-Gaussian "semantic color" channel, the second rasterization pass (`render_mode='semantic_color'`), and the joint color+depth+semantic loss. Note the **tracking seg-loss weight 0.05** and **mapping seg-loss weight 0.1** (matches `configs/replica/slam.py`: `tracking.loss_weights.seg=0.05`, `mapping.loss_weights.seg=0.1`).
@@ -236,14 +236,14 @@ Bar is per-scene (Section 2.6). For each chosen scene, the reproduced numbers mu
 CRCD lives on the user's local **F:/** drive; Colab cannot read F:/. Required flow:
 1. **(User/operator step, off-Colab):** copy CRCD-Published from `F:/Datasets/CRCD-Published` to `/content/drive/MyDrive/Datasets/CRCD-Published/`. **Staging manifest (ALL of these must be present per snippet):**
    - `<EP>/snippet_<SID>/{rgb, rgbright, semantic_instance, groundtruth.txt, intrinsics.yaml}`
-   - **The ECM_STEREO L2R rectification pickle** (required by `preprocess_crcd_published.py --calib_pkl`). On the operator's machine it lives at `C:/Users/benli/sam3facebook/cam_cali/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl`. **Stage it to a fixed Drive path: `/content/drive/MyDrive/Datasets/CRCD-Published/_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl`.** Its keys (`ecm_map_left_x`, `ecm_map_left_y`, `ecm_map_right_x`, `ecm_map_right_y`) are exactly what `load_stereo_maps` reads.
+   - **The ECM_STEREO L2R rectification pickle** (required by `preprocess_crcd_published.py --calib_pkl`). On the operator's machine it lives at `C:/Users/benli/sam3facebook/cam_cali/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl`. **Stage it to a fixed Drive path: `/content/drive/MyDrive/Datasets/CRCD-Published/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl`.** Its keys (`ecm_map_left_x`, `ecm_map_left_y`, `ecm_map_right_x`, `ecm_map_right_y`) are exactly what `load_stereo_maps` reads.
    - **Pre-flight check (BLOCKING):** if the calib pickle OR any snippet's `semantic_instance/` is absent, escalate (`blocking=yes`, code 42) — rectification and every downstream step cannot run without them. Do not fabricate.
 2. **Stage to /content** per snippet exactly as `run_crcd_4snippets.sh` Phase 1: prefer a per-snippet tarball (≈3–5 min) over per-item FUSE cp (≈78 min/8 GB). Verify `N_RGB ≥ frames`.
 3. **Rectify** with:
    ```bash
    python Addons/preprocess/preprocess_crcd_published.py \
      --snippet_dir /content/CRCD-Published/<EP>/snippet_<SID> \
-     --calib_pkl   /content/drive/MyDrive/Datasets/CRCD-Published/_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl \
+     --calib_pkl   /content/drive/MyDrive/Datasets/CRCD-Published/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl \
      --output_dir  data/CRCD/<NAME>
    ```
    → produces `video_frames/{l,r}.png`, `masks/`, `semantic_class/NNNNNN.png`, `groundtruth.txt`, `rectified_calib.txt`. Verify `rectified_calib.txt` exists and left/right/GT counts match.
@@ -532,7 +532,7 @@ Panels: (1) Input RGB, (2) Rendered RGB, (3) Input Depth, (4) Output Depth (robu
 | `SGS_REPO` | `/content/SGS-SLAM` | method clone |
 | `DDS_REPO` | `/content/DDS-SLAM` | harness repo |
 | `OUT_ROOT` | `/content/drive/MyDrive/Outputs/sgsslam` | all outputs |
-| `CRCD_DRIVE` | `/content/drive/MyDrive/Datasets/CRCD-Published` | staged raw (incl. `_calib/...pkl`) |
+| `CRCD_DRIVE` | `/content/drive/MyDrive/Datasets/CRCD-Published` | staged raw (incl. `cam_calib/...pkl`) |
 | `SEED` | `0` | determinism (→ config `seed`) |
 | `GPU_MIN_VRAM_GB` | `12` | hard abort floor (§3.4) |
 | `TORCH_CUDA_ARCH_LIST` | auto from `compute_cap` | rasterizer build |

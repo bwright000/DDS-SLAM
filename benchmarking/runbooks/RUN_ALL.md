@@ -1,5 +1,7 @@
 > **Resolved decisions apply.** See *Resolved Benchmark Decisions* in [00_COMMON.md](00_COMMON.md) — they override any “escalate”/“open question” below: Depth-L1 = input-vs-output per model; periodic ~100f stereo rescaling; per-paper semantic mirroring on CRCD 4 classes; missing configs (e3_005/c3_001/g3_001) are the agent's job.
 
+> 🔒 **SUPERSEDED FOR PLUMBING by [CONTRACT.md](CONTRACT.md) (2026-06-17).** The CLI signature, output layout, artifact filenames, exit codes, and aggregator in this file are the OLD 4-arg `<stage> <leg> <out_dir> <gpu_tier>` scheme and are **deprecated**. Use CONTRACT.md (`<phase> [snippet]`, `<NAME>_s<SEED>`, `render_eval.{csv,txt}`, exit `0/10/20/30/40/1`, `aggregate_crcd_generic.py`). This doc is retained for its matrix/GPU/failure-isolation prose only.
+
 # RUN_ALL.md — Master Orchestration Run Book
 
 > **Scope.** Top-level run book for the 4-method semantic-SLAM benchmark on the *published-paper* methodology. It defines the single entrypoint `bench.sh`, the run matrix, robust failure isolation, resumability, GPU/VRAM preflight, the F:/→Drive→/content data pipeline, and the final cross-method aggregation.
@@ -523,6 +525,6 @@ Until **all** of the following exist per repo, that method stays out of `METHODS
 - Master orchestrator (to author): `/content/bench/bench.sh` — §10.
 - DDS-SLAM adapter (to author): `/content/DDS-SLAM/run_ddsslam.sh` — Appendix A.
 - New helper scripts (to author): `Addons/colab/crcd_depth_gen_all5_20260617.sh`, `Addons/colab/patch_sc_factor.py`, `Addons/eval/depth_l1_stereo.py`, periodic-`--every` extension of `Addons/depth/generate_depth_stereo.py`.
-- Reused as-is: `/Users/benwright/Desktop/DDS-SLAM-BEN/DDS-SLAM/Addons/colab/run_cell.sh`, `run_crcd_4snippets.sh`, `run_stereomis_p2_1.sh`, `repro_semsup_breakthrough_20260608.sh`, `Addons/preprocess/preprocess_crcd_published.py`, `Addons/depth/generate_depth_moge.py`, `Addons/eval/sim3_ate.py`, `Addons/eval/eval_rendering.py`, `Addons/eval/aggregate_ab.py`, `Addons/viz/generate_video.py`, `Addons/env/colab_setup.sh`.
+- Reused as-is: `/content/DDS-SLAM/Addons/colab/run_cell.sh`, `run_crcd_4snippets.sh`, `run_stereomis_p2_1.sh`, `repro_semsup_breakthrough_20260608.sh`, `Addons/preprocess/preprocess_crcd_published.py`, `Addons/depth/generate_depth_moge.py`, `Addons/eval/sim3_ate.py`, `Addons/eval/eval_rendering.py`, `Addons/eval/aggregate_ab.py`, `Addons/viz/generate_video.py`, `Addons/env/colab_setup.sh`.
 - **Do NOT use for c1/c2 depth:** `Addons/colab/crcd_depth_gen_remainder_20260616.sh` (its `SNIPPETS` array starts at F3_004; comment line 29 "C/F done already" — it cannot regenerate c1_001/c2_001; critic gap 4).
 - Configs present: `configs/CRCD/c1_001_paperfaith_lrfix.yaml`, `c2_001_paperfaith_lrfix.yaml`, base `crcd_paperfaith_lrfix.yaml`. **Absent — HARD BLOCK until authored (§9.3):** `e3_005_paperfaith_lrfix.yaml` (timesteps=265), `c3_001_paperfaith_lrfix.yaml` (1527), `g3_001_paperfaith_lrfix.yaml` (1987); each needs per-snippet `mapping.bound`/`marching_cubes_bound` derived from frame-0 rectified depth ([p2,p98]±10% pad) — derived, never guessed. Until then DDS-SLAM reports only c1_001 + c2_001.
