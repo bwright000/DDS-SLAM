@@ -2,13 +2,15 @@
 """Bake dense self-supervised deformation TARGETS Δx* for the field teacher (Stage 1 data side).
 
 For every frame k, finds where each bit of tissue sits in the CANONICAL frame (ref, default 0) via
-DINO-correspondence + depth, and stores the world-space displacement Δx* = X_ref* - X_k at DINO-patch
-resolution. This is EXACTLY the target scene_rep's TimeNet is regressed toward (deform_teacher_loss):
+DINO-correspondence + depth, and stores the world-space displacement Δx* = X_ref* - X_k on a grid of
+res (DINO-grid x --grid_scale): scale 1 = DINO-patch res; scale >1 queries DINO per-pixel (bilinear,
+like the Stage-0 gate) so the stored field isn't blurred when training/validator bilinear-sample it.
+This is EXACTLY the target scene_rep's TimeNet is regressed toward (deform_teacher_loss):
 the field at (X_k, t_k) should output Δx*. Same engine the Stage-0 gate validated (+82% pin recovery,
 cos +0.92) — backproj/project/bilinear/window-DINO-match, OpenGL, identity poses ok (Δx* is pose-frame
 consistent as long as the SAME poses bake + train).
 
-Per frame -> <out_dir>/<stem>_deform.npz : dx(Hp,Wp,3 float32), valid(Hp,Wp bool), trust(Hp,Wp float32
+Per frame -> <out_dir>/<stem>_deform.npz : dx(Ho,Wo,3 float32), valid(Ho,Wo bool), trust(Ho,Wo float32
 =1-ratio clamped). Training bilinear-samples dx/valid/trust at the sampled pixels (indice_h,indice_w).
 Pins are NOT used here (held-out judge). Pure numpy.
 
@@ -55,6 +57,7 @@ def main():
     ap.add_argument('--pds', type=float, default=8.0)
     ap.add_argument('--ref', type=int, default=0, help='canonical reference frame (the field anchor)')
     ap.add_argument('--win', type=int, default=32); ap.add_argument('--step', type=int, default=2)
+    ap.add_argument('--grid_scale', type=int, default=1, help='output/query grid = DINO-grid res x this; >1 bakes a DENSER Δx* map via per-pixel bilinear DINO query (matches the per-pin Stage-0 gate) -> less interp loss when training/validator sample it. 4 recommended; compute ~scale^2.')
     ap.add_argument('--ratio_max', type=float, default=0.9, help='Lowe cosine-dist ratio gate (lower=stricter)')
     ap.add_argument('--dx_floor', type=float, default=0.0, help='reject |Δx*|<floor as static (0=keep all)')
     ap.add_argument('--ray', default='OpenGL', choices=['OpenGL', 'OpenCV'])
@@ -74,12 +77,13 @@ def main():
         print("WARNING: no --est_c2w -> IDENTITY poses (fine for SemSup; bake AND train must use the same poses).")
     assert N >= 2, f'need >=2 frames (depth {len(deps)} dino {len(grids_p)})'
     d0 = load_depth(deps[0], args.pds); H, W = d0.shape
-    g0 = load_grid(grids_p[0]); Hp, Wp = g0.shape[:2]
-    print(f"frames {N} | image {W}x{H} | grid {Hp}x{Wp} | ref {args.ref} | win {args.win} | ratio<{args.ratio_max}")
+    g0 = load_grid(grids_p[0]); Hp, Wp = g0.shape[:2]              # DINO feature-grid res (bilinear() maps image px -> this)
+    HpO, WpO = Hp * args.grid_scale, Wp * args.grid_scale          # output/query res (Δx* stored here; denser = less interp loss)
+    print(f"frames {N} | image {W}x{H} | dino-grid {Hp}x{Wp} -> out-grid {HpO}x{WpO} (scale {args.grid_scale}) | ref {args.ref} | win {args.win} | ratio<{args.ratio_max}")
 
-    # patch-centre pixel for every grid cell (P = Hp*Wp)
-    gy, gx = np.meshgrid(np.arange(Hp), np.arange(Wp), indexing='ij')
-    PX = ((gx.ravel() + 0.5) * W / Wp); PY = ((gy.ravel() + 0.5) * H / Hp); P = PX.size
+    # cell-centre pixel for every OUTPUT grid cell (P = HpO*WpO); DINO is queried bilinearly here (per-pixel, like the gate)
+    gy, gx = np.meshgrid(np.arange(HpO), np.arange(WpO), indexing='ij')
+    PX = ((gx.ravel() + 0.5) * W / WpO); PY = ((gy.ravel() + 0.5) * H / HpO); P = PX.size
     _us = np.arange(-args.win, args.win + 1, args.step)
     OFF = np.stack(np.meshgrid(_us, _us), -1).reshape(-1, 2).astype(np.float64)   # (M,2)
 
@@ -105,10 +109,10 @@ def main():
     for k in range(N):
         if k == r:
             np.savez_compressed(os.path.join(args.out_dir, os.path.basename(grids_p[k]).replace('.npy', '') + '_deform.npz'),
-                                dx=np.zeros((Hp, Wp, 3), np.float32), valid=np.zeros((Hp, Wp), bool), trust=np.zeros((Hp, Wp), np.float32))
+                                dx=np.zeros((HpO, WpO, 3), np.float32), valid=np.zeros((HpO, WpO), bool), trust=np.zeros((HpO, WpO), np.float32))
             continue
         dk = load_depth(deps[k], args.pds); gk = load_grid(grids_p[k])
-        featq = gk.reshape(P, gk.shape[2])                     # (P,C) patch features at frame k
+        featq = bilinear(gk, PX, PY)                           # (P,C) per-pixel DINO query at frame k (matches the Stage-0 gate)
         Xk, zk = backproj(PX, PY, dk, poses[k])                # (P,3)
         cu, cv, okc = project(Xk, poses[r])                    # (P,) rigid search centres in ref
         mu = np.full(P, np.nan); mv = np.full(P, np.nan); ratio = np.ones(P)
@@ -141,7 +145,7 @@ def main():
             valid &= tis
         trust = np.clip(1.0 - ratio, 0, 1).astype(np.float32) * valid
         np.savez_compressed(os.path.join(args.out_dir, os.path.basename(grids_p[k]).replace('.npy', '') + '_deform.npz'),
-                            dx=dx.reshape(Hp, Wp, 3), valid=valid.reshape(Hp, Wp), trust=trust.reshape(Hp, Wp))
+                            dx=dx.reshape(HpO, WpO, 3), valid=valid.reshape(HpO, WpO), trust=trust.reshape(HpO, WpO))
         tot_valid += int(valid.sum()); tot += P
         if k % 25 == 0 or k == N - 1:
             vm = np.linalg.norm(dx[valid], axis=1) if valid.any() else np.array([0.0])
