@@ -123,16 +123,16 @@ PY
 # ensure_dino DATADIR RGBSUB GLOB N  -> bake DINOv2 patch grids to $DATADIR/dino/*_dino.npy.
 # Uses the torch>=2 python (DINOv2 via torch.hub). Idempotent: skips if >=N grids already present.
 # ---------------------------------------------------------------------------
-ensure_dino(){ local DD=$1 RGBSUB=$2 GLOB=$3 N=$4
-  local OUT="$DD/dino"
+ensure_dino(){ local DD=$1 RGBSUB=$2 GLOB=$3 N=$4 BK=${5:-dinov2_vits14} SUB=${6:-dino}
+  local OUT="$DD/$SUB"
   local have=$(ls "$OUT"/*_dino.npy 2>/dev/null | wc -l)
-  [ "$have" -ge "$N" ] && { say "  DINO features present ($have) -> $OUT"; return 0; }
+  [ "$have" -ge "$N" ] && { say "  DINO present ($BK, $have) -> $OUT"; return 0; }
   [ -d "$DD/$RGBSUB" ] || { say "  WARN $DD/$RGBSUB missing -> cannot bake DINO (cell will skip)"; return 1; }
-  say "  baking DINOv2 (dinov2_vits14, C=384) from $DD/$RGBSUB (have $have/$N)"
+  say "  baking $BK (C=384) from $DD/$RGBSUB -> $SUB (have $have/$N)"
   $DINO_PY "$REPO/Addons/dino/generate_dino_features.py" \
-    --rgb_dir "$DD/$RGBSUB" --rgb_glob "$GLOB" --out_dir "$OUT" --backbone dinov2_vits14 --fp32 2>&1 | tail -8
+    --rgb_dir "$DD/$RGBSUB" --rgb_glob "$GLOB" --out_dir "$OUT" --backbone "$BK" --fp32 2>&1 | tail -8
   local now=$(ls "$OUT"/*_dino.npy 2>/dev/null | wc -l)
-  [ "$now" -ge "$N" ] && { say "  DINO baked: $now grids"; return 0; } || { say "  WARN DINO bake incomplete ($now/$N)"; return 1; }
+  [ "$now" -ge "$N" ] && { say "  $BK baked: $now grids"; return 0; } || { say "  WARN $BK bake incomplete ($now/$N)"; return 1; }
 }
 
 # ---------------------------------------------------------------------------
@@ -243,9 +243,14 @@ PY
 cd "$REPO"
 stage_semsup; crcd_stage || true
 # bake DINO features (torch>=2) BEFORE switching to the torch1.10 SLAM env
-HAVE_CRCD_DINO=0; HAVE_SEMSUP_DINO=0
+HAVE_CRCD_DINO=0; HAVE_SEMSUP_DINO=0; HAVE_CRCD_DINO_REG=0; HAVE_SEMSUP_DINO_REG=0
 [ -d "$REPO/data/CRCD/C1_001/video_frames" ] && ensure_dino "$REPO/data/CRCD/C1_001" video_frames '*l.png' 360 && HAVE_CRCD_DINO=1
 [ -d "$REPO/data/Super/trail_3/rgb" ]        && ensure_dino "$REPO/data/Super/trail_3" rgb '*left.png' 151 && HAVE_SEMSUP_DINO=1
+# DINOv2-REGISTERS (de-artifacted) -> dino_reg/ for the cleanliness A/B (only baked if the dino_reg cell is requested)
+case " ${CELLS:-base geo dino dino_reg} " in *" dino_reg "*)
+  [ -d "$REPO/data/CRCD/C1_001/video_frames" ] && ensure_dino "$REPO/data/CRCD/C1_001" video_frames '*l.png' 360 dinov2_vits14_reg dino_reg && HAVE_CRCD_DINO_REG=1
+  [ -d "$REPO/data/Super/trail_3/rgb" ]        && ensure_dino "$REPO/data/Super/trail_3" rgb '*left.png' 151 dinov2_vits14_reg dino_reg && HAVE_SEMSUP_DINO_REG=1 ;;
+esac
 
 activate_dds_env
 parity_gate
@@ -261,16 +266,18 @@ JOBS=()
 add_cell(){ for s in $SEEDS; do JOBS+=("$1|$2|$3|$4|$s"); done; }
 # base + geo(v1) + dino(v2): geo re-run here = a regression check (should reproduce ~2.43mm) AND the
 # clean same-env A/B/C. CELLS env can subset, e.g. CELLS="dino" to only run the new arm.
-CELLS="${CELLS:-base geo dino}"
+CELLS="${CELLS:-base geo dino dino_reg}"
 if [ -d "$REPO/data/CRCD/C1_001/video_frames" ]; then
   case " $CELLS " in *" base "*) add_cell c1_001_canon_base CRCD data/CRCD/C1_001 crcd;; esac
   case " $CELLS " in *" geo "*)  add_cell c1_001_canon_uncert CRCD data/CRCD/C1_001 crcd;; esac
-  [ "$HAVE_CRCD_DINO" = 1 ] && case " $CELLS " in *" dino "*) add_cell c1_001_canon_uncert_dino CRCD data/CRCD/C1_001 crcd;; esac
+  [ "$HAVE_CRCD_DINO" = 1 ]     && case " $CELLS " in *" dino "*)     add_cell c1_001_canon_uncert_dino CRCD data/CRCD/C1_001 crcd;; esac
+  [ "$HAVE_CRCD_DINO_REG" = 1 ] && case " $CELLS " in *" dino_reg "*) add_cell c1_001_canon_uncert_dino_reg CRCD data/CRCD/C1_001 crcd;; esac
 fi
 if [ -d "$REPO/data/Super/trail_3/depth/moge2" ]; then
   case " $CELLS " in *" base "*) add_cell trail3_moge2_uncert_base Super data/Super/trail_3 super;; esac
   case " $CELLS " in *" geo "*)  add_cell trail3_moge2_uncert Super data/Super/trail_3 super;; esac
-  [ "$HAVE_SEMSUP_DINO" = 1 ] && case " $CELLS " in *" dino "*) add_cell trail3_moge2_uncert_dino Super data/Super/trail_3 super;; esac
+  [ "$HAVE_SEMSUP_DINO" = 1 ]     && case " $CELLS " in *" dino "*)     add_cell trail3_moge2_uncert_dino Super data/Super/trail_3 super;; esac
+  [ "$HAVE_SEMSUP_DINO_REG" = 1 ] && case " $CELLS " in *" dino_reg "*) add_cell trail3_moge2_uncert_dino_reg Super data/Super/trail_3 super;; esac
 fi
 # --- multi-T4 sharding: SHARD=i/N -> this instance runs ONLY matrix jobs where (index % N == i).
 # Launch N Colab T4 instances with SHARD=0/N, SHARD=1/N, ... SHARD=(N-1)/N to cover the full matrix

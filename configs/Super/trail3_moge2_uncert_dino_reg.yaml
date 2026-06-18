@@ -1,0 +1,9 @@
+# Inc-1 v2 DINO-REGISTERS arm (SemSup trail_3). = trail3_moge2_uncert_dino but features from
+# dinov2_vits14_REG (de-artifacted) in dino_reg/. Same 384-dim -> clean cleanliness A/B vs dino.
+# PREREQ: bake to data/Super/trail_3/dino_reg with --backbone dinov2_vits14_reg --fp32.
+inherit_from: configs/Super/trail3_moge2_uncert_dino.yaml
+data:
+  output: output/trail3_moge2_uncert_dino_reg
+  exp_name: demo
+uncertainty:
+  dino_subdir: dino_reg

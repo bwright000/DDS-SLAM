@@ -1,0 +1,15 @@
+# Inc-1 v2 DINO-REGISTERS arm (CRCD C_1/001). Identical to c1_001_canon_uncert_dino EXCEPT the DINO
+# features come from dinov2_vits14_REG (registers variant). Registers absorb DINOv2's high-norm
+# artifact activations -> the grainy/blotchy patches that vanilla vits14 paints in low-information
+# regions vanish (VERIFIED 2026-06-18: outlier-token frac ~halved, visibly smoother PCA-RGB). Same
+# 384-dim, so ONLY the baked .npy differ -> a clean feature-CLEANLINESS A/B vs dino(vits14). Tests
+# whether de-artifacted features give a less-jumpy sigma^2 -> better tracking down-weight.
+# PREREQ: bake to a SEPARATE dir (don't clobber vits14):
+#   python Addons/dino/generate_dino_features.py --rgb_dir data/CRCD/C1_001/video_frames \
+#       --rgb_glob '*l.png' --out_dir data/CRCD/C1_001/dino_reg --backbone dinov2_vits14_reg --fp32
+inherit_from: configs/CRCD/c1_001_canon_uncert_dino.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_dino_reg
+  exp_name: demo
+uncertainty:
+  dino_subdir: dino_reg
