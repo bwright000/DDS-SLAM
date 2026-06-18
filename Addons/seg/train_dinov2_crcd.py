@@ -155,7 +155,7 @@ class CRCDSeg(Dataset):
         return rgb, torch.from_numpy(lab.astype(np.int64))
 
 
-def gather_pairs(crcd_root, snippets):
+def gather_pairs(crcd_root, snippets, required=True, tag='train'):
     names = snippets or sorted(
         d for d in os.listdir(crcd_root)
         if os.path.isdir(os.path.join(crcd_root, d, 'video_frames'))
@@ -169,9 +169,13 @@ def gather_pairs(crcd_root, snippets):
             print(f"[data] WARN {nm}: {len(rgbs)} rgb vs {len(labs)} labels; pairing first {n}.")
         pairs += list(zip(rgbs[:n], labs[:n]))
     if not pairs:
-        raise RuntimeError(f"no (RGB, semantic_class) pairs under {crcd_root} (snippets={names}). "
-                           f"Run preprocess_crcd_published.py first.")
-    print(f"[data] {len(pairs)} frames over snippets={names}")
+        msg = (f"no (RGB, semantic_class) pairs under {crcd_root} ({tag} snippets={names}). "
+               f"Run preprocess_crcd_published.py first.")
+        if required:
+            raise RuntimeError(msg)
+        print(f"[data] WARN ({tag}) {msg} -> skipping {tag} eval.")
+        return []
+    print(f"[data] {tag}: {len(pairs)} frames over snippets={names}")
     return pairs
 
 
@@ -195,7 +199,10 @@ def main():
     ap.add_argument('--crcd_root', required=True, help='dir of preprocessed CRCD snippet folders')
     ap.add_argument('--dinov2_main', required=True, help='path to a vendored facebookresearch_dinov2_main')
     ap.add_argument('--out', required=True, help='output dinov2_crcd.pth')
-    ap.add_argument('--snippets', nargs='+', default=None, help='restrict to these NAME dirs (default: all)')
+    ap.add_argument('--snippets', nargs='+', default=None, help='TRAIN on these NAME dirs (default: all found)')
+    ap.add_argument('--test_snippets', nargs='+', default=None,
+                    help='HELD-OUT eval-only NAME dirs (never trained) — e.g. the 5 benchmark snippets; '
+                         'mIoU on these is the generalization number')
     ap.add_argument('--backbone_weights', default='hub', help="'hub' (torch.hub dinov2_vitb14) or a .pth path")
     ap.add_argument('--n_classes', type=int, default=4)
     ap.add_argument('--dim', type=int, default=16)
@@ -213,7 +220,7 @@ def main():
     torch.manual_seed(a.seed); np.random.seed(a.seed)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    pairs = gather_pairs(a.crcd_root, a.snippets)
+    pairs = gather_pairs(a.crcd_root, a.snippets, required=True, tag='train')
     if a.smoke:
         pairs = pairs[:16]; a.epochs = 2; a.batch_size = 1
     rng = np.random.default_rng(a.seed); idx = rng.permutation(len(pairs))
@@ -223,6 +230,8 @@ def main():
     tr = DataLoader(CRCDSeg(train, a.img_h, a.img_w, a.n_classes), batch_size=a.batch_size,
                     shuffle=True, num_workers=2, drop_last=True)
     vl = DataLoader(CRCDSeg(val, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2)
+    test_pairs = gather_pairs(a.crcd_root, a.test_snippets, required=False, tag='test') if a.test_snippets else []
+    tt = DataLoader(CRCDSeg(test_pairs, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2) if test_pairs else None
 
     model = DINO2SEG(a.img_h, a.img_w, a.n_classes, a.dinov2_main, edge=a.crop_edge, dim=a.dim)
     init_backbone(model, a.backbone_weights)
@@ -244,9 +253,14 @@ def main():
             best = m
             os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
             torch.save(model.state_dict(), a.out)
+    if tt is not None:
+        model.load_state_dict(torch.load(a.out, map_location=device))  # best-by-val checkpoint
+        tm, tious = miou(model, tt, a.n_classes, device)
+        print(f"[HELD-OUT TEST] benchmark-snippet mIoU (NEVER trained) = {tm:.4f}  "
+              f"perclass={np.round(tious, 3).tolist()}  (0=bg 1=Liver 2=Gallbladder 3=Tool)")
     print(f"[done] best val_mIoU={best:.4f}  saved -> {a.out}")
     print("[load-compat] strict-loadable by SemGauss Segmentation.get_dinov2 and (strict=False, "
-          "0 dropped) by SNI ModelManager.get_dinov2 — requires both CRCD configs n_classes=4, c_dim=16.")
+          "0 dropped) by SNI ModelManager.get_dinov2 - requires both CRCD configs n_classes=4, c_dim=16.")
 
 
 if __name__ == '__main__':
