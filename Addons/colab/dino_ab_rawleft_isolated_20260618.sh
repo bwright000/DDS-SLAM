@@ -28,6 +28,8 @@ export LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
 DINO_PY=python3
 python -c "import torch, tinycudann, marching_cubes" 2>/dev/null || { say "env build (~15min)"; bash Addons/env/colab_setup.sh --skip-data --skip-tunnel; }
 python -c "import torch;assert torch.cuda.is_available()" || { say "FATAL: no CUDA"; exit 1; }
+# MoGe-2 is a SEPARATE pip install (colab_setup.sh does not include it) — needed for the raw-left depth.
+[[ " $DATASETS " == *crcd* ]] && { python -c 'from moge.model.v2 import MoGeModel' 2>/dev/null || { say "installing MoGe-2 (~2min)"; pip install -q git+https://github.com/microsoft/MoGe.git huggingface_hub 2>&1 | tail -3; python -c 'from moge.model.v2 import MoGeModel' || { say "FATAL: MoGe-2 still not importable"; exit 1; }; }; }
 
 # ---------- stage CRCD RAW-LEFT (own data/, isolated) ----------
 CRCD=$REPO/data/CRCD/C1_001
@@ -35,8 +37,11 @@ if [[ " $DATASETS " == *crcd* ]] && [ ! -f "$CRCD/.RL_DONE" ]; then
   say "stage CRCD raw-left (rgb -> video_frames/*l.png + MoGe on raw-left)"
   SRC=$DPUB/C_1/snippet_001
   [ -d "$SRC/rgb" ] || { say "FATAL: CRCD-Published rgb missing at $SRC"; exit 1; }
-  rm -rf "$CRCD"; mkdir -p "$CRCD/video_frames" "$CRCD/_mi"
-  i=0; for f in $(ls "$SRC/rgb"/*.png | sort); do printf -v n '%06dl.png' "$i"; cp "$f" "$CRCD/video_frames/$n"; ln -sf "$CRCD/video_frames/$n" "$CRCD/_mi/${n%l.png}-left.png"; i=$((i+1)); done
+  NSRC=$(ls "$SRC/rgb"/*.png|wc -l); mkdir -p "$CRCD/video_frames" "$CRCD/_mi"
+  if [ "$(ls "$CRCD/video_frames"/*l.png 2>/dev/null|wc -l)" -lt "$NSRC" ]; then     # resumable: skip re-copy if frames already staged
+    rm -rf "$CRCD/video_frames" "$CRCD/depth"; mkdir -p "$CRCD/video_frames"
+    i=0; for f in $(ls "$SRC/rgb"/*.png | sort); do printf -v n '%06dl.png' "$i"; cp "$f" "$CRCD/video_frames/$n"; i=$((i+1)); done; fi
+  for f in "$CRCD/video_frames"/*l.png; do n=$(basename "$f"); ln -sf "$f" "$CRCD/_mi/${n%l.png}-left.png"; done
   cp "$SRC/groundtruth.txt" "$CRCD/groundtruth.txt" 2>/dev/null || true
   say "  raw-left frames: $(ls "$CRCD/video_frames"/*l.png|wc -l)"
   $DINO_PY Addons/depth/generate_depth_moge.py --rgb "$CRCD/_mi" --out "$CRCD/_mo" --temporal_window 1 --depth_scale 10000 --max_depth_m 5.0 --resolution_level 9 || { say "FATAL MoGe"; exit 1; }
