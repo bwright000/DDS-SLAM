@@ -29,7 +29,7 @@ bash Addons/colab/t4_setup_shared_20260617.sh || { say "FATAL: setup failed — 
 say "STEP 2/4: launch Field-Diag + Depth-Gen (background, throttled)"
 PARALLEL=1 bash Addons/colab/a100_arm2_field_diag_20260617.sh > "$OUT/fielddiag.log" 2>&1 &
 FPID=$!
-MOGE_MEM_FRAC=0.4 MOGE_RES=7 bash Addons/colab/crcd_depth_stereo120_20260617.sh > "$OUT/depthgen.log" 2>&1 &
+MOGE_MEM_FRAC=0.4 MOGE_RES=7 bash Addons/colab/crcd_depth_rawleft_all_20260618.sh > "$OUT/depthgen.log" 2>&1 &
 DPID=$!
 say "  Field-Diag pid=$FPID -> $OUT/fielddiag.log   Depth-Gen pid=$DPID -> $OUT/depthgen.log"
 

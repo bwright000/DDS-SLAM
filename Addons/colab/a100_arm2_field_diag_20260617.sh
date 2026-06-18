@@ -107,7 +107,10 @@ runpy.run_path('ddsslam.py', run_name='__main__')
 PY
     PYRC=$?; [ "$PYRC" -ne 0 ] && echo "!!! TRAIN CRASHED rc=$PYRC -- this cell will NOT be marked .DONE"
     make_video "$OUT" "$LW/${CELL}_6panel.mp4"
-    python Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$OUT" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"
+    # CPU-only + unbuffered: LPIPS on the shared T4 OOM-killed this on 2026-06-17 and block-buffered
+    # stdout was lost -> empty render_metrics.txt. CUDA_VISIBLE_DEVICES="" forces CPU LPIPS (no GPU
+    # contention); python -u flushes so a kill can't silently swallow the result.
+    CUDA_VISIBLE_DEVICES="" python -u Addons/eval/eval_rendering.py --gt_dir "$DDIR/rgb" --render_dir "$OUT" --name "$CELL" --sequence "Lab1 (trail3)" > "$LW/render_metrics.txt" 2>&1 || echo "WARN render-eval"
     # rigid pin reprojection error (FIELD-BLIND baseline; intrinsics default == SemSup; depth_scale 8 == loader)
     if [ -n "$PTS" ] && [ -f "$PTS" ] && [ -f "$DEPTH0" ]; then
       python Addons/eval/compute_rep_err.py --est_c2w "$RUN/est_c2w_data.txt" --pts "$PTS" \
