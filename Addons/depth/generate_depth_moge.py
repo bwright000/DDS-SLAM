@@ -161,6 +161,29 @@ def main():
     print(f"Loading MoGe-2 ({args.model_id}) on {device}...")
     model = MoGeModel.from_pretrained(args.model_id).to(device).eval()
 
+    # -------- FAST PATH: streaming per-frame write (O(1) RAM) --------
+    # With no temporal smoothing and no ref scale-match, the [T,H,W] stack is pure
+    # overhead — and pre-allocating it OOM-KILLS long snippets (E_1 2097f @720x1280
+    # = 7.7 GB + MoGe/torch/CUDA > 12 GB box). Infer + write each frame immediately.
+    if args.temporal_window <= 1 and not (args.ref and os.path.isdir(args.ref)):
+        print(f"\n[stream] temporal_window<=1 + no --ref -> per-frame write, O(1) RAM (handles any length)")
+        n_written = 0
+        with torch.no_grad():
+            for rgb_path in tqdm(rgb_files, desc="MoGe-2 stream"):
+                img = cv2.cvtColor(cv2.imread(rgb_path), cv2.COLOR_BGR2RGB)
+                H_ref, W_ref = img.shape[:2]
+                t = torch.tensor(img / 255.0, dtype=torch.float32, device=device).permute(2, 0, 1)
+                out = model.infer(t, resolution_level=args.resolution_level)
+                d = out["depth"].cpu().numpy().astype(np.float32)
+                d = np.clip(np.where(np.isfinite(d), d, 0.0), 0.0, args.max_depth_m)
+                if d.shape != (H_ref, W_ref):
+                    d = cv2.resize(d, (W_ref, H_ref), interpolation=cv2.INTER_LINEAR)
+                fid = os.path.basename(rgb_path).split("-")[0]
+                np.save(os.path.join(args.out, f"{fid}-left_depth.npy"), (d * args.depth_scale).astype(np.float32))
+                n_written += 1
+        print(f"Wrote {n_written}/{len(rgb_files)} depth maps to {args.out}  (streaming, depth_scale={args.depth_scale})")
+        return
+
     # -------- Stage 1: per-frame inference --------
     print(f"\n[1/3] Running MoGe-2 inference on {len(rgb_files)} frames...")
     # MEMORY: don't build a list and then np.stack — that doubles peak memory

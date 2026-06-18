@@ -59,25 +59,26 @@ def main():
             ddir = os.path.join(args.depth_root, ep, sid)
             raw = count_glob(os.path.join(ddir, args.raw_subdir), args.depth_glob)
             met = count_glob(os.path.join(ddir, args.metric_subdir), args.depth_glob)
-            exp = gt if gt > 0 else rgb                         # GT is the anchor; rgb fallback
+            exp = rgb if rgb > 0 else gt                        # depth follows rgb (the frames it's made from)
+            gtflag = '' if (gt < 0 or rgb < 0 or gt == rgb) else f'  [!] GT {gt}!=rgb {rgb} (eval-pairing concern)'
             if met < 0 and raw < 0:
-                st = 'MISSING (no depth dir / MoGe never ran)'
+                st = 'MISSING (no depth dir / MoGe never ran)' + gtflag
             elif met < 0:
-                st = f'NO_METRIC (raw={raw}) -> stereo120 failed' if raw > 0 else 'NO_METRIC & NO_RAW -> MoGe failed'
+                st = (f'NO_METRIC (raw={raw}) -> stereo120 failed' if raw > 0 else 'NO_METRIC & NO_RAW -> MoGe failed') + gtflag
             elif exp > 0 and met == exp:
-                st = 'OK'
+                st = 'OK' + gtflag
             elif exp > 0 and met < exp:
-                st = f'PARTIAL {met}/{exp}' + ('' if raw == exp or raw < 0 else f' (raw {raw})')
+                st = f'PARTIAL {met}/{exp}' + ('' if raw == exp or raw < 0 else f' (raw {raw})') + gtflag
             elif exp > 0 and met > exp:
-                st = f'EXTRA {met}/{exp} (?!)'
+                st = f'EXTRA {met}/{exp} (?!)' + gtflag
             else:
-                st = f'metric={met} (no GT to check)'
+                st = f'metric={met} (no rgb/GT to check)'
             rows.append((ep, sid, gt, rgb, raw, met, st))
             print(f"{ep+'/'+sid:22s} {gt:>5d} {rgb:>5d} {raw:>8d} {met:>7d}  {st}")
-            if st != 'OK' and not st.startswith('metric='):
+            if not st.startswith('OK') and not st.startswith('metric='):
                 tofix.append(f"{ep}/{sid}")
 
-    ok = sum(1 for r in rows if r[6] == 'OK')
+    ok = sum(1 for r in rows if r[6].startswith('OK'))
     print(f"\n=== {ok}/{len(rows)} snippets OK ===")
     if tofix:
         print(f"TO FIX ({len(tofix)}): " + ' '.join(tofix))
