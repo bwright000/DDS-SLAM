@@ -1,0 +1,20 @@
+# ARM-2 Stage-1 A/B CONTROL (pose-frozen, MoGe2): the dead deformation field WITHOUT the teacher.
+# Pose pinned at frame-0 identity (the 4 knobs from hyp_super_posefrozen) so the run's gauge matches the
+# identity-pose bake EXACTLY -> bake/train/judge all identity-consistent (SemSup camera GT==identity,
+# near-static, so pinning identity ~= truth and the field is the only explanation of tissue motion).
+# time_normalize:true -> well-conditioned [0,1] time axis. deformation_sup_weight:0 => the field trains
+# ONLY via the shared render loss = STARVED = the |Δx|=0 dead baseline the teacher arm is diffed against.
+inherit_from: configs/Super/trail3_moge2.yaml
+data:
+  output: output/trail3_teacher_off
+  exp_name: demo
+tracking:
+  const_speed: false
+  lr_rot: 0.0
+  lr_trans: 0.0
+mapping:
+  lr_rot: 0.0
+  lr_trans: 0.0
+training:
+  time_normalize: true
+  deformation_sup_weight: 0

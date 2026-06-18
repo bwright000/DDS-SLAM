@@ -1,0 +1,13 @@
+# ARM-2 Stage-1 TEACHER arm: regress TimeNet toward the baked Δx* target (depth+DINO correspondence,
+# validated +86.2%/cos0.935 at the held-out pins). The ONLY delta vs trail3_teacher_off is
+# deformation_sup_weight (+ deform_subdir, inert when the weight is 0) -> a clean single-variable A/B.
+# deform_subdir=deform -> data/Super/trail_3/deform/<stem>_deform.npz (baked at --grid_scale 3).
+# weight=100 is the PRIMARY tunable: def_sup is a trust-weighted MSE ~1e-3 world^2, x100 ~ the depth-loss
+# scale; sweep DOWN if the field over-deforms / render regresses, UP if revival is weak on the judge.
+inherit_from: configs/Super/trail3_teacher_off.yaml
+data:
+  output: output/trail3_teacher_on
+  exp_name: demo
+  deform_subdir: deform
+training:
+  deformation_sup_weight: 100
