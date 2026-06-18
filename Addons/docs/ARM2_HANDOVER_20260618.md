@@ -114,5 +114,16 @@ if _ds_w > 0 and ret.get('def_sup') is not None:
 2. **CRCD motion-floor go/no-go:** if CRCD's |Δx*| sits at/below the depth-noise floor → ship SemSup-only & park CRCD until STIR, OR invest in sub-pixel/RAFT correspondence. (Resolve with the generic-cycle probe on CRCD once its DINO is baked.)
 3. **STIR sequencing:** build the STIR EPE loader before the teacher (un-gameable transfer GT) vs bolt it on after.
 
+## 11. CROSS-ARM UPDATE — from the Arm-1 literature scan (2026-06-18, wkf02pcz6)
+Full context: `Addons/docs/ARM1_LITERATURE_POSITIONING_20260618.md`. Three things that change Arm-2:
+
+1. **`|Δx*|` is GAUGE-CONFOUNDED — do not trust raw magnitude as the sole target validity.** The lit (NRGS-SLAM, D²NeRF) is explicit: a large `|Δx*|` also comes from **camera-parallax leakage, depth noise, and tool motion**, not only tissue deformation. Our baker already gates by seg(tool)/depth/ratio/floor — those are a *partial* proxy. The **principled** gate is the **rigid-vs-deformable residual CONTRAST** `Δ = Ē^rigid − Ē^deform`: render a **deformation-off** pass (the `deformation_off` flag already exists) and keep/trust the `Δx*` target **only where the deformable model actually lowers the residual** — gauge-correct (fires only where deformation is load-bearing, auto-rejecting static tissue the camera explains + tool/specular neither hypothesis explains) and **scale-robust** (image-space — critical since MoGe is up-to-scale). It needs a render pass (heavier than the pure-numpy baker), so v0 can ship with the current gates, but **the contrast gate is the principled upgrade and the bridge to the combine.** Use `|Δx*|` as the VECTOR target (the field needs direction); use the contrast as the GATE/trust-weight, never the field's regression target.
+
+2. **🚨 READ NRGS-SLAM (arXiv:2602.17182, 2026) IN FULL before any combine/novelty claim.** It is the single closest prior art to both the field teacher and the combine: monocular non-rigid endoscopy SLAM with a **dual-hypothesis deformation-probability** loss (rigid vs deformable, BCE) + tracking routing. The lit agents only got its abstract (fetch size limit). Its deformation-probability loss is essentially the contrast gate above — read it to position our contribution and avoid reinventing.
+
+3. **Analysis E = cheap dry-run of the gate on EXISTING checkpoints (do before building it).** Render a deformation-off pass on a current ckpt, compute `Ē^rigid − Ē^deform` per pixel, overlay on seg + the pins. Does the contrast localise on deforming tissue and avoid tools/specular? If it's sub-noise on our sub-SNR motion, that's the **STIR-gate signal** — report the negative rather than building a gate on a dead signal. (Cousin of EndoFlow-SLAM MICCAI-2025, flow-as-motion-teacher — worth a look.)
+
+**Net for Arm-2:** keep the locked teacher-supervised plan (§2–§6) — `|Δx*|` from depth+DINO is still the field's vector target. The one change: when you reach the validity/trust mask, the gold standard is the rigid-vs-deformable contrast, not raw `|Δx*|`; and the combine's σ²-teacher (when it comes) is that contrast, not `|Δx*|`.
+
 ---
 **Substrate stays pristine** (DDS-SLAM-Base = eternal reference). Everything Arm-2 is flag-gated default-off so base == pristine. The judge (§3) is the arbiter of every stage.
