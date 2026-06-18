@@ -19,7 +19,7 @@ Pins are NOT used here (held-out judge). Pure numpy.
     --depth_dir data/Super/trail_3/depth/moge2 --depth_glob '*left_depth.npy' \
     --out_dir data/Super/trail_3/deform [--est_c2w <run>/est_c2w_data.txt] [--seg_dir ...]
 """
-import os, glob, argparse, numpy as np
+import os, glob, time, argparse, numpy as np
 
 
 def load_c2w(p):
@@ -79,7 +79,7 @@ def main():
     d0 = load_depth(deps[0], args.pds); H, W = d0.shape
     g0 = load_grid(grids_p[0]); Hp, Wp = g0.shape[:2]              # DINO feature-grid res (bilinear() maps image px -> this)
     HpO, WpO = Hp * args.grid_scale, Wp * args.grid_scale          # output/query res (Δx* stored here; denser = less interp loss)
-    print(f"frames {N} | image {W}x{H} | dino-grid {Hp}x{Wp} -> out-grid {HpO}x{WpO} (scale {args.grid_scale}) | ref {args.ref} | win {args.win} | ratio<{args.ratio_max}")
+    print(f"frames {N} | image {W}x{H} | dino-grid {Hp}x{Wp} -> out-grid {HpO}x{WpO} (scale {args.grid_scale}) | ref {args.ref} | win {args.win} | ratio<{args.ratio_max}", flush=True)
 
     # cell-centre pixel for every OUTPUT grid cell (P = HpO*WpO); DINO is queried bilinearly here (per-pixel, like the gate)
     gy, gx = np.meshgrid(np.arange(HpO), np.arange(WpO), indexing='ij')
@@ -105,7 +105,7 @@ def main():
 
     r = args.ref; dref = load_depth(deps[r], args.pds); gref = load_grid(grids_p[r])
     qref = gref.reshape(-1, gref.shape[2])                     # not used directly; matches sampled below
-    tot_valid = 0; tot = 0
+    tot_valid = 0; tot = 0; _t0 = time.time()
     for k in range(N):
         if k == r:
             np.savez_compressed(os.path.join(args.out_dir, os.path.basename(grids_p[k]).replace('.npy', '') + '_deform.npz'),
@@ -147,10 +147,10 @@ def main():
         np.savez_compressed(os.path.join(args.out_dir, os.path.basename(grids_p[k]).replace('.npy', '') + '_deform.npz'),
                             dx=dx.reshape(HpO, WpO, 3), valid=valid.reshape(HpO, WpO), trust=trust.reshape(HpO, WpO))
         tot_valid += int(valid.sum()); tot += P
-        if k % 25 == 0 or k == N - 1:
-            vm = np.linalg.norm(dx[valid], axis=1) if valid.any() else np.array([0.0])
-            print(f"  [{k:3d}/{N}] valid {valid.mean()*100:4.0f}%  |Δx*| med {np.median(vm):.5f}  ratio med {np.median(ratio):.3f}")
-    print(f"[deform] DONE {N} frames -> {args.out_dir}  | overall valid {100*tot_valid/max(tot,1):.0f}%")
+        done = k + 1; el = time.time() - _t0; eta = el / max(done, 1) * (N - done)
+        vm = np.linalg.norm(dx[valid], axis=1) if valid.any() else np.array([0.0])
+        print(f"  [{done:3d}/{N}] valid {valid.mean()*100:4.0f}%  |Δx*| med {np.median(vm):.5f}  ratio med {np.median(ratio):.3f}  | {el:5.0f}s elapsed, ETA {eta:5.0f}s", flush=True)
+    print(f"[deform] DONE {N} frames in {time.time()-_t0:.0f}s -> {args.out_dir}  | overall valid {100*tot_valid/max(tot,1):.0f}%", flush=True)
 
 
 if __name__ == '__main__':
