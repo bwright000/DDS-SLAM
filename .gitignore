@@ -8,6 +8,11 @@ data/
 output/
 Output/
 
+# Local results archive — large payloads/videos/checkpoints/zips (GBs, >GitHub 100MB limit).
+# Keep local for organisation; only the human-readable INDEX.md is tracked + pushed.
+results/*
+!results/INDEX.md
+
 # Python
 __pycache__/
 *.pyc
