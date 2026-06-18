@@ -166,24 +166,45 @@ aggregate(){
   PYTHONPATH= "$py" - "$DRIVE" <<'PY'
 import sys, os, json, glob
 root = sys.argv[1]
-paper = dict(psnr=34.66, ssim=0.973, lpips=0.096, depth_l1_cm=0.356, ate_rmse_cm=0.412, miou_pct=92.72)
+paper = dict(psnr=34.66, ssim=0.973, lpips=0.096, depth_l1_cm=0.356, ate_rmse_cm=0.412, miou_pct=92.72)  # 8-scene avg
 band  = dict(psnr=('>=',33.5), ssim=('>=',0.96), lpips=('<=',0.12),
              depth_l1_cm=('<=',0.6), ate_rmse_cm=('<=',0.6), miou_pct=('>=',90.0))
+# PER-SCENE paper (Table 1 PSNR/SSIM/LPIPS; Table 3 mIoU for 4 scenes). ATE/Depth-L1 = avg only.
+PS = {'room0': dict(psnr=32.50, ssim=0.976, lpips=0.070, miou_pct=92.95),
+      'room1': dict(psnr=34.25, ssim=0.978, lpips=0.094, miou_pct=92.91),
+      'room2': dict(psnr=35.10, ssim=0.982, lpips=0.070, miou_pct=92.10),
+      'office0': dict(psnr=38.54, ssim=0.984, lpips=0.086, miou_pct=92.90),
+      'office1': dict(psnr=39.20, ssim=0.980, lpips=0.087),
+      'office2': dict(psnr=32.90, ssim=0.965, lpips=0.101),
+      'office3': dict(psnr=32.05, ssim=0.966, lpips=0.115),
+      'office4': dict(psnr=32.75, ssim=0.949, lpips=0.148)}
 ms = [json.load(open(p)) for p in sorted(glob.glob(os.path.join(root, '*', 'metrics.json')))]
 if not ms:
     print("no per-scene metrics yet"); raise SystemExit
 keys = ['psnr','ssim','lpips','depth_l1_cm','ate_rmse_cm','miou_pct']
+full = len(ms) >= 8
+L = [f"SGS-SLAM Replica repro - {len(ms)} scene(s): {[m['scene'] for m in ms]}", "",
+     "per-scene vs PER-SCENE paper (PSNR/SSIM/LPIPS/mIoU):"]
+for m in ms:
+    ref = PS.get(m['scene'], {}); parts = [f"  {m['scene']:<8}"]
+    for k, lab in [('psnr','PSNR'),('ssim','SSIM'),('lpips','LPIPS'),('miou_pct','mIoU')]:
+        r = m.get(k)
+        if r is None: continue
+        p = ref.get(k); parts.append(f"{lab} {r:.3f}" + (f"/p{p:.3f}" if p is not None else "/p?"))
+    parts.append(f"ATE {m.get('ate_rmse_cm')}cm DepthL1 {m.get('depth_l1_cm')}cm (paper avg 0.412/0.356)")
+    L.append("  ".join(parts))
 def mean(k):
     vs = [m[k] for m in ms if m.get(k) is not None]; return sum(vs)/len(vs) if vs else None
-L = [f"SGS-SLAM Replica repro - {len(ms)} scene(s): {[m['scene'] for m in ms]}", "",
-     f"{'metric':<12}{'repro':>10}{'paper':>10}{'band':>12}{'verdict':>9}"]
+L += ["", f"subset MEAN vs 8-scene-avg gate{'' if full else '  (NOTE: avg targets are exact only at full 8; a single scene differs by scene difficulty - judge it on the per-scene line above)'}:",
+      f"{'metric':<12}{'repro':>10}{'paperAvg':>10}{'band':>12}{'verdict':>9}"]
 allpass = True
 for k in keys:
     r = mean(k); p = paper[k]; op, th = band[k]
     if r is None: L.append(f"{k:<12}{'--':>10}{p:>10}{op+str(th):>12}{'n/a':>9}"); continue
     ok = (r >= th) if op == '>=' else (r <= th); allpass = allpass and ok
     L.append(f"{k:<12}{r:>10.3f}{p:>10.3f}{(op+str(th)):>12}{('PASS' if ok else 'MISS'):>9}")
-L += ["", f"GATE (report-only): {'PASS' if allpass else 'BELOW-BAND'} (headline ATE+PSNR; does NOT block CRCD - CONTRACT s8)"]
+L += ["", f"GATE (report-only): {'PASS' if allpass else 'BELOW-BAND'} - report-only, does NOT block CRCD (CONTRACT s8)"
+      + ("" if full else ". PARTIAL run -> use the per-scene line, not the avg gate.")]
 txt = "\n".join(L); print("\n"+txt); open(os.path.join(root, 'COMBINED.txt'), 'w').write(txt+"\n")
 PY
 }
