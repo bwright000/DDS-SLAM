@@ -54,11 +54,11 @@ def main():
     ap.add_argument('--cx', type=float, default=292.8861567); ap.add_argument('--cy', type=float, default=291.61479526)
     ap.add_argument('--pds', type=float, default=8.0)
     ap.add_argument('--ref', type=int, default=0, help='canonical reference frame (the field anchor)')
-    ap.add_argument('--win', type=int, default=40); ap.add_argument('--step', type=int, default=2)
+    ap.add_argument('--win', type=int, default=32); ap.add_argument('--step', type=int, default=2)
     ap.add_argument('--ratio_max', type=float, default=0.9, help='Lowe cosine-dist ratio gate (lower=stricter)')
     ap.add_argument('--dx_floor', type=float, default=0.0, help='reject |Δx*|<floor as static (0=keep all)')
     ap.add_argument('--ray', default='OpenGL', choices=['OpenGL', 'OpenCV'])
-    ap.add_argument('--chunk', type=int, default=512)
+    ap.add_argument('--chunk', type=int, default=64, help='grid points matched per batch; lower if OOM')
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     SY = -1.0 if args.ray == 'OpenGL' else 1.0; SZ = -1.0 if args.ray == 'OpenGL' else 1.0
@@ -93,10 +93,10 @@ def main():
         z = SZ * cam[..., 2]; zz = np.where(z > 1e-4, z, 1.0)
         return cx + fx * cam[..., 0] / zz, cy + SY * fy * cam[..., 1] / zz, z > 1e-4
 
-    def bilinear(g, u, v):                                     # g(Hp,Wp,C); u,v(...) -> (...,C)
+    def bilinear(g, u, v):                                     # g(Hp,Wp,C); u,v(...) -> (...,C) float32
         gxx = np.clip(u * Wp / W, 0, Wp-1-1e-3); gyy = np.clip(v * Hp / H, 0, Hp-1-1e-3)
         x0 = np.floor(gxx).astype(int); y0 = np.floor(gyy).astype(int); x1 = x0+1; y1 = y0+1
-        wx = (gxx-x0)[..., None]; wy = (gyy-y0)[..., None]
+        wx = (gxx-x0).astype(np.float32)[..., None]; wy = (gyy-y0).astype(np.float32)[..., None]
         return (g[y0, x0]*(1-wx)*(1-wy) + g[y0, x1]*wx*(1-wy) + g[y1, x0]*(1-wx)*wy + g[y1, x1]*wx*wy)
 
     r = args.ref; dref = load_depth(deps[r], args.pds); gref = load_grid(grids_p[r])
