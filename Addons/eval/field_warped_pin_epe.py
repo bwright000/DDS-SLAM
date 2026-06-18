@@ -63,6 +63,8 @@ def main():
     ap.add_argument('--fx', type=float, default=768.98551924); ap.add_argument('--fy', type=float, default=768.98551924)
     ap.add_argument('--cx', type=float, default=292.8861567); ap.add_argument('--cy', type=float, default=291.61479526)
     ap.add_argument('--ray', default='OpenGL', choices=['OpenGL', 'OpenCV'])
+    ap.add_argument('--fig_dir', default='', help='where to write the diagnostic PNG; default = the est_c2w run dir (ships to Drive alongside the payload, per the standing visuals rule)')
+    ap.add_argument('--tag', default='', help='figure label/filename stem; default = the run-dir name')
     args = ap.parse_args()
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -102,7 +104,7 @@ def main():
     g0 = pins[0]; d0 = np.load(deps[0]).astype(np.float64).squeeze()/pds
     X0, z0 = backproj(g0[:, :2], d0, poses[0])
 
-    rigid, field, dxm, cosd = [], [], [], []; shuf_field = []
+    rigid, field, dxm, cosd = [], [], [], []; shuf_field = []; fids = []
     rng_t = [k/nf if tnorm else k for k in sorted(pins) if k != 0]
     perm = np.random.permutation(rng_t)              # shuffled-time control
     for idx, k in enumerate([k for k in sorted(pins) if k != 0]):
@@ -120,7 +122,8 @@ def main():
         cosd += list((D*gt_dir).sum(1) / (np.linalg.norm(D,axis=1)*np.linalg.norm(gt_dir,axis=1) + 1e-12))
         rigid += list(r); field += list(np.linalg.norm(Xk[val]+D-X0[val], axis=1))
         shuf_field += list(np.linalg.norm(Xk[val]+Ds-X0[val], axis=1)); dxm += list(np.linalg.norm(D, axis=1))
-    rigid, field, shuf_field, dxm, cosd = map(np.array, (rigid, field, shuf_field, dxm, cosd))
+        fids += [k] * int(val.sum())
+    rigid, field, shuf_field, dxm, cosd, fids = map(np.array, (rigid, field, shuf_field, dxm, cosd, fids))
     # anchor check: D at t=0 on the frame-0 pins must be ~0
     anc = float(np.linalg.norm(field_D(torch.tensor(X0[g0[:,2]==1], dtype=torch.float32, device=dev), 0.0).cpu().numpy(), axis=1).max())
 
@@ -134,6 +137,47 @@ def main():
     print(f"  anchor check D@t=0 : {anc:.2e}  (must be ~0)")
     print("\nVERDICT: reduction >> shuffled AND |Δx|>0 AND cos>0  -> field models deformation (ALIVE).")
     print("         reduction ~= shuffled, or ~0, or |Δx|~0, or cos<=0  -> field INERT/HOLLOW (motion-teacher needed).")
+
+    # ---- progress visualisation (standing rule 2026-06-18: GPU/judge runs ship visuals to Drive, co-located) ----
+    fig_dir = args.fig_dir or os.path.dirname(os.path.abspath(args.est_c2w))
+    tag = args.tag or (os.path.basename(os.path.dirname(os.path.abspath(args.est_c2w))) or 'field_pin_epe')
+    if len(rigid) == 0:
+        print("[viz] SKIPPED: no valid pin observations")
+    else:
+        try:
+            import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
+            os.makedirs(fig_dir, exist_ok=True)
+            red = 100*(rigid.mean()-field.mean())/max(rigid.mean(), 1e-9)
+            sred = 100*(rigid.mean()-shuf_field.mean())/max(rigid.mean(), 1e-9)
+            verdict = 'ALIVE' if (red > sred + 5 and dxm.mean() > 0 and cm > 0) else ('HOLLOW' if (dxm.mean() > 0 and cm <= 0) else 'INERT')
+            fig, ax = plt.subplots(2, 3, figsize=(15, 8))
+            fig.suptitle(f'Field-warped pin EPE  —  {tag}   [{verdict}]', fontsize=14, weight='bold')
+            a = ax[0, 0]; vals = [rigid.mean(), field.mean(), shuf_field.mean()]
+            a.bar(['rigid', 'field', 'shuffled'], vals, color=['#888', '#2a8', '#c66'])
+            a.set_title(f'mean pin-EPE (world u)\nfield {red:+.1f}%  vs shuffled {sred:+.1f}%'); a.set_ylabel('EPE')
+            for i, v in enumerate(vals): a.text(i, v, f'{v:.4f}', ha='center', va='bottom', fontsize=9)
+            a = ax[0, 1]; a.hist(dxm, bins=40, color='#48a'); a.axvline(dxm.mean(), color='k', ls='--', label=f'mean {dxm.mean():.4f}')
+            a.set_title(f'|Δx| field activity (max {dxm.max():.4f})\n0 => DEAD field'); a.set_xlabel('|Δx| world u'); a.legend()
+            a = ax[0, 2]; a.hist(cosd, bins=40, range=(-1, 1), color='#8a4'); a.axvline(0, color='r'); a.axvline(cm, color='k', ls='--', label=f'mean {cm:+.3f}')
+            a.set_title('cos(D, X0-Xk)  >0 correct\n<=0 => HOLLOW'); a.set_xlabel('cos'); a.legend()
+            a = ax[1, 0]; mx = float(max(rigid.max(), field.max())) * 1.05; imp = field < rigid
+            a.scatter(rigid[imp], field[imp], s=5, alpha=0.3, color='#2a8', label=f'improved {imp.mean()*100:.0f}%')
+            a.scatter(rigid[~imp], field[~imp], s=5, alpha=0.3, color='#c66')
+            a.plot([0, mx], [0, mx], 'k--', lw=1); a.set_xlim(0, mx); a.set_ylim(0, mx)
+            a.set_title('per-pin: field vs rigid EPE\nbelow y=x = improved'); a.set_xlabel('rigid'); a.set_ylabel('field'); a.legend()
+            a = ax[1, 1]; ks = np.unique(fids)
+            pf = [100*(rigid[fids == kk].mean()-field[fids == kk].mean())/max(rigid[fids == kk].mean(), 1e-9) for kk in ks]
+            a.plot(ks, pf, '-o', ms=3, color='#2a8'); a.axhline(0, color='r'); a.set_title('per-frame field reduction %'); a.set_xlabel('frame k'); a.set_ylabel('reduction %')
+            a = ax[1, 2]; a.axis('off')
+            txt = (f'n obs        : {len(rigid)}\nrigid EPE    : {rigid.mean():.5f}\nfield EPE    : {field.mean():.5f}\n'
+                   f'reduction    : {red:+.1f}%\nshuffled red : {sred:+.1f}%\n|Δx| mean/max: {dxm.mean():.5f}/{dxm.max():.5f}\n'
+                   f'cos mean     : {cm:+.3f}\nanchor D@t=0 : {anc:.2e}\n\nVERDICT: {verdict}\n(ALIVE: red>>shuf & |Δx|>0 & cos>0)')
+            a.text(0.02, 0.98, txt, va='top', ha='left', family='monospace', fontsize=11)
+            fig.tight_layout(rect=[0, 0, 1, 0.96])
+            out = os.path.join(fig_dir, f'{tag}_field_pin_epe.png'); fig.savefig(out, dpi=110); plt.close(fig)
+            print(f"\n[viz] saved {out}")
+        except Exception as e:
+            print(f"\n[viz] SKIPPED ({type(e).__name__}: {e}) — metrics above are unaffected")
 
 
 if __name__ == '__main__':
