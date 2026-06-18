@@ -51,45 +51,55 @@ def main():
     knee = med + 6 * 1.4826 * mad
 
     def frac(n, t): return float((n > t).mean()) if len(n) else float('nan')
+    # vits14 has NO Darcet-style dramatic (>150) artifacts; its "blotches" are a MILD upper tail.
+    # Measure at vits14's OWN scale: relative spread (max/med, p99/med) + fraction above the PLAIN p95
+    # applied to BOTH backbones (so a tightening shows up). Absolute 150 reported only for reference.
+    rel = float(np.percentile(n_plain, 95))
     print(f"[{args.name}] tokens: plain {len(n_plain)}  reg {len(n_reg)}")
-    print(f"\n=== (C) DINO token L2-norm (artifact = high norm) ===")
-    print(f"  plain vits14 : med {med:.1f}  p98 {np.percentile(n_plain,98):.1f}  max {n_plain.max():.1f}")
-    if len(n_reg): print(f"  vits14_reg   : med {np.median(n_reg):.1f}  p98 {np.percentile(n_reg,98):.1f}  max {n_reg.max():.1f}")
-    print(f"  artifact frac (norm>{args.norm_thresh:.0f}, Darcet abs): plain {100*frac(n_plain,args.norm_thresh):.2f}%" + (f"  reg {100*frac(n_reg,args.norm_thresh):.2f}%" if len(n_reg) else ""))
-    print(f"  artifact frac (norm>{knee:.1f}, data-driven knee)    : plain {100*frac(n_plain,knee):.2f}%" + (f"  reg {100*frac(n_reg,knee):.2f}%" if len(n_reg) else ""))
-    if frac(n_plain, args.norm_thresh) < 0.001 and frac(n_plain, knee) < 0.01:
-        print("  ⚠️ VERDICT: plain vits14 artifact fraction ≈ 0 -> registers have little to remove -> dino_reg likely a NO-OP. Kill the arm unless (D)/render says otherwise.")
-    elif len(n_reg):
-        red = 100 * (1 - frac(n_reg, knee) / max(frac(n_plain, knee), 1e-9))
-        print(f"  registers cut the knee-artifact fraction by {red:.0f}% -> dino_reg JUSTIFIED if σ² (below) confirms pollution.")
+    print(f"\n=== (C) DINO token L2-norm (vits14 has no >150 outliers — measure relative spread) ===")
+    print(f"  plain vits14 : med {med:.1f}  p98 {np.percentile(n_plain,98):.1f}  max {n_plain.max():.1f}  (max/med {n_plain.max()/med:.2f}, p99/med {np.percentile(n_plain,99)/med:.2f})")
+    if len(n_reg):
+        rmed = np.median(n_reg)
+        print(f"  vits14_reg   : med {rmed:.1f}  p98 {np.percentile(n_reg,98):.1f}  max {n_reg.max():.1f}  (max/med {n_reg.max()/rmed:.2f}, p99/med {np.percentile(n_reg,99)/rmed:.2f})")
+        print(f"  upper-tail spread (max/med): plain {n_plain.max()/med:.3f} -> reg {n_reg.max()/rmed:.3f}  ({'TIGHTER (registers clean the mild tail = the PCA blotches)' if n_reg.max()/rmed < n_plain.max()/med else 'no tightening'})")
+        print(f"  frac above plain-p95 ({rel:.1f}): plain {100*frac(n_plain,rel):.1f}%  reg {100*frac(n_reg,rel):.1f}%  (reg<plain => mild artifact reduction, real but small)")
+    print(f"  (ref: Darcet >150 abs: plain {100*frac(n_plain,args.norm_thresh):.2f}% — ~0 by design, vits14 too small for dramatic artifacts)")
 
     # σ²-on-artifact: did high-norm tokens pollute σ²?
-    bias = None
+    bias = None; corr_fn = None
     if args.uncert_dir:
         import cv2
         U = sorted(glob.glob(os.path.join(args.uncert_dir, args.uncert_glob)))
-        ins, outs = [], []
+        ins, outs = [], []; sig_s, nrm_s = [], []
         for i, p in list(enumerate(P))[::args.stride]:
             if i >= len(U): break
-            g = load_grid(p); nm = np.linalg.norm(g, axis=2)              # (Hp,Wp)
+            g = load_grid(p); nm = np.linalg.norm(g, axis=2)              # (Hp,Wp) DINO feature norm
             sg = cv2.imread(U[i], cv2.IMREAD_UNCHANGED)
             if sg is None: continue
             sg = sg.astype(np.float32);  sg = sg[..., 0] if sg.ndim == 3 else sg
             nm_up = cv2.resize(nm, (sg.shape[1], sg.shape[0]), interpolation=cv2.INTER_NEAREST)
-            art = nm_up > knee
+            art = nm_up > rel                                            # vits14-scale tail (plain p95)
             if art.any() and (~art).any(): ins.append(sg[art].mean()); outs.append(sg[~art].mean())
+            sig_s.append(sg[::4, ::4].ravel()); nrm_s.append(nm_up[::4, ::4].ravel())
+        if sig_s:
+            ss = np.concatenate(sig_s); nn = np.concatenate(nrm_s)
+            sz = ss - ss.mean(); nz = nn - nn.mean(); dd = np.sqrt((sz * sz).sum() * (nz * nz).sum())
+            corr_fn = float((sz * nz).sum() / dd) if dd > 1e-12 else 0.0
+            print(f"\n  *** Pearson(σ², DINO feature-norm) = {corr_fn:+.3f} ***  THE DECISIVE TEST:")
+            print(f"      |r|≳0.3 => feature blotches DO drive σ² -> cleaner reg features help σ² -> KEEP dino_reg.")
+            print(f"      |r|~0   => feature blotches do NOT drive σ² (it's contrast/motion, see analysis A) -> dino_reg can't help σ².")
         if ins:
             bias = (float(np.mean(ins)), float(np.mean(outs)))
-            print(f"\n  σ² inside artifact tokens {bias[0]:.1f}  vs outside {bias[1]:.1f}  ({'POLLUTED: '+f'{bias[0]/max(bias[1],1e-6):.2f}x' if bias[0]>bias[1] else 'no pollution'})")
+            print(f"  σ² inside feature-tail vs outside: {bias[0]:.1f} vs {bias[1]:.1f}  ({bias[0]/max(bias[1],1e-6):.2f}x)")
 
     try:
         import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
         fig, ax = plt.subplots(1, 3 if bias else 2, figsize=(15 if bias else 10, 4)); fig.suptitle(f"DINO register artifacts — {args.name}")
         ax[0].hist(n_plain, bins=120, alpha=.6, label='plain', log=True)
         if len(n_reg): ax[0].hist(n_reg, bins=120, alpha=.6, label='reg', log=True)
-        ax[0].axvline(args.norm_thresh, c='r', ls='--', lw=1, label='150'); ax[0].axvline(knee, c='k', ls=':', lw=1, label='knee'); ax[0].set_xlabel('token L2 norm'); ax[0].set_ylabel('count (log)'); ax[0].legend(); ax[0].set_title('token-norm dist')
-        bars = [100*frac(n_plain, knee)] + ([100*frac(n_reg, knee)] if len(n_reg) else [])
-        ax[1].bar(['plain'] + (['reg'] if len(n_reg) else []), bars, color=['tab:blue', 'tab:green'][:len(bars)]); ax[1].set_ylabel('% artifact tokens (>knee)'); ax[1].set_title('artifact fraction')
+        ax[0].axvline(rel, c='k', ls=':', lw=1, label='plain p95'); ax[0].set_xlabel('token L2 norm'); ax[0].set_ylabel('count (log)'); ax[0].legend(); ax[0].set_title('token-norm dist (vits14: no >150 outliers)')
+        bars = [100*frac(n_plain, rel)] + ([100*frac(n_reg, rel)] if len(n_reg) else [])
+        ax[1].bar(['plain'] + (['reg'] if len(n_reg) else []), bars, color=['tab:blue', 'tab:green'][:len(bars)]); ax[1].set_ylabel('% tokens > plain-p95'); ax[1].set_title('mild-tail fraction (the blotches)')
         if bias: ax[2].bar(['outside', 'inside-artifact'], [bias[1], bias[0]], color=['gray', 'tab:red']); ax[2].set_ylabel('mean σ²'); ax[2].set_title('σ² pollution by artifacts')
         out = args.out_fig or os.path.join(os.path.dirname(args.dino_dir.rstrip('/')), f'{args.name}_dino_registers.png')
         plt.tight_layout(); plt.savefig(out, dpi=90); print(f"figure -> {out}")
