@@ -38,7 +38,14 @@ CALIB=${CALIB:-$DRIVE_CRCD/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.p
 echo "=== train_seg_head_crcd $(date -Iseconds) ==="
 echo "  TRAIN(15)=$SNIPPETS"
 echo "  TEST(held-out)=$TEST_SNIPPETS  res=${IMG_H}x${IMG_W} epochs=$EPOCHS"
-bash Addons/env/colab_setup.sh --skip-data --skip-tunnel >/dev/null 2>&1 || true
+if [ "${SKIP_ENV:-0}" = 1 ]; then
+  # seg head needs only torch+cv2+numpy (Colab-native) + the vendored dinov2 -> skip the
+  # heavy SLAM env build (tinycudann/pytorch3d/marching_cubes are NOT used here).
+  echo "[env] SKIP_ENV=1 -> skipping colab_setup; verifying minimal deps"
+  python -c "import torch, cv2, numpy" 2>/dev/null || pip install -q opencv-contrib-python numpy
+else
+  bash Addons/env/colab_setup.sh --skip-data --skip-tunnel >/dev/null 2>&1 || true
+fi
 export XFORMERS_DISABLED=${XFORMERS_DISABLED:-1}   # dinov2 attn falls back if xformers absent
 
 # --- locate a vendored dinov2 main (prefer SemGauss's in-repo copy: deterministic) ----------
