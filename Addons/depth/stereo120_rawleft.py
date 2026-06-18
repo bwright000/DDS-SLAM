@@ -89,7 +89,7 @@ def main():
     print(f'  {len(a_sc)} anchors; sc [{a_sc.min():.4f},{a_sc.max():.4f}] drift {100*(a_sc.max()/a_sc.min()-1):.1f}%')
 
     # ---- smooth linear ramp + bake metric on the RAW-left MoGe (in place geometry) ----
-    sc_pf = np.interp(np.arange(N, float), a_idx, a_sc)
+    sc_pf = np.interp(np.arange(N, dtype=float), a_idx, a_sc)
     med = []
     for i in range(N):
         moge_m = cv2.imread(M[i], cv2.IMREAD_UNCHANGED).astype(np.float32) / args.in_scale
