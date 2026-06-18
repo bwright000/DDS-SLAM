@@ -102,7 +102,7 @@ def main():
     g0 = pins[0]; d0 = np.load(deps[0]).astype(np.float64).squeeze()/pds
     X0, z0 = backproj(g0[:, :2], d0, poses[0])
 
-    rigid, field, dxm = [], [], []; shuf_field = []
+    rigid, field, dxm, cosd = [], [], [], []; shuf_field = []
     rng_t = [k/nf if tnorm else k for k in sorted(pins) if k != 0]
     perm = np.random.permutation(rng_t)              # shuffled-time control
     for idx, k in enumerate([k for k in sorted(pins) if k != 0]):
@@ -116,9 +116,11 @@ def main():
         D = field_D(Xk_t, tk).cpu().numpy()
         Ds = field_D(Xk_t, float(perm[idx])).cpu().numpy()
         r = np.linalg.norm(Xk[val]-X0[val], axis=1)
+        gt_dir = X0[val] - Xk[val]                    # the displacement the field SHOULD undo
+        cosd += list((D*gt_dir).sum(1) / (np.linalg.norm(D,axis=1)*np.linalg.norm(gt_dir,axis=1) + 1e-12))
         rigid += list(r); field += list(np.linalg.norm(Xk[val]+D-X0[val], axis=1))
         shuf_field += list(np.linalg.norm(Xk[val]+Ds-X0[val], axis=1)); dxm += list(np.linalg.norm(D, axis=1))
-    rigid, field, shuf_field, dxm = map(np.array, (rigid, field, shuf_field, dxm))
+    rigid, field, shuf_field, dxm, cosd = map(np.array, (rigid, field, shuf_field, dxm, cosd))
     # anchor check: D at t=0 on the frame-0 pins must be ~0
     anc = float(np.linalg.norm(field_D(torch.tensor(X0[g0[:,2]==1], dtype=torch.float32, device=dev), 0.0).cpu().numpy(), axis=1).max())
 
@@ -127,9 +129,11 @@ def main():
     print(f"  field-warped       : {field.mean():.5f}   reduction = {100*(rigid.mean()-field.mean())/max(rigid.mean(),1e-9):+.1f}%")
     print(f"  shuffled-time ctrl : {shuf_field.mean():.5f}   reduction = {100*(rigid.mean()-shuf_field.mean())/max(rigid.mean(),1e-9):+.1f}%")
     print(f"  |Δx| field activity: mean={dxm.mean():.5f} max={dxm.max():.5f}  (0 => dead field)")
+    cm = float(np.nanmean(cosd)) if len(cosd) else float('nan')
+    print(f"  cos(D, X0-Xk) dir  : {cm:+.3f}  (>0 toward canonical; <=0 wrong-way/HOLLOW even if reduction looks ok)")
     print(f"  anchor check D@t=0 : {anc:.2e}  (must be ~0)")
-    print("\nVERDICT: field-warped reduction >> shuffled AND |Δx|>0  -> field models deformation (ALIVE).")
-    print("         reduction ~= shuffled, or ~0, or |Δx|~0          -> field INERT (motion-teacher needed).")
+    print("\nVERDICT: reduction >> shuffled AND |Δx|>0 AND cos>0  -> field models deformation (ALIVE).")
+    print("         reduction ~= shuffled, or ~0, or |Δx|~0, or cos<=0  -> field INERT/HOLLOW (motion-teacher needed).")
 
 
 if __name__ == '__main__':
