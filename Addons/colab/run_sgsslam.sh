@@ -59,12 +59,23 @@ build_env(){
   local ENV_ROOT="$CONDA_ROOT/envs/$ENV_NAME"
   echo "[env] cuda-toolkit 11.8 (nvcc) into $ENV_NAME"
   conda install -y -n "$ENV_NAME" -c "nvidia/label/cuda-11.8.0" cuda-toolkit || echo "[env] WARN cuda-toolkit"
-  echo "[env] torch 2.0.1 + cu118 via conda (pip's cu118 index dropped 2.0.1)"
-  conda install -y -n "$ENV_NAME" -c pytorch -c nvidia pytorch==2.0.1 torchvision==0.15.2 pytorch-cuda=11.8 \
+  echo "[env] torch 2.0.1 + cu118 via conda (+ mkl/numpy pins: torch2.0.1 breaks on mkl>=2025 & numpy>=2)"
+  conda install -y -n "$ENV_NAME" -c pytorch -c nvidia \
+     pytorch==2.0.1 torchvision==0.15.2 pytorch-cuda=11.8 "mkl=2023.1.0" "numpy=1.26.4" \
      || { echo "FATAL torch install (conda pytorch channel)"; exit 30; }
-  echo "[env] requirements.txt + rasterizer build (sm_80, nvcc from env)"
+  # torch MUST import before building the rasterizer (the build imports torch for CUDA info)
+  PYTHONPATH= "$ENV_PY" -c "import torch,numpy; print('[env] torch',torch.__version__,'numpy',numpy.__version__,'OK')" \
+     || { echo "FATAL: torch import broken (mkl/numpy ABI) - see error above"; exit 30; }
+  echo "[env] pip deps (requirements minus the rasterizer; bulk, with per-dep fallback)"
+  grep -v 'diff-gaussian-rasterization' "$SGS/requirements.txt" > /tmp/sgs_reqs.txt
+  PYTHONPATH= "$ENV_PY" -m pip install -q -r /tmp/sgs_reqs.txt || {
+    echo "[env] bulk reqs failed (likely open3d/cyclonedds) -> installing slam.py runtime deps individually"
+    PYTHONPATH= "$ENV_PY" -m pip install -q pytorch-msssim torchmetrics lpips opencv-python imageio \
+       matplotlib kornia natsort pyyaml plyfile tqdm pandas wandb || echo "[env] WARN some runtime deps failed"; }
+  echo "[env] rasterizer build @cb65e4b (sm_80, nvcc from env)"
   PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="8.0" \
-     "$ENV_PY" -m pip install -q -r "$SGS/requirements.txt" || echo "[env] WARN requirements/rasterizer had failures"
+     "$ENV_PY" -m pip install -q "git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git@cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110" \
+     || echo "[env] WARN rasterizer build FAILED (see compile log above)"
   echo "[env] smoke import:"
   PYTHONPATH= "$ENV_PY" - <<'PY'
 import importlib, sys
