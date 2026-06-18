@@ -245,7 +245,27 @@ class JointEncoding(nn.Module):
         if sigma2_flat is not None:
             sigma2 = torch.reshape(sigma2_flat, list(inputs.shape[:-1]) + [sigma2_flat.shape[-1]])
         return outputs, edge_semantic, sigma2, def_reg
-    
+
+    def deform_teacher_loss(self, Xk, t, dx_target, w):
+        '''ARM-2 Stage-1: supervise the deformation field DIRECTLY (the contribution the paper lacks).
+        Regress the field output D(Xk,t) toward the baked self-supervised target Δx* (depth+DINO
+        correspondence, observed->canonical pull-back), trust-weighted. Replicates the render-path field
+        forward EXACTLY (run_network :204-218) so the supervised D is the SAME D the renderer uses:
+        embed_time ⊕ embed_fre_pos -> time_net -> deform_hardbound -> t=0 anchor. No caller unless
+        deformation_sup_weight>0 (default 0) => bit-identical to base.
+        Params: Xk [N,3] world surface pts; t [N,1] frame_time; dx_target [N,3] Δx*; w [N,1] trust.'''
+        embed_time = self.embed_time(t)
+        embed_pos = self.embed_fre_pos(Xk)
+        h = torch.cat([embed_time, embed_pos], dim=-1)
+        D = self.time_net(h)
+        _hb = self.config.get('deform_hardbound', 0)
+        if _hb and _hb > 0:
+            D = _hb * torch.tanh(D / _hb)
+        if not self.config.get('deformation_anchor_off', False):
+            D = torch.where(t.reshape(-1, t.shape[-1]) == 0, torch.zeros_like(D), D)
+        w = w.detach()                                          # trust is a fixed weight, never a gradient path
+        return (w * (D - dx_target.detach()) ** 2).sum() / w.sum().clamp_min(1.0)
+
     def query_sdf(self, query_points, return_geo=False, embed=False):
         '''
         Get the SDF value of the query points

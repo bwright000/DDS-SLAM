@@ -362,6 +362,12 @@ class DDSSLAM():
             target_d = batch['depth'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             # Inc-1 v2: per-ray DINO feature [N,C] (None unless mode:'dino').
             target_dino = sample_dino_grid(batch['dino_grid'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device) if 'dino_grid' in batch else None
+            # ARM-2 Stage-1: per-ray baked deformation target Δx* [N,3] + trust [N,1] (None unless deformation_sup_weight>0).
+            if 'deform_dx' in batch:
+                deform_dx = sample_dino_grid(batch['deform_dx'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device)
+                deform_w  = sample_dino_grid(batch['deform_trust'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device)
+            else:
+                deform_dx = deform_w = None
 
             rays_o = c2w_est[..., :3, -1].repeat(self.config['mapping']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[: ,:3, :3], -1)
@@ -372,6 +378,12 @@ class DDSSLAM():
             # Forward
             ret = self.model.forward(rays_o, rays_d, target_s, target_d,target_edge_semantic=target_edge_semantic, target_dino=target_dino)
             loss = self.get_loss_from_ret(ret)
+            # ARM-2 Stage-1: direct deformation-field teacher loss (default-off: deformation_sup_weight=0 => base).
+            _ds_w = self.config['training'].get('deformation_sup_weight', 0)
+            if _ds_w > 0 and deform_dx is not None and self.config['dynamic']:
+                Xk = rays_o[..., :3] + rays_d * target_d                       # [N,3] world surface pts
+                def_sup = self.model.deform_teacher_loss(Xk, timestamps.unsqueeze(-1), deform_dx, deform_w)
+                loss = loss + _ds_w * def_sup
             loss.backward()
             self.cur_map_optimizer.step()
         return ret, loss

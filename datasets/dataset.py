@@ -117,6 +117,18 @@ class BaseDataset(Dataset):
         ret["dino_grid"] = torch.from_numpy(grid)
         return ret
 
+    def _attach_deform(self, ret, index):
+        """ARM-2 Stage-1 (deformation_sup_weight>0): attach the baked Δx* deformation-target grid
+        [gh,gw,3] + trust [gh,gw,1] for the field teacher. current_frame_mapping bilinear-samples them
+        at the ray pixels (ddsslam.sample_dino_grid, same as dino). None => no key => base bit-identical.
+        Shared by StereoMISDataset + SuperDataset."""
+        if getattr(self, 'deform_paths', None) is None:
+            return ret
+        npz = np.load(self.deform_paths[index])
+        ret["deform_dx"] = torch.from_numpy(npz['dx'].astype(np.float32))               # [gh,gw,3]
+        ret["deform_trust"] = torch.from_numpy(npz['trust'].astype(np.float32))[..., None]  # [gh,gw,1]
+        return ret
+
 class StereoMISDataset(BaseDataset):
     def __init__(self, cfg, basedir, trainskip=1, 
                  downsample_factor=1, translation=0.0, 
@@ -148,6 +160,15 @@ class StereoMISDataset(BaseDataset):
             self.dino_paths = sorted(glob.glob(f'{self.basedir}/{_sub}/*_dino.npy'))[-4000:]
             assert len(self.dino_paths) == len(self.img_files), \
                 f"DINO features {len(self.dino_paths)} != frames {len(self.img_files)} in {self.basedir}/{_sub}"
+
+        # ARM-2 Stage-1: baked Δx* deformation targets (deformation_sup_weight>0). Same [-4000:] slice as
+        # img_files so frame i <-> deform_paths[i]. None => no key => base bit-identical.
+        self.deform_paths = None
+        if self.config['training'].get('deformation_sup_weight', 0) > 0:
+            _dsub = self.config.get('data', {}).get('deform_subdir', 'deform')
+            self.deform_paths = sorted(glob.glob(f'{self.basedir}/{_dsub}/*_deform.npz'))[-4000:]
+            assert len(self.deform_paths) == len(self.img_files), \
+                f"deform targets {len(self.deform_paths)} != frames {len(self.img_files)} in {self.basedir}/{_dsub}"
 
         self.load_poses(self.basedir)
 
@@ -229,6 +250,7 @@ class StereoMISDataset(BaseDataset):
             "direction": self.rays_d
         }
         ret = self._attach_dino(ret, index, edge)
+        ret = self._attach_deform(ret, index)
 
         return ret
 
@@ -324,6 +346,15 @@ class SuperDataset(BaseDataset):
             assert len(self.dino_paths) == len(self.img_files), \
                 f"DINO features {len(self.dino_paths)} != frames {len(self.img_files)} in {self.basedir}/{_sub}"
 
+        # ARM-2 Stage-1: baked Δx* deformation targets (deformation_sup_weight>0). NO [-4000:] slice
+        # (SemSup, like dino above). None => no key => base bit-identical.
+        self.deform_paths = None
+        if self.config['training'].get('deformation_sup_weight', 0) > 0:
+            _dsub = self.config.get('data', {}).get('deform_subdir', 'deform')
+            self.deform_paths = sorted(glob.glob(f'{self.basedir}/{_dsub}/*_deform.npz'))
+            assert len(self.deform_paths) == len(self.img_files), \
+                f"deform targets {len(self.deform_paths)} != frames {len(self.img_files)} in {self.basedir}/{_dsub}"
+
         self.load_poses(os.path.join(self.basedir, 'pose'))
         
         self.rays_d = None
@@ -412,6 +443,7 @@ class SuperDataset(BaseDataset):
             "direction": self.rays_d
         }
         ret = self._attach_dino(ret, index, edge)
+        ret = self._attach_deform(ret, index)
 
         return ret
 
