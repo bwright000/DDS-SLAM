@@ -78,9 +78,10 @@ build_env(){
   # Build the rasterizer for THIS GPU's compute capability (+PTX). sm_80-only -> garbage kernel
   # -> "numel: integer multiplication overflow" on a non-A100 (L4 8.9 / H100 9.0 / 4090 8.9).
   local CC ARCH
-  CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ')
-  [ -n "$CC" ] || CC=8.0
-  ARCH="${CC}+PTX"
+  CC=$(PYTHONPATH= "$ENV_PY" -c "import torch;print('%d.%d'%torch.cuda.get_device_capability())" 2>/dev/null)
+  [ -n "$CC" ] || CC=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ')
+  [ -n "$CC" ] || CC=7.5      # safe floor: 7.5+PTX SASS also JIT-runs on newer GPUs
+  ARCH="${ARCH_OVERRIDE:-${CC}+PTX}"
   echo "[env] GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1) compute_cap=$CC -> arch $ARCH"
   echo "[env] rasterizer build @cb65e4b (--no-build-isolation, force-reinstall, arch=$ARCH)"
   PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="$ARCH" \
@@ -137,6 +138,8 @@ run_scene(){
       -e "s/use_wandb=True/use_wandb=False/" \
       -e "s#basedir=\"./data/Replica\"#basedir=\"$REPLICA\"#" \
       "$SGS/configs/replica/slam.py" > "$cfg"
+  [ -n "${NUM_FRAMES:-}" ] && { sed -i "s/num_frames=-1/num_frames=$NUM_FRAMES/" "$cfg"; \
+     echo "[$s] NUM_FRAMES=$NUM_FRAMES (quick T4 validation - NOT a paper-comparable gate run)"; }
   echo "[$s] running SGS-SLAM (full SLAM pass; minutes-to-hours on A100)"
   ( cd "$SGS" && PYTHONPATH= "$ENV_PY" scripts/slam.py "$cfg" ) 2>&1 | tee "$dst/slam.log"
   [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "[$s] FAIL" | tee "$dst/status.txt"; return 1; }
