@@ -118,18 +118,26 @@ class DINO2SEG(nn.Module):
         return self.segmentation_conv(out)  # [B, n_cls, H-2e, W-2e]
 
 
+DINOV2_VITB14_URL = 'https://dl.fbaipublicfiles.com/dinov2/dinov2_vitb14/dinov2_vitb14_pretrain.pth'
+
+
 def init_backbone(model, weights):
-    """Load official DINOv2 vitb14 pretrained weights into model.backbone (REQUIRED)."""
-    if weights and weights != 'hub':
+    """Load official DINOv2 vitb14 PRETRAINED weights into model.backbone (REQUIRED).
+    Uses load_state_dict_from_url (downloads a flat .pth, imports NOTHING) instead of
+    torch.hub.load(): the latter executes the official dinov2 hubconf which does
+    `from dinov2.hub...`, colliding with the VENDORED `dinov2` already on sys.path
+    (make_vit_base) -> 'No module named dinov2.hub'. The .pth download has no such clash."""
+    if weights and weights not in ('hub', 'url', ''):
         sd = torch.load(weights, map_location='cpu')
     else:
-        hub = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitb14')
-        sd = hub.state_dict()
+        sd = torch.hub.load_state_dict_from_url(DINOV2_VITB14_URL, map_location='cpu')
+    if isinstance(sd, dict) and 'model' in sd and isinstance(sd['model'], dict):
+        sd = sd['model']  # unwrap if a full-training checkpoint is given
     miss, unexp = model.backbone.load_state_dict(sd, strict=False)
     loaded = len(sd) - len(unexp)
     print(f"[backbone init] loaded {loaded}/{len(sd)} tensors (missing={len(miss)} unexpected={len(unexp)})")
     if loaded < 0.5 * len(sd):
-        raise RuntimeError("backbone init loaded <50% of DINOv2 weights — key mismatch; aborting "
+        raise RuntimeError("backbone init loaded <50% of DINOv2 weights - key mismatch; aborting "
                            "(fine-tuning a random ViT on CRCD is useless).")
 
 
@@ -227,7 +235,8 @@ def main():
                     help='label subdir per snippet (default raw: semantic_instance)')
     ap.add_argument('--rgb_glob', default='*.png', help='RGB glob (default *.png)')
     ap.add_argument('--label_glob', default='*.png', help='label glob (default *.png)')
-    ap.add_argument('--backbone_weights', default='hub', help="'hub' (torch.hub dinov2_vitb14) or a .pth path")
+    ap.add_argument('--backbone_weights', default='url',
+                    help="'url' (download dinov2_vitb14_pretrain.pth) or a local .pth path")
     ap.add_argument('--n_classes', type=int, default=4)
     ap.add_argument('--dim', type=int, default=16)
     ap.add_argument('--img_h', type=int, default=720)
