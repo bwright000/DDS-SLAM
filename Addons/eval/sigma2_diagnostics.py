@@ -51,7 +51,7 @@ def main():
     print(f"[{args.name}] frames {N} | seg {'yes' if S else 'no'} | tool={tool or '-'} bg={bg or '-'}")
 
     sig_all, grad_all, mot_all, spec_all = [], [], [], []
-    cls_sig = {'tool': [], 'tissue': [], 'bg': []}
+    cls_sig = {'tool': [], 'tissue': [], 'bg': []}; sp_sig = []
     prev_gray = None
     for i in range(0, N, args.stride):
         sg = cv2.imread(U[i], cv2.IMREAD_UNCHANGED)
@@ -59,6 +59,8 @@ def main():
         sg = sg.astype(np.float32)
         if sg.ndim == 3: sg = sg[..., 0]
         H, W = sg.shape
+        _nb = (np.roll(sg, 1, 0) + np.roll(sg, -1, 0) + np.roll(sg, 1, 1) + np.roll(sg, -1, 1)) / 4.0
+        sp_sig.append((np.abs(sg - _nb) / (sg + 1.0))[1:-1, 1:-1].mean())   # σ² spatial speckle
         rgb = cv2.imread(R[i]); rgb = cv2.resize(rgb, (W, H))
         gray = cv2.cvtColor(rgb, cv2.COLOR_BGR2GRAY).astype(np.float32)
         grad = np.hypot(cv2.Sobel(gray, cv2.CV_32F, 1, 0, 3), cv2.Sobel(gray, cv2.CV_32F, 0, 1, 3))
@@ -88,6 +90,7 @@ def main():
     print(f"  Pearson(σ², |I_t−I_t-1| motion): {r_mot:+.3f}")
     print(f"  point-biserial(σ², specular): {r_spec:+.3f}")
     print(f"  => σ² is dominated by {'CONTRAST' if abs(r_grad)>=abs(r_mot) else 'MOTION'} (lit prediction: contrast/edge/specular detector, NOT deformation)")
+    print(f"  σ² spatial speckle : {np.mean(sp_sig):.3f}  (the dino_reg decider — compare dino vs dino_reg: lower on dino_reg => the register feature-smoothing reached σ²)")
     means = {}
     if S:
         print(f"\n=== (B) segment-stratified σ² ===")
