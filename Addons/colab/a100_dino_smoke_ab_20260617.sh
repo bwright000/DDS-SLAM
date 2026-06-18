@@ -20,6 +20,8 @@
 # Resume-safe (.DONE per cell). NO repo model edits (TF32+seed via launcher/config).
 # ============================================================================
 set -uo pipefail
+# 🚨 DEPRECATED 2026-06-18: this RECTIFIES CRCD frames. Policy = RAW-LEFT for ALL CRCD.
+[ "${ALLOW_RECTIFIED:-0}" = 1 ] || { echo "🚨 a100_dino_smoke_ab is DEPRECATED (rectifies CRCD). RAW-LEFT replacement: dino_ab_rawleft_isolated_20260618.sh. ALLOW_RECTIFIED=1 to force a deliberate rectified run." >&2; exit 1; }
 DATE=$(date +%Y%m%d)
 REPO=/content/DDS-SLAM
 PRISTINE=/content/DDS-SLAM-Base-pristine

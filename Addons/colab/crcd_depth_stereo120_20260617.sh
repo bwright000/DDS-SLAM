@@ -12,6 +12,8 @@
 #   throttle knobs: MOGE_MEM_FRAC=0.4 (frac of 16GB) MOGE_RES=7 (lower=less VRAM) INTERVAL=120 THREADS=2
 # ============================================================================
 set -uo pipefail
+# 🚨 DEPRECATED 2026-06-18: this RECTIFIES CRCD frames for depth. Policy = RAW-LEFT for ALL CRCD.
+[ "${ALLOW_RECTIFIED:-0}" = 1 ] || { echo "🚨 crcd_depth_stereo120 is DEPRECATED (rectified depth). RAW-LEFT replacement: crcd_depth_rawleft_all_20260618.sh. ALLOW_RECTIFIED=1 to force a deliberate rectified run." >&2; exit 1; }
 DATE=$(date +%Y%m%d)
 export DDS_DIR=/content/DDS-SLAM
 DRIVE_CRCD=/content/drive/MyDrive/Datasets/CRCD-Published

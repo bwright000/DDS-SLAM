@@ -12,6 +12,8 @@
 #   PARALLEL not used (sequential MoGe; polite to the running SLAM). Override threads: THREADS=2 bash ...
 # ============================================================================
 set -uo pipefail
+# 🚨 DEPRECATED 2026-06-18: this RECTIFIES CRCD frames for depth. Policy = RAW-LEFT for ALL CRCD.
+[ "${ALLOW_RECTIFIED:-0}" = 1 ] || { echo "🚨 crcd_depth_gen_remainder is DEPRECATED (rectified depth). RAW-LEFT replacement: crcd_depth_rawleft_all_20260618.sh. ALLOW_RECTIFIED=1 to force a deliberate rectified run." >&2; exit 1; }
 DATE=$(date +%Y%m%d)
 THREADS=${THREADS:-2}
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
