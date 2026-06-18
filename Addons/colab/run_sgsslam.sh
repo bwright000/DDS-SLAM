@@ -96,23 +96,34 @@ PY
 
 # --- stage Replica: unzip the 2 SGS zips once, locate scene dirs -----------------------------
 stage_replica_all(){
-  [ -d "$REPLICA/room0" ] && { echo "[replica] already staged"; return 0; }
-  local zips=("$DRIVE_REPLICA_ZIPS"/*.zip)
-  [ -e "${zips[0]}" ] || { echo "[replica] no zips at $DRIVE_REPLICA_ZIPS -> stage the 2 Replica-with-GT-semantics zips there"; return 1; }
-  mkdir -p "$REPLICA"
-  for z in "${zips[@]}"; do echo "[replica] unzip $(basename "$z")"; unzip -n -q "$z" -d "$REPLICA" || echo "[replica] WARN unzip $z"; done
-  if [ ! -d "$REPLICA/room0" ]; then   # flatten if scenes nested under a top dir
-    local nest; nest=$(dirname "$(find "$REPLICA" -maxdepth 3 -type d -name room0 2>/dev/null | head -1)")
-    [ -n "$nest" ] && [ "$nest" != "$REPLICA" ] && [ "$nest" != "." ] && { echo "[replica] flatten from $nest"; mv "$nest"/* "$REPLICA"/ 2>/dev/null || true; }
-  fi
-  [ -d "$REPLICA/room0" ] && echo "[replica] staged ($(ls -d "$REPLICA"/*/ 2>/dev/null | wc -l) scene dirs)" \
-    || { echo "[replica] FATAL: room0 not found after unzip"; return 1; }
+  [ -d "$REPLICA/room0/frames" ] && { echo "[replica] already staged"; return 0; }
+  # The 2-zip set is two VARIANTS under different top dirs: Replica/ (full, the paper dataset)
+  # and Replica_900/ (900-frame). Use exactly ONE - NEVER merge (mixing frame counts is what
+  # caused "color != depth"). Prefer the non-900 (full) zip; override with REPLICA_ZIP=<path>.
+  local full="" v900="" z
+  for z in "$DRIVE_REPLICA_ZIPS"/*.zip; do [ -e "$z" ] || continue
+    case "$(basename "$z")" in *900*) v900="$z";; *) full="$z";; esac; done
+  local use="${REPLICA_ZIP:-${full:-$v900}}"
+  [ -n "$use" ] || { echo "[replica] no zips at $DRIVE_REPLICA_ZIPS"; return 1; }
+  echo "[replica] unzipping ONE zip (full Replica = paper): $(basename "$use")"
+  rm -rf /content/data/_rep_tmp "$REPLICA"; mkdir -p /content/data/_rep_tmp
+  unzip -q "$use" -d /content/data/_rep_tmp || { echo "[replica] unzip failed"; return 1; }
+  local fr; fr=$(find /content/data/_rep_tmp -type d -name frames | head -1)
+  [ -n "$fr" ] || { echo "[replica] FATAL: no <scene>/frames/ inside $(basename "$use") (depths-only half?) -> set REPLICA_ZIP to the complete zip"; return 1; }
+  local root; root=$(dirname "$(dirname "$fr")")    # .../<top>/<scene>/frames -> <top>
+  mkdir -p "$(dirname "$REPLICA")"; mv "$root" "$REPLICA"; rm -rf /content/data/_rep_tmp
+  echo "[replica] scenes: $(ls -d "$REPLICA"/*/ 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
 }
 
 # --- one scene -------------------------------------------------------------------------------
 run_scene(){
   local s=$1 dst="$DRIVE/$s"
-  [ -d "$REPLICA/$s" ] || { echo "[$s] scene dir missing -> skip"; return 1; }
+  [ -d "$REPLICA/$s" ] || { echo "[$s] scene dir missing under $REPLICA -> skip"; return 1; }
+  local nf nd
+  nf=$(ls "$REPLICA/$s/frames/"frame*.jpg 2>/dev/null | wc -l)
+  nd=$(ls "$REPLICA/$s/depths/"depth*.png 2>/dev/null | wc -l)
+  [ "$nf" -gt 0 ] && [ "$nf" -eq "$nd" ] || { echo "[$s] frames=$nf depths=$nd (mismatch/empty - zip incomplete or wrong) -> skip"; return 1; }
+  [ -d "$REPLICA/$s/semantic_ids" ] || echo "[$s] WARN no semantic_ids/ (load_semantics=True expects it; semantic may be in the other zip)"
   mkdir -p "$dst"
   local cfg="/content/sgs_cfg_${s}.py"
   sed -e "s/^scene_name = .*/scene_name = \"$s\"/" \
