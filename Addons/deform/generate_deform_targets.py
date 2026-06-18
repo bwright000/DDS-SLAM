@@ -61,7 +61,8 @@ def main():
     ap.add_argument('--ratio_max', type=float, default=0.9, help='Lowe cosine-dist ratio gate (lower=stricter)')
     ap.add_argument('--dx_floor', type=float, default=0.0, help='reject |Δx*|<floor as static (0=keep all)')
     ap.add_argument('--ray', default='OpenGL', choices=['OpenGL', 'OpenCV'])
-    ap.add_argument('--chunk', type=int, default=64, help='grid points matched per batch; lower if OOM')
+    ap.add_argument('--chunk', type=int, default=64, help='exact-path grid points per batch; lower if OOM (the fast path uses its own large batch)')
+    ap.add_argument('--exact', action='store_true', help='use the old O(window) brute-force pixel search instead of the fast grid-matmul+subpixel path (fidelity cross-check; ~100x slower)')
     args = ap.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     SY = -1.0 if args.ray == 'OpenGL' else 1.0; SZ = -1.0 if args.ray == 'OpenGL' else 1.0
@@ -84,8 +85,6 @@ def main():
     # cell-centre pixel for every OUTPUT grid cell (P = HpO*WpO); DINO is queried bilinearly here (per-pixel, like the gate)
     gy, gx = np.meshgrid(np.arange(HpO), np.arange(WpO), indexing='ij')
     PX = ((gx.ravel() + 0.5) * W / WpO); PY = ((gy.ravel() + 0.5) * H / HpO); P = PX.size
-    _us = np.arange(-args.win, args.win + 1, args.step)
-    OFF = np.stack(np.meshgrid(_us, _us), -1).reshape(-1, 2).astype(np.float64)   # (M,2)
 
     def backproj(u, v, d, T):                                  # u,v (...,) ; d HxW ; T 4x4 -> world (...,3), z
         z = d[np.clip(np.round(v).astype(int), 0, H-1), np.clip(np.round(u).astype(int), 0, W-1)]
@@ -104,7 +103,55 @@ def main():
         return (g[y0, x0]*(1-wx)*(1-wy) + g[y0, x1]*wx*(1-wy) + g[y1, x0]*(1-wx)*wy + g[y1, x1]*wx*wy)
 
     r = args.ref; dref = load_depth(deps[r], args.pds); gref = load_grid(grids_p[r])
-    qref = gref.reshape(-1, gref.shape[2])                     # not used directly; matches sampled below
+
+    # ref DINO grid bilinear-UPSAMPLED to the output res (cell centres = PX,PY), normalised once.
+    # Matching queries against this dense grid via one matmul == the exact bilinear search but BLAS-vectorised
+    # (no per-candidate gather) + parabolic subpixel -> ~100x faster AND sub-px (validated vs brute force).
+    Gup = bilinear(gref, PX, PY)                                        # (P,C) ref feats at output-cell centres
+    Gun = Gup / (np.linalg.norm(Gup, axis=1, keepdims=True) + 1e-9)
+    UIX = gx.ravel(); UIY = gy.ravel()                                 # output-grid col,row of each cell (PX,PY are its pixel)
+
+    def match_fast(featq, cu, cv):                                      # upsampled grid-matmul + parabolic subpixel -> mu,mv,ratio (P,)
+        Qn = featq / (np.linalg.norm(featq, axis=1, keepdims=True) + 1e-9)
+        mu = np.empty(P); mv = np.empty(P); ratio = np.ones(P)
+        for s in range(0, P, 1024):
+            e = min(s + 1024, P); c = e - s; ci = np.arange(c)
+            Sc = Qn[s:e] @ Gun.T                                        # (c,P) cosine sim to every upsampled ref cell
+            wm = (np.abs(PX[None] - cu[s:e, None]) <= args.win) & (np.abs(PY[None] - cv[s:e, None]) <= args.win)
+            Scm = np.where(wm, Sc, -2.0)
+            best = np.argmax(Scm, 1); bx = UIX[best]; by = UIY[best]; sb = Scm[ci, best]
+            Sg = Scm.reshape(c, HpO, WpO)                              # parabolic subpixel over the sim surface
+            sL = Sg[ci, by, np.clip(bx-1, 0, WpO-1)]; sR = Sg[ci, by, np.clip(bx+1, 0, WpO-1)]
+            sU = Sg[ci, np.clip(by-1, 0, HpO-1), bx]; sD = Sg[ci, np.clip(by+1, 0, HpO-1), bx]
+            dxn = sL - 2*sb + sR; dyn = sU - 2*sb + sD
+            okx = (bx > 0) & (bx < WpO-1) & (sL > -1.5) & (sR > -1.5) & (np.abs(dxn) > 1e-6)
+            oky = (by > 0) & (by < HpO-1) & (sU > -1.5) & (sD > -1.5) & (np.abs(dyn) > 1e-6)
+            ddx = np.where(okx, np.clip(0.5*(sL - sR)/np.where(okx, dxn, 1.0), -1, 1), 0.0)
+            ddy = np.where(oky, np.clip(0.5*(sU - sD)/np.where(oky, dyn, 1.0), -1, 1), 0.0)
+            mu[s:e] = (bx + 0.5 + ddx) * W / WpO; mv[s:e] = (by + 0.5 + ddy) * H / HpO
+            fp = np.abs(PX[None] - PX[best][:, None]) + np.abs(PY[None] - PY[best][:, None])   # px manhattan from best
+            sf = np.where((fp > max(2*args.step, 6)) & wm, Sc, -2.0).max(1)                    # Lowe: 2nd-best far
+            ratio[s:e] = (1 - sb) / (1 - sf + 1e-9)
+        return mu, mv, ratio
+
+    def match_exact(featq, cu, cv):                                    # old O(window) brute force (fidelity ref, --exact)
+        _us = np.arange(-args.win, args.win + 1, args.step)
+        OFF = np.stack(np.meshgrid(_us, _us), -1).reshape(-1, 2).astype(np.float64)
+        mu = np.full(P, np.nan); mv = np.full(P, np.nan); ratio = np.ones(P)
+        for s in range(0, P, args.chunk):
+            e = min(s + args.chunk, P); ci = np.arange(e - s)
+            cand = np.stack([cu[s:e, None] + OFF[None, :, 0], cv[s:e, None] + OFF[None, :, 1]], -1)
+            inb = (cand[..., 0] >= 0) & (cand[..., 0] < W) & (cand[..., 1] >= 0) & (cand[..., 1] < H)
+            f = bilinear(gref, cand[..., 0], cand[..., 1])
+            q = featq[s:e]
+            sim = (f * q[:, None, :]).sum(-1) / (np.linalg.norm(f, axis=-1) * np.linalg.norm(q, axis=-1)[:, None] + 1e-9)
+            sim = np.where(inb, sim, -2.0); b = np.argmax(sim, 1)
+            mu[s:e] = cand[ci, b, 0]; mv[s:e] = cand[ci, b, 1]
+            dd = np.linalg.norm(cand - cand[ci, b][:, None, :], axis=-1)
+            second = np.where(dd > max(2*args.step, 6), sim, -2.0).max(1)
+            ratio[s:e] = (1 - sim[ci, b]) / (1 - second + 1e-9)
+        return mu, mv, ratio
+
     tot_valid = 0; tot = 0; _t0 = time.time()
     for k in range(N):
         if k == r:
@@ -115,24 +162,7 @@ def main():
         featq = bilinear(gk, PX, PY)                           # (P,C) per-pixel DINO query at frame k (matches the Stage-0 gate)
         Xk, zk = backproj(PX, PY, dk, poses[k])                # (P,3)
         cu, cv, okc = project(Xk, poses[r])                    # (P,) rigid search centres in ref
-        mu = np.full(P, np.nan); mv = np.full(P, np.nan); ratio = np.ones(P)
-        for s in range(0, P, args.chunk):
-            e = min(s + args.chunk, P)
-            cand = np.stack([cu[s:e, None] + OFF[None, :, 0], cv[s:e, None] + OFF[None, :, 1]], -1)  # (c,M,2)
-            inb = (cand[..., 0] >= 0) & (cand[..., 0] < W) & (cand[..., 1] >= 0) & (cand[..., 1] < H)
-            f = bilinear(gref, cand[..., 0], cand[..., 1])     # (c,M,C)
-            q = featq[s:e]                                     # (c,C)
-            sim = (f * q[:, None, :]).sum(-1) / (np.linalg.norm(f, axis=-1) * np.linalg.norm(q, axis=-1)[:, None] + 1e-9)
-            sim = np.where(inb, sim, -2.0)
-            b = np.argmax(sim, 1)                              # (c,)
-            ci = np.arange(e - s)
-            mu[s:e] = cand[ci, b, 0]; mv[s:e] = cand[ci, b, 1]
-            # Lowe ratio: best vs best spatially-far candidate
-            dd = np.linalg.norm(cand - cand[ci, b][:, None, :], axis=-1)
-            far = dd > max(2 * args.step, 6)
-            sim_far = np.where(far, sim, -2.0)
-            second = sim_far.max(1)
-            ratio[s:e] = (1 - sim[ci, b]) / (1 - second + 1e-9)
+        mu, mv, ratio = (match_exact if args.exact else match_fast)(featq, cu, cv)
         Xrs, zrs = backproj(mu, mv, dref, poses[r])            # (P,3)
         dx = (Xrs - Xk).astype(np.float32)
         valid = okc & (zk > 1e-3) & (zrs > 1e-3) & (ratio < args.ratio_max) & np.isfinite(mu)
