@@ -58,12 +58,15 @@ say "  SemSup moge2 present: $(ls "$REPO/$DDIR/depth/moge2"/*left_depth.npy 2>/d
 # ---- resolve the green-pin GT file (deformation GT; rigid rep-err here, field-warped post-hoc) ----
 PTS="${PTS:-}"
 if [ -z "$PTS" ]; then
-  for c in /content/drive/MyDrive/Datasets/SemSup/v2_data/trial_3/rgb/trial_3_l_pts.npy \
-           /content/drive/MyDrive/Datasets/SemSup/v2_data02/v2_data/trial_3/rgb/trial_3_l_pts.npy \
-           "$REPO/$DDIR/rgb/trial_3_l_pts.npy" ; do
+  for c in "$REPO/Addons/eval/gt_pins/trial_3_l_pts.npy" \
+           "$REPO/$DDIR/rgb/trial_3_l_pts.npy" \
+           /content/drive/MyDrive/Datasets/SemSup/v2_data/trial_3/rgb/trial_3_l_pts.npy \
+           /content/drive/MyDrive/Datasets/SemSup/v2_data02/v2_data/trial_3/rgb/trial_3_l_pts.npy ; do
     [ -f "$c" ] && PTS="$c" && break
   done
 fi
+# robust fallback: find it anywhere under the SemSup roots / staged data (skip macOS __MACOSX junk)
+[ -z "$PTS" ] && PTS=$(find /content/drive/MyDrive/Datasets/SemSup "$REPO/data/Super" -name 'trial_3_l_pts.npy' -not -path '*__MACOSX*' 2>/dev/null | head -1)
 [ -n "$PTS" ] && [ -f "$PTS" ] && say "  green-pin GT: $PTS" \
   || say "  WARN no trial_3_l_pts.npy found -> rigid pin rep-err SKIPPED (stage it to Drive or pass PTS=...). Renders + checkpoints still produced for the post-hoc field-warped metric."
 
