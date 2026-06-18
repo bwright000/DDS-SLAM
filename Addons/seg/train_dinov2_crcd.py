@@ -30,8 +30,12 @@ WHAT THIS TRAINS
 Per the SemGauss per-scene convention (`dinov2_{scene}.pth`) and SNI's one-head-per-dataset
 convention (`dinov2_replica.pth`): by default ONE head over all CRCD snippets found (one
 surgical domain, shared 4 classes). Pass --snippets to restrict (e.g. per-snippet head).
-GT = `semantic_class/*.png` (4-class {0=bg,1=Liver,2=Gallbladder,3=Tool}; preprocess_crcd
-_published.py:138-143). RGB = `video_frames/*l.png` (rectified left = the SLAM input).
+RGB = RAW left frames `rgb/frame_*.png`; GT = RAW masks `semantic_instance/frame_*.png`
+(uint16, coco_id+1 -> {0=bg,1=Liver,2=Gallbladder,3=Tool}). These are the ORIGINAL left
+frames the CRCD segmentations were annotated on (preprocess_crcd_published.py:127 rectifies
+the mask only for the video overlay) -> training on raw rgb+mask keeps RGB<->label aligned
+and skips slow/lossy rectification. Paired by basename. (Deploy note: SNI/SemGauss consume
+the DDS loader's RECTIFIED frames at SLAM time -> mild train(raw)/deploy(rectified) gap.)
 
 The backbone is initialised from the OFFICIAL DINOv2 vitb14 pretrained weights (torch.hub,
 or --backbone_weights <path>) so blocks 0-3 are frozen at good features and blocks 4+ +
@@ -148,29 +152,42 @@ class CRCDSeg(Dataset):
             lab = lab[..., 0]
         u = np.unique(lab)
         assert u.max() < self.n_classes, (
-            f"{lab_p}: label ids {u.tolist()} exceed n_classes={self.n_classes} — "
-            f"semantic_class must be the 4-class {{0,1,2,3}} map (§0 Decision 3).")
+            f"{lab_p}: label ids {u.tolist()} exceed n_classes={self.n_classes} - "
+            f"raw semantic_instance must be coco_id+1 in {{0,1,2,3}} (00_COMMON sec0 Decision 3).")
         lab = cv2.resize(lab.astype(np.uint8), (self.img_w, self.img_h),
                          interpolation=cv2.INTER_NEAREST)
         return rgb, torch.from_numpy(lab.astype(np.int64))
 
 
-def gather_pairs(crcd_root, snippets, required=True, tag='train'):
+def gather_pairs(crcd_root, snippets, rgb_subdir, label_subdir, rgb_glob, label_glob,
+                 required=True, tag='train'):
+    """Pair RGB <-> label per snippet. DEFAULT = RAW left frames (rgb/) + RAW masks
+    (semantic_instance/), which is where the CRCD segmentations were actually annotated
+    (preprocess_crcd_published.py:127). Pairs by BASENAME when they share names (raw rgb
+    'frame_NNNNNN.png' == raw mask 'frame_NNNNNN.png'), else falls back to sorted index."""
     names = snippets or sorted(
         d for d in os.listdir(crcd_root)
-        if os.path.isdir(os.path.join(crcd_root, d, 'video_frames'))
-        and os.path.isdir(os.path.join(crcd_root, d, 'semantic_class')))
+        if os.path.isdir(os.path.join(crcd_root, d, rgb_subdir))
+        and os.path.isdir(os.path.join(crcd_root, d, label_subdir)))
     pairs = []
     for nm in names:
-        rgbs = sorted(glob.glob(os.path.join(crcd_root, nm, 'video_frames', '*l.png')))
-        labs = sorted(glob.glob(os.path.join(crcd_root, nm, 'semantic_class', '*.png')))
-        n = min(len(rgbs), len(labs))
-        if len(rgbs) != len(labs):
-            print(f"[data] WARN {nm}: {len(rgbs)} rgb vs {len(labs)} labels; pairing first {n}.")
-        pairs += list(zip(rgbs[:n], labs[:n]))
+        rgbs = sorted(glob.glob(os.path.join(crcd_root, nm, rgb_subdir, rgb_glob)))
+        labs = sorted(glob.glob(os.path.join(crcd_root, nm, label_subdir, label_glob)))
+        lab_by_base = {os.path.basename(p): p for p in labs}
+        matched = [(r, lab_by_base[os.path.basename(r)]) for r in rgbs
+                   if os.path.basename(r) in lab_by_base]
+        if matched:
+            sp = matched
+        else:  # basenames differ (e.g. rectified '000000l.png' vs '000000.png') -> index pair
+            n = min(len(rgbs), len(labs))
+            if len(rgbs) != len(labs):
+                print(f"[data] WARN {nm}: {len(rgbs)} rgb vs {len(labs)} labels; pairing first {n}.")
+            sp = list(zip(rgbs[:n], labs[:n]))
+        if not sp:
+            print(f"[data] WARN {nm}: no ({rgb_subdir},{label_subdir}) pairs found.")
+        pairs += sp
     if not pairs:
-        msg = (f"no (RGB, semantic_class) pairs under {crcd_root} ({tag} snippets={names}). "
-               f"Run preprocess_crcd_published.py first.")
+        msg = (f"no ({rgb_subdir}, {label_subdir}) pairs under {crcd_root} ({tag} snippets={names}).")
         if required:
             raise RuntimeError(msg)
         print(f"[data] WARN ({tag}) {msg} -> skipping {tag} eval.")
@@ -201,8 +218,15 @@ def main():
     ap.add_argument('--out', required=True, help='output dinov2_crcd.pth')
     ap.add_argument('--snippets', nargs='+', default=None, help='TRAIN on these NAME dirs (default: all found)')
     ap.add_argument('--test_snippets', nargs='+', default=None,
-                    help='HELD-OUT eval-only NAME dirs (never trained) — e.g. the 5 benchmark snippets; '
+                    help='HELD-OUT eval-only NAME dirs (never trained) - e.g. the 5 benchmark snippets; '
                          'mIoU on these is the generalization number')
+    # DEFAULT = RAW left frames + RAW masks (the annotation domain). For rectified, pass
+    # --rgb_subdir video_frames --rgb_glob "*l.png" --label_subdir semantic_class.
+    ap.add_argument('--rgb_subdir', default='rgb', help='RGB subdir per snippet (default raw: rgb)')
+    ap.add_argument('--label_subdir', default='semantic_instance',
+                    help='label subdir per snippet (default raw: semantic_instance)')
+    ap.add_argument('--rgb_glob', default='*.png', help='RGB glob (default *.png)')
+    ap.add_argument('--label_glob', default='*.png', help='label glob (default *.png)')
     ap.add_argument('--backbone_weights', default='hub', help="'hub' (torch.hub dinov2_vitb14) or a .pth path")
     ap.add_argument('--n_classes', type=int, default=4)
     ap.add_argument('--dim', type=int, default=16)
@@ -220,7 +244,9 @@ def main():
     torch.manual_seed(a.seed); np.random.seed(a.seed)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    pairs = gather_pairs(a.crcd_root, a.snippets, required=True, tag='train')
+    gp = dict(rgb_subdir=a.rgb_subdir, label_subdir=a.label_subdir,
+              rgb_glob=a.rgb_glob, label_glob=a.label_glob)
+    pairs = gather_pairs(a.crcd_root, a.snippets, required=True, tag='train', **gp)
     if a.smoke:
         pairs = pairs[:16]; a.epochs = 2; a.batch_size = 1
     rng = np.random.default_rng(a.seed); idx = rng.permutation(len(pairs))
@@ -230,7 +256,7 @@ def main():
     tr = DataLoader(CRCDSeg(train, a.img_h, a.img_w, a.n_classes), batch_size=a.batch_size,
                     shuffle=True, num_workers=2, drop_last=True)
     vl = DataLoader(CRCDSeg(val, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2)
-    test_pairs = gather_pairs(a.crcd_root, a.test_snippets, required=False, tag='test') if a.test_snippets else []
+    test_pairs = gather_pairs(a.crcd_root, a.test_snippets, required=False, tag='test', **gp) if a.test_snippets else []
     tt = DataLoader(CRCDSeg(test_pairs, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2) if test_pairs else None
 
     model = DINO2SEG(a.img_h, a.img_w, a.n_classes, a.dinov2_main, edge=a.crop_edge, dim=a.dim)
