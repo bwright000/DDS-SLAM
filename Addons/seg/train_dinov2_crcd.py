@@ -280,7 +280,7 @@ def main():
         for rgb, lab in tr:
             opt.zero_grad()
             loss = ce(model(rgb.to(device)), lab.to(device))
-            loss.backward(); opt.step(); tot += float(loss)
+            loss.backward(); opt.step(); tot += loss.item()
         m, ious = miou(model, vl, a.n_classes, device)
         print(f"[ep {ep:03d}] train_loss={tot/max(1,len(tr)):.4f}  val_mIoU={m:.4f}  "
               f"perclass={np.round(ious,3).tolist()}")
