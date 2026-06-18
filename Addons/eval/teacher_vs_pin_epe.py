@@ -62,7 +62,7 @@ def load_grid(p):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--pts', required=True); ap.add_argument('--est_c2w', required=True)
+    ap.add_argument('--pts', required=True); ap.add_argument('--est_c2w', default='', help='SLAM est poses; omit -> IDENTITY (teacher_resid is pose-invariant; only the rigid baseline assumes static camera)')
     ap.add_argument('--depth_dir', required=True); ap.add_argument('--depth_glob', default='*left_depth.npy')
     ap.add_argument('--dino_dir', required=True); ap.add_argument('--dino_glob', default='*_dino.npy')
     ap.add_argument('--fx', type=float, default=768.98551924); ap.add_argument('--fy', type=float, default=768.98551924)
@@ -76,11 +76,15 @@ def main():
     SY = -1.0 if args.ray == 'OpenGL' else 1.0; SZ = -1.0 if args.ray == 'OpenGL' else 1.0
     fx, fy, cx, cy = args.fx, args.fy, args.cx, args.cy
 
-    poses = load_c2w(args.est_c2w); pins = load_pts(args.pts)
+    pins = load_pts(args.pts)
     deps = sorted(glob.glob(os.path.join(args.depth_dir, args.depth_glob)))
     grids_p = sorted(glob.glob(os.path.join(args.dino_dir, args.dino_glob)))
-    N = min(len(poses), len(deps), len(grids_p))
-    assert N >= 2, f'need >=2 aligned frames (poses {len(poses)} depth {len(deps)} dino {len(grids_p)})'
+    if args.est_c2w:
+        poses = load_c2w(args.est_c2w); N = min(len(poses), len(deps), len(grids_p))
+    else:
+        N = min(len(deps), len(grids_p)); poses = [np.eye(4) for _ in range(N)]
+        print("WARNING: no --est_c2w -> IDENTITY poses. teacher_resid/match-quality is pose-invariant (trustworthy); the rigid baseline + reduction%% assume a near-static camera (ok for SemSup).")
+    assert N >= 2, f'need >=2 aligned frames (depth {len(deps)} dino {len(grids_p)})'
     print(f"frames {N} | pin-frames {len(pins)} | ref_stride {args.ref_stride} | win {args.win} step {args.step} | ray {args.ray}")
     _d0 = load_depth(deps[0], args.pds); H, W = _d0.shape
     print(f"image {W}x{H} | dino grid {load_grid(grids_p[0]).shape}")
