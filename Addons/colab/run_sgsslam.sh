@@ -39,7 +39,7 @@ echo "=== run_sgsslam.sh phase=$PHASE scene=${SCENE_ARG:-<all>} $(date -Iseconds
 # --- env: clone + README conda stack + rasterizer (idempotent) ------------------------------
 build_env(){
   [ -d "$SGS/.git" ] || git clone --recursive "$SGS_URL" "$SGS" || { echo "FATAL clone $SGS_URL"; exit 30; }
-  if [ -x "$ENV_PY" ] && "$ENV_PY" -c "import diff_gaussian_rasterization" 2>/dev/null; then
+  if [ -x "$ENV_PY" ] && PYTHONPATH= "$ENV_PY" -c "import diff_gaussian_rasterization" 2>/dev/null; then
     echo "[env] $ENV_NAME ready (rasterizer imports)"; return 0; fi
   if [ ! -x "$CONDA_ROOT/bin/conda" ]; then
     echo "[env] installing miniconda -> $CONDA_ROOT"
@@ -53,16 +53,20 @@ build_env(){
   conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
   conda env list | grep -q "^$ENV_NAME " || conda create -y -n "$ENV_NAME" -c conda-forge python=3.9 \
      || { echo "FATAL conda create"; exit 30; }
-  conda activate "$ENV_NAME"
-  echo "[env] cuda-toolkit 11.8 (nvcc for the rasterizer)"
-  conda install -y -c "nvidia/label/cuda-11.8.0" cuda-toolkit || echo "[env] WARN cuda-toolkit install issue"
-  echo "[env] torch 2.0.1 + cu118"
-  pip install -q torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118 \
-     || { echo "FATAL torch install"; exit 30; }
-  echo "[env] requirements.txt (open3d/numpy pins resolve on py3.9) + rasterizer build (sm_80)"
-  TORCH_CUDA_ARCH_LIST="8.0" pip install -q -r "$SGS/requirements.txt" || echo "[env] WARN requirements had failures"
+  # Install BY NAME / via "$ENV_PY -m pip" - do NOT rely on `conda activate` (on Colab the PATH
+  # never switches and system py3.12 site-packages leak in via PYTHONPATH). PYTHONPATH= isolates
+  # the env's py3.9 from Colab's py3.12 packages (mixing them segfaults / ModuleNotFound).
+  local ENV_ROOT="$CONDA_ROOT/envs/$ENV_NAME"
+  echo "[env] cuda-toolkit 11.8 (nvcc) into $ENV_NAME"
+  conda install -y -n "$ENV_NAME" -c "nvidia/label/cuda-11.8.0" cuda-toolkit || echo "[env] WARN cuda-toolkit"
+  echo "[env] torch 2.0.1 + cu118 via conda (pip's cu118 index dropped 2.0.1)"
+  conda install -y -n "$ENV_NAME" -c pytorch -c nvidia pytorch==2.0.1 torchvision==0.15.2 pytorch-cuda=11.8 \
+     || { echo "FATAL torch install (conda pytorch channel)"; exit 30; }
+  echo "[env] requirements.txt + rasterizer build (sm_80, nvcc from env)"
+  PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="8.0" \
+     "$ENV_PY" -m pip install -q -r "$SGS/requirements.txt" || echo "[env] WARN requirements/rasterizer had failures"
   echo "[env] smoke import:"
-  "$ENV_PY" - <<'PY'
+  PYTHONPATH= "$ENV_PY" - <<'PY'
 import importlib, sys
 ok = True
 for m in ("torch", "diff_gaussian_rasterization", "pytorch_msssim", "torchmetrics"):
@@ -101,9 +105,9 @@ run_scene(){
       -e "s#basedir=\"./data/Replica\"#basedir=\"$REPLICA\"#" \
       "$SGS/configs/replica/slam.py" > "$cfg"
   echo "[$s] running SGS-SLAM (full SLAM pass; minutes-to-hours on A100)"
-  ( cd "$SGS" && "$ENV_PY" scripts/slam.py "$cfg" ) 2>&1 | tee "$dst/slam.log"
+  ( cd "$SGS" && PYTHONPATH= "$ENV_PY" scripts/slam.py "$cfg" ) 2>&1 | tee "$dst/slam.log"
   [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "[$s] FAIL" | tee "$dst/status.txt"; return 1; }
-  "$ENV_PY" - "$dst/slam.log" "$dst/metrics.json" "$s" <<'PY'
+  PYTHONPATH= "$ENV_PY" - "$dst/slam.log" "$dst/metrics.json" "$s" <<'PY'
 import sys, re, json
 log, out, scene = sys.argv[1], sys.argv[2], sys.argv[3]
 t = open(log, encoding='utf-8', errors='ignore').read()
@@ -123,7 +127,7 @@ PY
 # --- aggregate vs paper (REPORT-ONLY gate) ---------------------------------------------------
 aggregate(){
   local py="$ENV_PY"; [ -x "$py" ] || py=python
-  "$py" - "$DRIVE" <<'PY'
+  PYTHONPATH= "$py" - "$DRIVE" <<'PY'
 import sys, os, json, glob
 root = sys.argv[1]
 paper = dict(psnr=34.66, ssim=0.973, lpips=0.096, depth_l1_cm=0.356, ate_rmse_cm=0.412, miou_pct=92.72)
