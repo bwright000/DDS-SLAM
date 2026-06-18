@@ -29,6 +29,19 @@ def token_norms(paths, stride):
     return np.concatenate(norms) if norms else np.array([])
 
 
+def speckle_index(paths, stride):
+    """Spatial incoherence = the PCA blotchiness, the thing registers actually clean. For each token,
+    ||feature - mean(4-neighbours)|| / ||feature|| (scale-invariant, so the reg's lower global norm
+    doesn't confound it). High = speckly (plain); low = smooth (reg)."""
+    vals = []
+    for p in paths[::stride]:
+        g = load_grid(p).astype(np.float32)
+        nb = (np.roll(g, 1, 0) + np.roll(g, -1, 0) + np.roll(g, 1, 1) + np.roll(g, -1, 1)) / 4.0
+        rough = np.linalg.norm(g - nb, axis=2) / (np.linalg.norm(g, axis=2) + 1e-6)
+        vals.append(rough[1:-1, 1:-1].mean())              # drop the wrap-edge border
+    return float(np.mean(vals)) if vals else float('nan')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--name', default='cell')
@@ -65,6 +78,10 @@ def main():
         print(f"  upper-tail spread (max/med): plain {n_plain.max()/med:.3f} -> reg {n_reg.max()/rmed:.3f}  ({'TIGHTER (registers clean the mild tail = the PCA blotches)' if n_reg.max()/rmed < n_plain.max()/med else 'no tightening'})")
         print(f"  frac above plain-p95 ({rel:.1f}): plain {100*frac(n_plain,rel):.1f}%  reg {100*frac(n_reg,rel):.1f}%  (reg<plain => mild artifact reduction, real but small)")
     print(f"  (ref: Darcet >150 abs: plain {100*frac(n_plain,args.norm_thresh):.2f}% — ~0 by design, vits14 too small for dramatic artifacts)")
+    # the metric that ACTUALLY matches the PCA: spatial speckle (norm misses it)
+    sp_p = speckle_index(P, args.stride); sp_r = speckle_index(PR, args.stride) if PR else float('nan')
+    print(f"\n  *** spatial SPECKLE index (the PCA blotchiness; norm-invariant) ***")
+    print(f"      plain {sp_p:.3f}" + (f"  reg {sp_r:.3f}  => registers {100*(1-sp_r/max(sp_p,1e-9)):+.0f}% {'SMOOTHER (confirms the PCA: blotches cleaned)' if sp_r<sp_p else 'no smoother'}" if PR else ""))
 
     # σ²-on-artifact: did high-norm tokens pollute σ²?
     bias = None; corr_fn = None
