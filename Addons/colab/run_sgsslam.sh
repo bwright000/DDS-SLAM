@@ -66,15 +66,19 @@ build_env(){
   # torch MUST import before building the rasterizer (the build imports torch for CUDA info)
   PYTHONPATH= "$ENV_PY" -c "import torch,numpy; print('[env] torch',torch.__version__,'numpy',numpy.__version__,'OK')" \
      || { echo "FATAL: torch import broken (mkl/numpy ABI) - see error above"; exit 30; }
-  echo "[env] pip deps (requirements minus the rasterizer; bulk, with per-dep fallback)"
+  echo "[env] pip deps (numpy<2 constrained; requirements minus the rasterizer)"
+  printf 'numpy<2\n' > /tmp/sgs_constraints.txt        # pip otherwise pulls numpy 2.x -> torch ABI break
   grep -v 'diff-gaussian-rasterization' "$SGS/requirements.txt" > /tmp/sgs_reqs.txt
-  PYTHONPATH= "$ENV_PY" -m pip install -q -r /tmp/sgs_reqs.txt || {
+  PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/sgs_constraints.txt ninja wheel setuptools || true
+  PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/sgs_constraints.txt -r /tmp/sgs_reqs.txt || {
     echo "[env] bulk reqs failed (likely open3d/cyclonedds) -> installing slam.py runtime deps individually"
-    PYTHONPATH= "$ENV_PY" -m pip install -q pytorch-msssim torchmetrics lpips opencv-python imageio \
-       matplotlib kornia natsort pyyaml plyfile tqdm pandas wandb || echo "[env] WARN some runtime deps failed"; }
-  echo "[env] rasterizer build @cb65e4b (sm_80, nvcc from env)"
+    PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/sgs_constraints.txt pytorch-msssim torchmetrics lpips \
+       opencv-python imageio matplotlib kornia natsort pyyaml plyfile tqdm pandas wandb || echo "[env] WARN some deps failed"; }
+  PYTHONPATH= "$ENV_PY" -m pip install -q "numpy<2" || true   # re-assert: a dep may have bumped it
+  echo "[env] rasterizer build @cb65e4b (--no-build-isolation so setup.py sees the env's torch; sm_80)"
   PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="8.0" \
-     "$ENV_PY" -m pip install -q "git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git@cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110" \
+     "$ENV_PY" -m pip install -q --no-build-isolation \
+     "git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git@cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110" \
      || echo "[env] WARN rasterizer build FAILED (see compile log above)"
   echo "[env] smoke import:"
   PYTHONPATH= "$ENV_PY" - <<'PY'
