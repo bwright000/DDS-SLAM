@@ -111,9 +111,12 @@ def main():
             gt = cv2.resize(gt.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST)
             m = frame_miou(pred, gt, a.n_classes); mious.append(m)
             tag = os.path.splitext(os.path.basename(rgb_p))[0]
-            triple = np.hstack([overlay(rgb, gt * 0), overlay(rgb, gt), overlay(rgb, pred)])
-            bars = np.hstack([label_bar(W, f"{snip} {tag}  RGB"), label_bar(W, "GT"), label_bar(W, f"Pred  mIoU={m:.2f}")])
-            rows.append(np.vstack([bars, triple]))
+            # RGB | GT overlay | Pred overlay | Pred SOLID (every pixel coloured; bg=grey) so a
+            # poor-but-structured prediction is distinguishable from genuine noise.
+            quad = np.hstack([rgb, overlay(rgb, gt), overlay(rgb, pred), colorize(pred)])
+            bars = np.hstack([label_bar(W, f"{snip} {tag} RGB"), label_bar(W, "GT (overlay)"),
+                              label_bar(W, f"Pred (overlay) mIoU={m:.2f}"), label_bar(W, "Pred (solid)")])
+            rows.append(np.vstack([bars, quad]))
         grid = np.vstack(rows)
         legend = " ".join(f"{i}={CLASS_NAMES[i]}" for i in range(a.n_classes))
         grid = np.vstack([label_bar(grid.shape[1], f"{snip}  mean mIoU(shown {len(idx)}f)={np.mean(mious):.3f}   classes: {legend}"), grid])
