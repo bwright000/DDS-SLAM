@@ -246,6 +246,10 @@ def main():
     ap.add_argument('--batch_size', type=int, default=2)
     ap.add_argument('--lr', type=float, default=1e-4)
     ap.add_argument('--val_frac', type=float, default=0.1)
+    ap.add_argument('--test_every', type=int, default=2,
+                    help='eval held-out test mIoU every K epochs (0=only at end) - watch generalization live')
+    ap.add_argument('--test_eval_cap', type=int, default=600,
+                    help='periodic held-out eval uses a strided subset of this many frames (final uses full)')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--smoke', action='store_true', help='2 epochs, <=16 frames, batch 1 — wiring check')
     a = ap.parse_args()
@@ -267,6 +271,9 @@ def main():
     vl = DataLoader(CRCDSeg(val, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2)
     test_pairs = gather_pairs(a.crcd_root, a.test_snippets, required=False, tag='test', **gp) if a.test_snippets else []
     tt = DataLoader(CRCDSeg(test_pairs, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2) if test_pairs else None
+    # periodic held-out readout: a strided subset spanning ALL test snippets (so every class shows)
+    quick_pairs = test_pairs[::max(1, len(test_pairs) // max(1, a.test_eval_cap))][:a.test_eval_cap] if test_pairs else []
+    tt_quick = DataLoader(CRCDSeg(quick_pairs, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2) if quick_pairs else None
 
     model = DINO2SEG(a.img_h, a.img_w, a.n_classes, a.dinov2_main, edge=a.crop_edge, dim=a.dim)
     init_backbone(model, a.backbone_weights)
@@ -288,6 +295,10 @@ def main():
             best = m
             os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
             torch.save(model.state_dict(), a.out)
+        if tt_quick is not None and a.test_every > 0 and (ep + 1) % a.test_every == 0:
+            qm, qious = miou(model, tt_quick, a.n_classes, device)  # current model, informational
+            print(f"[ep {ep:03d}] HELD-OUT(quick {len(quick_pairs)}f) mIoU={qm:.4f}  "
+                  f"perclass={np.round(qious, 3).tolist()}")
     if tt is not None:
         model.load_state_dict(torch.load(a.out, map_location=device))  # best-by-val checkpoint
         tm, tious = miou(model, tt, a.n_classes, device)
