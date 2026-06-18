@@ -106,6 +106,11 @@ PY
     else
       CUDA_VISIBLE_DEVICES="" python -u Addons/eval/eval_rendering.py --gt_dir "$DD/rgb" --render_dir "$OUT" --name "$NAME" --sequence "Lab1 (trail3)" > "$DST/render.txt" 2>&1 || echo WARN-render
     fi
+    # 6-panel video — standing rule: every result ships metrics + the canonical video
+    VA=(--rgb_output_dir "$OUT" --rgb_output_pattern '[0-9]*.jpg' --depth_output_dir "$OUT/depth" --uncert_dir "$OUT/uncert" --output "$DST/panels.mp4" --fps 15)
+    if [ "$VT" = crcd ]; then VA+=(--rgb_input_dir "$DD/video_frames" --rgb_input_pattern '*l.png' --depth_input_dir "$DD/depth" --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DD/groundtruth.txt")
+    else VA+=(--rgb_input_dir "$DD/rgb" --rgb_input_pattern '*left.png' --depth_input_dir "$DD/depth/moge2"); fi
+    python Addons/viz/generate_video.py "${VA[@]}" || echo WARN-video
     cp "$RUN"/est_c2w_data.txt "$DST/" 2>/dev/null
   } > "$DST/run.log" 2>&1
   N=$(grep -cvE '^\s*#|^\s*$' "$RUN/est_c2w_data.txt" 2>/dev/null); [ "${N:-0}" -ge 1 ] && touch "$DST/.DONE" || echo "FAILED" > "$DST/.FAILED"
