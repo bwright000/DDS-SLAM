@@ -387,7 +387,13 @@ class DDSSLAM():
                 else:
                     Xk = rays_o[..., :3] + rays_d * target_d                   # [N,3] world surface pts
                     def_sup = self.model.deform_teacher_loss(Xk, timestamps.unsqueeze(-1), deform_dx, deform_w)
-                    loss = loss + _ds_w * def_sup
+                    # deform_teacher_only: train the field on the teacher ALONE in this step (drop the render
+                    # loss so the sdf/render gradient can't pin time_net at 0). Isolates "can the field learn
+                    # Δx*?" from the render-collapse competition. Default off = joint (render + teacher).
+                    if self.config['training'].get('deform_teacher_only', False):
+                        loss = _ds_w * def_sup
+                    else:
+                        loss = loss + _ds_w * def_sup
                     # DIAGNOSTIC (frames<=3, first+last cur-iter): is the teacher firing + does its loss DROP
                     # (field moving toward Δx*)? Flat/high def_sup = field not learning; None above = not attached.
                     if cur_frame_id <= 3 and (i == 0 or i == self.config['mapping']['cur_frame_iters'] - 1):
