@@ -354,6 +354,8 @@ class SuperDataset(BaseDataset):
             self.deform_paths = sorted(glob.glob(f'{self.basedir}/{_dsub}/*_deform.npz'))
             assert len(self.deform_paths) == len(self.img_files), \
                 f"deform targets {len(self.deform_paths)} != frames {len(self.img_files)} in {self.basedir}/{_dsub}"
+            print(f'[teacher] deform targets ATTACHED: {len(self.deform_paths)} from {self.basedir}/{_dsub} '
+                  f'(deformation_sup_weight={self.config["training"]["deformation_sup_weight"]})')
 
         self.load_poses(os.path.join(self.basedir, 'pose'))
         
