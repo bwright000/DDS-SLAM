@@ -4,6 +4,17 @@ How Arm-2 motion teaches Arm-1 sigma^2 (the COMBINE) + the 3-way seg-conditioned
 
 ---
 
+> ## ⚠️ REFINEMENT (user, 2026-06-19) — the routing must be LEARNED, the seg is NOT a hard rule
+> The §2 phrasing "surface the raw GT seg class and multiply" reads like a hard `if class==tissue -> route` rule. **That is wrong — it only works on this one dataset and learns nothing.** Correct version, to build instead:
+> - **The 'what-kind' axis = the continuous DINO feature map**, not discrete {bg,tissue,tool} labels. DINO is a foundation feature (tissue looks like tissue across datasets; it clusters semantically unsupervised) -> the router learns *regions of feature space* that behave a certain way, label-free and transferable.
+> - **The router is a learned function of TWO scales:** *individual pixel behaviour* (how much THIS pixel moves = the motion/contrast signal) **x** *feature-group behaviour* (DINO-feature neighbours' regime, aggregated by the cross-attention with **DINO as the QUERY** = "things that look like me behave like me"). This is the real job of the §2 cross-attention: aggregate motion evidence over DINO-feature similarity.
+> - 🚨 **DINO gives WHAT-KIND, not HOW-MUCH** — same tissue feature whether moving or still -> the router still NEEDS the individual motion signal (the combine). DINO = the what-kind half (have it now); motion = the how-much half (gated on Arm-2).
+> - **The GT seg masks demote to an AUXILIARY, *tested* training prior** (seg-supervised vs pure-DINO-grouping vs shuffled-label control), NOT the backbone and NOT an inference input. A learned seg head (Arm-4 DINOv2) may supply a soft seg, but at inference the router reads FEATURES, never GT labels.
+>
+> Also locked the concrete mental model: **Arm-1 = measure uncertainty, Arm-2 = measure deformation; the combine just makes sigma^2 deformation-aware and the EXISTING tracking/mapping split (Inc-2 `1/sigma^2` down-weight, :541) routes for free** — trust->tracking, moving->field. No new routing plumbing. See memory `project_combine_routing_model_20260619`.
+
+---
+
 All four readings are confirmed against live code. The interfaces are exactly as described: `forward()` signature at `:481`, the NLL teacher switch at `:589`, the `oracle_w` gauge slot at `:223-225`, the per-ray `_w_ray` Inc-2 site at `:541`, and `deformation_off` as a whole-run flag at `:202`. I have what I need to architect.
 
 ---
