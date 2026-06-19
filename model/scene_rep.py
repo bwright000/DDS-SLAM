@@ -573,8 +573,26 @@ class JointEncoding(nn.Module):
             # base path stays inert. Guarded by 'sigma2' so off-path adds no key.
             if ('sigma2' in rend_dict) and (not tracking):   # NLL trains the head on MAPPING residual ONLY
                 _s2 = rend_dict['sigma2'].float()                            # [N_rays,1]
-                _rgb_err2 = ((rend_dict['rgb'] - target_rgb) ** 2).float()   # [N_rays,3]
-                _nll = 0.5 * (_rgb_err2 / _s2 + torch.log(_s2))              # broadcast [N_rays,3]
+                # Arm-1 #1 (lit scan): configurable σ² TEACHER. 'l2' (DEFAULT, byte-identical to the
+                # original) trains σ² on the raw photometric residual -> the σ∝‖C−Ĉ‖ degeneracy
+                # (NeRF-On-the-go) = a contrast/edge detector (= the "uncertainty in the wrong place").
+                # 'depth'/'rgb_depth' add a SCALE-INVARIANT depth-consistency residual (|d̂−d|/d)² so σ²
+                # tracks GEOMETRIC/deformation uncertainty, not contrast. (WildGS/On-the-go use
+                # SSIM+depth; SSIM needs spatial patches we don't sample -> depth-consistency is the
+                # doable structural signal.) flag-gated default-off -> base/geo-l2 unchanged.
+                _teacher = self.config.get('uncertainty', {}).get('teacher', 'l2')
+                if _teacher == 'l2':
+                    _rgb_err2 = ((rend_dict['rgb'] - target_rgb) ** 2).float()   # [N_rays,3] EXACT original
+                    _nll = 0.5 * (_rgb_err2 / _s2 + torch.log(_s2))             # broadcast [N_rays,3]
+                else:
+                    _rgb_e2 = ((rend_dict['rgb'] - target_rgb) ** 2).float().mean(-1, keepdim=True)  # [N,1]
+                    _d_hat = rend_dict['depth'].float().reshape(-1, 1)
+                    _d_gt = target_d.float().reshape(-1, 1)
+                    _dep_e2 = ((_d_hat - _d_gt) / (_d_gt.abs() + 1e-6)) ** 2     # [N,1] scale-invariant
+                    if _teacher == 'depth':       _err = _dep_e2
+                    elif _teacher == 'rgb_depth': _err = _rgb_e2 + _dep_e2
+                    else: raise ValueError(f"uncertainty.teacher {_teacher!r} not in l2/depth/rgb_depth")
+                    _nll = 0.5 * (_err / _s2 + torch.log(_s2))                  # [N,1]
                 nll_loss = _nll[valid_depth_mask].mean()
 
         else:

@@ -1,0 +1,11 @@
+# Arm-1 #1 (lit scan): geo uncertainty + DEPTH-CONSISTENCY teacher. ONLY delta vs c1_001_canon_uncert
+# is uncertainty.teacher='rgb_depth' -> sigma^2 NLL trained on rgb + scale-invariant depth-consistency
+# residual instead of the raw rgb-L2 (the sigma ~ ||C-Chat|| contrast-detector degeneracy, confirmed by
+# analysis A). Metric A/B vs the l2 geo (c1_001_canon_uncert). Deep-merge adds teacher to the inherited
+# uncertainty block (config.py update_recursive).
+inherit_from: configs/CRCD/c1_001_canon_uncert.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_rgbdepth
+  exp_name: demo
+uncertainty:
+  teacher: rgb_depth

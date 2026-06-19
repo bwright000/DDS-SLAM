@@ -1,0 +1,8 @@
+# Arm-1 #1: SemSup geo uncertainty + DEPTH-CONSISTENCY teacher (rgb_depth). Only delta vs
+# trail3_moge2_uncert is uncertainty.teacher. SemSup pose GT fictional -> judge on render PSNR/SSIM/LPIPS.
+inherit_from: configs/Super/trail3_moge2_uncert.yaml
+data:
+  output: output/Super/trail3_moge2_uncert_rgbdepth
+  exp_name: demo
+uncertainty:
+  teacher: rgb_depth

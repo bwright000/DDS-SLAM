@@ -1,0 +1,9 @@
+# Arm-1 #1 (lit scan): dino_reg uncertainty + DEPTH-CONSISTENCY teacher. ONLY delta vs
+# c1_001_canon_uncert_dino_reg is uncertainty.teacher='rgb_depth' (sigma^2 NLL on rgb + scale-invariant
+# depth-consistency instead of raw rgb-L2). Metric A/B vs the l2 dino_reg.
+inherit_from: configs/CRCD/c1_001_canon_uncert_dino_reg.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_dino_reg_rgbdepth
+  exp_name: demo
+uncertainty:
+  teacher: rgb_depth

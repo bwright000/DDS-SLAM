@@ -1,0 +1,8 @@
+# Arm-1 #1: SemSup dino_reg uncertainty + DEPTH-CONSISTENCY teacher (rgb_depth). Only delta vs
+# trail3_moge2_uncert_dino_reg is uncertainty.teacher. Judge on render (SemSup pose GT fictional).
+inherit_from: configs/Super/trail3_moge2_uncert_dino_reg.yaml
+data:
+  output: output/Super/trail3_moge2_uncert_dino_reg_rgbdepth
+  exp_name: demo
+uncertainty:
+  teacher: rgb_depth
