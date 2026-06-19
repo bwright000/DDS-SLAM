@@ -380,10 +380,18 @@ class DDSSLAM():
             loss = self.get_loss_from_ret(ret)
             # ARM-2 Stage-1: direct deformation-field teacher loss (default-off: deformation_sup_weight=0 => base).
             _ds_w = self.config['training'].get('deformation_sup_weight', 0)
-            if _ds_w > 0 and deform_dx is not None and self.config['dynamic']:
-                Xk = rays_o[..., :3] + rays_d * target_d                       # [N,3] world surface pts
-                def_sup = self.model.deform_teacher_loss(Xk, timestamps.unsqueeze(-1), deform_dx, deform_w)
-                loss = loss + _ds_w * def_sup
+            if _ds_w > 0 and self.config['dynamic']:
+                if deform_dx is None:
+                    if i == 0 and cur_frame_id <= 3:
+                        print(f'[teacher] frame {cur_frame_id}: deform_dx is None (targets NOT attached) -> teacher INACTIVE')
+                else:
+                    Xk = rays_o[..., :3] + rays_d * target_d                   # [N,3] world surface pts
+                    def_sup = self.model.deform_teacher_loss(Xk, timestamps.unsqueeze(-1), deform_dx, deform_w)
+                    loss = loss + _ds_w * def_sup
+                    # DIAGNOSTIC (frames<=3, first+last cur-iter): is the teacher firing + does its loss DROP
+                    # (field moving toward Δx*)? Flat/high def_sup = field not learning; None above = not attached.
+                    if cur_frame_id <= 3 and (i == 0 or i == self.config['mapping']['cur_frame_iters'] - 1):
+                        print(f'[teacher] frame {cur_frame_id} it{i:3d}: def_sup={def_sup.item():.7f}  weighted={_ds_w*def_sup.item():.5f}  |dx*|mean={deform_dx.norm(dim=-1).mean().item():.5f}  w.sum={deform_w.sum().item():.1f}')
             loss.backward()
             self.cur_map_optimizer.step()
         return ret, loss
