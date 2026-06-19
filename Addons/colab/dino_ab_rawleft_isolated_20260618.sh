@@ -111,6 +111,14 @@ PY
     if [ "$VT" = crcd ]; then VA+=(--rgb_input_dir "$DD/video_frames" --rgb_input_pattern '*l.png' --depth_input_dir "$DD/depth" --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DD/groundtruth.txt")
     else VA+=(--rgb_input_dir "$DD/rgb" --rgb_input_pattern '*left.png' --depth_input_dir "$DD/depth/moge2"); fi
     python Addons/viz/generate_video.py "${VA[@]}" || echo WARN-video
+    # Arm-1 σ² judges — run on the EPHEMERAL uncert/ before it's lost; ship JSON+PNG (uncert cells only).
+    # sigma2_quality = AUSE calibration + σ²-vs-motion (the DIRECT metric); sigma2_diagnostics = contrast + per-seg.
+    if [ -d "$OUT/uncert" ]; then
+      if [ "$VT" = crcd ]; then SQ=(--rgb_dir "$DD/video_frames" --rgb_glob '*l.png'); SD=(--seg_dir "$DD/masks" --seg_glob '*.png' --tool_labels 3 --bg_labels 0)
+      else SQ=(--rgb_dir "$DD/rgb" --rgb_glob '*left.png'); SD=(--seg_dir "$DD/seg/png_masks" --seg_glob '*left.png'); fi
+      python Addons/eval/sigma2_quality.py --name "$NAME" --uncert_dir "$OUT/uncert" --render_dir "$OUT" --render_glob '[0-9]*.jpg' "${SQ[@]}" --out_json "$DST/${NAME}_sigma2_quality.json" --out_fig "$DST/${NAME}_sigma2_quality.png" || echo WARN-sigq
+      python Addons/eval/sigma2_diagnostics.py --name "$NAME" --uncert_dir "$OUT/uncert" "${SQ[@]}" "${SD[@]}" --out_fig "$DST/${NAME}_sigma2_diag.png" || echo WARN-sigd
+    fi
     cp "$RUN"/est_c2w_data.txt "$DST/" 2>/dev/null
   } > "$DST/run.log" 2>&1
   N=$(grep -cvE '^\s*#|^\s*$' "$RUN/est_c2w_data.txt" 2>/dev/null); [ "${N:-0}" -ge 1 ] && touch "$DST/.DONE" || echo "FAILED" > "$DST/.FAILED"
