@@ -83,11 +83,19 @@ build_env(){
   [ -n "$CC" ] || CC=7.5      # safe floor: 7.5+PTX SASS also JIT-runs on newer GPUs
   ARCH="${ARCH_OVERRIDE:-${CC}+PTX}"
   echo "[env] GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1) compute_cap=$CC -> arch $ARCH"
-  echo "[env] rasterizer build @cb65e4b (--no-build-isolation, force-reinstall, arch=$ARCH)"
+  echo "[env] rasterizer build @cb65e4b (clone --recursive + VERBOSE; arch=$ARCH)"
+  local RAST=/content/diff-gaussian-rasterization-w-depth
+  if [ ! -d "$RAST/.git" ]; then
+    git clone https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git "$RAST" \
+      && git -C "$RAST" checkout -q cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110 \
+      && git -C "$RAST" submodule update --init --recursive || echo "[env] WARN rasterizer clone/submodule issue"
+  fi
+  # VERBOSE (no -q, -v) + tee FULL build log so the real nvcc/g++ error is visible, not "No available output"
   PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="$ARCH" \
-     "$ENV_PY" -m pip install -q --no-build-isolation --force-reinstall --no-deps \
-     "git+https://github.com/JonathonLuiten/diff-gaussian-rasterization-w-depth.git@cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110" \
-     || echo "[env] WARN rasterizer build FAILED (see compile log above)"
+     "$ENV_PY" -m pip install --no-build-isolation --force-reinstall --no-deps -v "$RAST" 2>&1 | tee /content/rasterizer_build.log
+  PYTHONPATH= "$ENV_PY" -c "import diff_gaussian_rasterization" 2>/dev/null \
+     && echo "[env] rasterizer import OK" \
+     || echo "[env] WARN rasterizer build FAILED -> FULL log at /content/rasterizer_build.log (paste the nvcc/g++ error lines)"
   echo "[env] smoke import:"
   PYTHONPATH= "$ENV_PY" - <<'PY'
 import importlib, sys
