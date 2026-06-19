@@ -128,8 +128,10 @@ stage_replica_all(){
   local use="${REPLICA_ZIP:-${full:-$v900}}"
   [ -n "$use" ] || { echo "[replica] no zips at $DRIVE_REPLICA_ZIPS"; return 1; }
   echo "[replica] unzipping ONE zip (full Replica = paper): $(basename "$use")"
+  pkill -f 'unzip.*Replica' 2>/dev/null || true   # kill any stray unzip from a prior killed run
   rm -rf /content/data/_rep_tmp "$REPLICA"; mkdir -p /content/data/_rep_tmp
-  unzip -q "$use" -d /content/data/_rep_tmp || { echo "[replica] unzip failed"; return 1; }
+  # -o = overwrite, never prompt (under nohup there's no stdin -> a prompt = EOF -> "unzip failed")
+  unzip -o -q "$use" -d /content/data/_rep_tmp || { echo "[replica] unzip failed"; return 1; }
   local fr; fr=$(find /content/data/_rep_tmp -type d -name frames | head -1)
   [ -n "$fr" ] || { echo "[replica] FATAL: no <scene>/frames/ inside $(basename "$use") (depths-only half?) -> set REPLICA_ZIP to the complete zip"; return 1; }
   local root; root=$(dirname "$(dirname "$fr")")    # .../<top>/<scene>/frames -> <top>
