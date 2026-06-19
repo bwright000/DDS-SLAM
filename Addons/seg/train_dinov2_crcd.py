@@ -96,6 +96,7 @@ def load_dinov2_weights(backbone, weights):
         sd = sd['model']
     if isinstance(sd, dict) and 'teacher' in sd and isinstance(sd['teacher'], dict):
         sd = {k.replace('backbone.', ''): v for k, v in sd['teacher'].items() if 'backbone.' in k}
+    sd = {(k[9:] if k.startswith('backbone.') else k): v for k, v in sd.items()}  # tolerant: strip 'backbone.'
     sd = {k: v for k, v in sd.items()
           if not (k == 'pos_embed' and tuple(v.shape) != tuple(backbone.pos_embed.shape))}
     miss, unexp = backbone.load_state_dict(sd, strict=False)
@@ -113,11 +114,13 @@ def load_dinov3(weights):
     Returns (backbone, patch_size=16, n_register=4, embed=768)."""
     repo = os.environ.get('DINOV3_HUB', 'facebookresearch/dinov3')
     entry = os.environ.get('DINOV3_ENTRY', 'dinov3_vitb16')
+    source = os.environ.get('DINOV3_SOURCE', 'github')  # set 'local' + DINOV3_HUB=<clone> for the README-blessed path
     try:
-        bb = torch.hub.load(repo, entry, weights=weights) if weights else torch.hub.load(repo, entry)
-    except Exception as e:  # pragma: no cover - needs network + gated weights
-        raise RuntimeError(f"DINOv3 load failed (repo={repo} entry={entry} weights={weights}): {e}. "
-                           f"Set DINOV3_HUB/DINOV3_ENTRY or pass a local .pth via --backbone_weights.")
+        kw = {'weights': weights} if weights else {}
+        bb = torch.hub.load(repo, entry, source=source, **kw)
+    except Exception as e:  # pragma: no cover - needs network/clone + gated weights
+        raise RuntimeError(f"DINOv3 load failed (repo={repo} entry={entry} source={source} weights={weights}): {e}. "
+                           f"Set DINOV3_HUB/DINOV3_ENTRY/DINOV3_SOURCE or pass a local .pth via --backbone_weights.")
     return bb, 16, 4, 768
 
 
@@ -259,14 +262,18 @@ class CRCDSeg(Dataset):
             f"raw semantic_instance must be coco_id+1 in {{0,1,2,3}} (00_COMMON sec0 Decision 3).")
         lab = cv2.resize(lab.astype(np.uint8), (self.img_w, self.img_h), interpolation=cv2.INTER_NEAREST)
         if self.train and self.aug:
-            rgb, lab = aug_rgb_label(rgb, lab, self.img_h, self.img_w, np.random.default_rng(), self.gin)
+            # rng drawn from the global np.random stream, which is seeded per-worker (worker_init_fn)
+            # / per-process from --seed -> aug is reproducible given --seed yet varies across epochs.
+            rng = np.random.default_rng(int(np.random.randint(0, 2 ** 31 - 1)))
+            rgb, lab = aug_rgb_label(rgb, lab, self.img_h, self.img_w, rng, self.gin)
         rgb = (rgb.astype(np.float32) / 255.0 - IMAGENET_MEAN) / IMAGENET_STD
         return torch.from_numpy(rgb.transpose(2, 0, 1)), torch.from_numpy(lab.astype(np.int64))
 
 
 def gather_pairs(crcd_root, snippets, rgb_subdir, label_subdir, rgb_glob, label_glob,
-                 required=True, tag='train'):
-    """Pair RGB <-> label per snippet by basename (raw rgb/semantic_instance share names), else index."""
+                 required=True, tag='train', stride=1):
+    """Pair RGB <-> label per snippet by basename (raw rgb/semantic_instance share names), else index.
+    stride>1 keeps every Nth pair PER SNIPPET (surgical video is temporally redundant -> cheap cost cut)."""
     names = snippets or sorted(
         d for d in os.listdir(crcd_root)
         if os.path.isdir(os.path.join(crcd_root, d, rgb_subdir))
@@ -284,6 +291,8 @@ def gather_pairs(crcd_root, snippets, rgb_subdir, label_subdir, rgb_glob, label_
             if len(rgbs) != len(labs):
                 print(f"[data] WARN {nm}: {len(rgbs)} rgb vs {len(labs)} labels; pairing first {n}.")
             sp = list(zip(rgbs[:n], labs[:n]))
+        if stride > 1:
+            sp = sp[::stride]
         if not sp:
             print(f"[data] WARN {nm}: no ({rgb_subdir},{label_subdir}) pairs found.")
         pairs += sp
@@ -303,6 +312,7 @@ def class_weights(pairs, n_classes):
     for _, lp in pairs:
         l = cv2.imread(lp, cv2.IMREAD_UNCHANGED)
         l = l[..., 0] if l.ndim == 3 else l
+        assert l.max() < n_classes, f"{lp}: label id {int(l.max())} >= n_classes={n_classes}"
         cnt += np.bincount(l.ravel(), minlength=n_classes)[:n_classes]
     w = cnt.sum() / (n_classes * np.maximum(cnt, 1))         # inverse frequency
     return torch.tensor((w / w.mean()).astype(np.float32))
@@ -312,7 +322,9 @@ def dice_loss(logits, target, n_classes, eps=1.0):
     p = torch.softmax(logits, 1)
     t = F.one_hot(target, n_classes).permute(0, 3, 1, 2).float()
     inter = (p * t).sum((0, 2, 3)); denom = p.sum((0, 2, 3)) + t.sum((0, 2, 3))
-    return (1 - (2 * inter + eps) / (denom + eps)).mean()
+    d = 1 - (2 * inter + eps) / (denom + eps)
+    present = t.sum((0, 2, 3)) > 0          # classes absent in the batch contribute 0 (don't punish mass)
+    return d[present].mean() if bool(present.any()) else d.mean() * 0
 
 
 def make_loss(kind, weights, n_classes, device, gamma=2.0):
@@ -370,7 +382,9 @@ def main():
     # recipe / freeze granularity
     ap.add_argument('--train_blocks', type=int, default=8, help='unfreeze last N blocks (0=freeze; 8=baseline)')
     ap.add_argument('--tune_norms', action='store_true', help='BitFit-lite: also train norms+biases')
-    ap.add_argument('--linear_head', action='store_true', help='single-conv head instead of the 2-conv head')
+    ap.add_argument('--linear_head', action='store_true',
+                    help='single-conv head instead of the 2-conv head (NOT deploy-compatible with '
+                         'SNI/SemGauss - sweep/standalone only)')
     ap.add_argument('--aug', action='store_true', help='train-time domain-randomization augmentation')
     ap.add_argument('--gin', action='store_true', help='add GIN-lite random-conv intensity randomization')
     ap.add_argument('--loss', default='ce', choices=['ce', 'wce', 'focal', 'dice', 'wce_dice'])
@@ -380,6 +394,8 @@ def main():
     ap.add_argument('--epochs', type=int, default=40); ap.add_argument('--batch_size', type=int, default=2)
     ap.add_argument('--lr', type=float, default=1e-4); ap.add_argument('--val_frac', type=float, default=0.1)
     ap.add_argument('--test_every', type=int, default=2); ap.add_argument('--test_eval_cap', type=int, default=600)
+    ap.add_argument('--frame_stride', type=int, default=1, help='keep every Nth TRAIN/VAL frame per snippet (cost cut; test always full)')
+    ap.add_argument('--patience', type=int, default=0, help='early-stop after N epochs with no inner-val improvement (0=off)')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--smoke', action='store_true')
     a = ap.parse_args()
@@ -392,24 +408,29 @@ def main():
     train_names = a.snippets or sorted(
         d for d in os.listdir(a.crcd_root)
         if os.path.isdir(os.path.join(a.crcd_root, d, a.rgb_subdir)))
+    leak2 = set(train_names) & set(a.test_snippets or [])   # symmetric guard: test must not be in train
+    assert not leak2, f"--snippets overlaps --test_snippets {leak2} (test leaked into train)"
     if a.val_snippets:
         leak = set(a.val_snippets) & set(a.test_snippets or [])
         assert not leak, f"--val_snippets overlaps --test_snippets {leak} (leakage)"
         tr_names = [n for n in train_names if n not in a.val_snippets]
-        train = gather_pairs(a.crcd_root, tr_names, required=True, tag='train', **gp)
-        val = gather_pairs(a.crcd_root, list(a.val_snippets), required=True, tag='val(grouped)', **gp)
+        train = gather_pairs(a.crcd_root, tr_names, required=True, tag='train', stride=a.frame_stride, **gp)
+        val = gather_pairs(a.crcd_root, list(a.val_snippets), required=True, tag='val(grouped)', stride=a.frame_stride, **gp)
     else:
         print("[split] WARN no --val_snippets -> leaky random-FRAME val (in-domain, invalid for "
               "generalization selection). Use --val_snippets for honest model selection.")
-        pairs = gather_pairs(a.crcd_root, train_names, required=True, tag='train', **gp)
+        pairs = gather_pairs(a.crcd_root, train_names, required=True, tag='train', stride=a.frame_stride, **gp)
         rng = np.random.default_rng(a.seed); idx = rng.permutation(len(pairs))
         nval = max(1, int(len(pairs) * a.val_frac))
         val = [pairs[i] for i in idx[:nval]]; train = [pairs[i] for i in idx[nval:]]
     if a.smoke:
         train = train[:16]; val = val[:8]; a.epochs = 2; a.batch_size = 1
 
+    def _winit(wid):  # seed each worker's global np.random deterministically from --seed (reproducible aug)
+        np.random.seed((a.seed * 100003 + wid) % (2 ** 31 - 1))
     tr = DataLoader(CRCDSeg(train, a.img_h, a.img_w, a.n_classes, train=True, aug=a.aug, gin=a.gin),
-                    batch_size=a.batch_size, shuffle=True, num_workers=2, drop_last=True)
+                    batch_size=a.batch_size, shuffle=True, num_workers=2, drop_last=True,
+                    worker_init_fn=_winit, generator=torch.Generator().manual_seed(a.seed))
     vl = DataLoader(CRCDSeg(val, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2)
     test_pairs = gather_pairs(a.crcd_root, a.test_snippets, required=False, tag='test', **gp) if a.test_snippets else []
     tt = DataLoader(CRCDSeg(test_pairs, a.img_h, a.img_w, a.n_classes), batch_size=1, num_workers=2) if test_pairs else None
@@ -433,7 +454,7 @@ def main():
         print(f"[loss] {a.loss} inverse-freq class weights = {np.round(cw.numpy(), 3).tolist()}")
     crit = make_loss(a.loss, cw, a.n_classes, device)
 
-    best = -1.0
+    best = -1.0; since = 0
     for ep in range(a.epochs):
         model.train(); tot = 0.0
         for rgb, lab in tr:
@@ -443,20 +464,34 @@ def main():
         m, ious = miou(model, vl, a.n_classes, device)
         print(f"[ep {ep:03d}] train_loss={tot/max(1,len(tr)):.4f}  val_mIoU={m:.4f}  perclass={np.round(ious,3).tolist()}")
         if m > best:                                   # '>' (not '>='): keep the EARLIER best epoch
-            best = m
+            best = m; since = 0
             os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
             torch.save(model.state_dict(), a.out)
+        else:
+            since += 1
         if tt_quick is not None and a.test_every > 0 and (ep + 1) % a.test_every == 0:
             qm, qious = miou(model, tt_quick, a.n_classes, device)
             print(f"[ep {ep:03d}] HELD-OUT(quick {len(quick)}f) mIoU={qm:.4f}  perclass={np.round(qious,3).tolist()}  (informational)")
+        if a.patience and since >= a.patience:
+            print(f"[early-stop] no inner-val gain for {a.patience} epochs (best={best:.4f})"); break
     if tt is not None:
         model.load_state_dict(torch.load(a.out, map_location=device))
         tm, tious = miou(model, tt, a.n_classes, device)
         print(f"[HELD-OUT TEST] {a.test_snippets} mIoU (NEVER trained) = {tm:.4f}  "
               f"perclass={np.round(tious,3).tolist()}  (0=bg 1=Liver 2=Gallbladder 3=Tool)")
     print(f"[done] best inner-val mIoU={best:.4f}  saved -> {a.out}")
-    if a.backbone in ('dinov2', 'surgenet'):
-        print("[load-compat] /14 + n_classes=4,dim=16 -> loads strict into SemGauss, strict=False into SNI.")
+    deployable = (a.backbone in ('dinov2', 'surgenet') and not a.linear_head
+                  and a.n_classes == 4 and a.dim == 16 and a.crop_edge == 0)
+    if deployable:
+        print("[load-compat] /14 + 2-conv head + n_classes=4,dim=16,edge=0 -> loads strict into "
+              "SemGauss, strict=False into SNI.")
+    elif a.backbone in ('dinov2', 'surgenet') and a.linear_head:
+        print("[load-compat] WARNING: --linear_head changes segmentation_conv keys (.1 reshaped to "
+              "n_cls, .3 ABSENT) -> CRASHES SemGauss (strict) + silently RANDOM head in SNI. "
+              "SWEEP/STANDALONE ONLY - do NOT deploy this .pth into SNI/SemGauss.")
+    elif a.backbone in ('dinov2', 'surgenet'):
+        print(f"[load-compat] non-default n_classes/dim/edge ({a.n_classes}/{a.dim}/{a.crop_edge}) "
+              "-> may NOT load strict into the baselines.")
     else:
         print("[load-compat] dinov3/16 -> does NOT load into the unmodified SNI/SemGauss DINO2SEG "
               "(separate codebase adaptation needed; run only if dinov3 wins the held-out A/B).")

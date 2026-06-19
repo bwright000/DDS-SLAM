@@ -39,7 +39,9 @@ TRAIN_BLOCKS=${TRAIN_BLOCKS:-0}                   # 0=freeze (head only); 8=base
 LOSS=${LOSS:-wce_dice}                            # ce|wce|focal|dice|wce_dice
 AUG=${AUG:-1}; GIN=${GIN:-0}; LINEAR_HEAD=${LINEAR_HEAD:-0}; TUNE_NORMS=${TUNE_NORMS:-0}
 VAL_SNIPS=${VAL_SNIPS:-"G2_003 F3_007"}          # 2 TRAIN snippets held out as inner-val (never benchmark)
-IMG_H=${IMG_H:-504}; IMG_W=${IMG_W:-896}; EPOCHS=${EPOCHS:-40}; LR=${LR:-1e-4}
+FRAME_STRIDE=${FRAME_STRIDE:-2}                   # keep every Nth train/val frame (cost cut; test always full)
+PATIENCE=${PATIENCE:-6}                           # early-stop after N epochs w/o inner-val gain (0=off)
+IMG_H=${IMG_H:-504}; IMG_W=${IMG_W:-896}; EPOCHS=${EPOCHS:-25}; LR=${LR:-1e-4}
 SEGDATA=${SEGDATA:-/content/crcd_seg_data}
 DRIVE_CRCD=${DRIVE_CRCD:-/content/drive/MyDrive/Datasets/CRCD-Published}
 OUT_DRIVE=${OUT_DRIVE:-/content/drive/MyDrive/Outputs/seg/loso_$TAG}
@@ -78,11 +80,12 @@ fi
 # snippet NAME -> "EP SID" (C1_001 -> C_1 001)
 ep_sid(){ local n=$1; [[ "$n" =~ ^[A-Za-z][0-9]_[0-9]{3}$ ]] || { echo ""; return; }; echo "${n:0:1}_${n:1:1} ${n:3}"; }
 stage_raw(){ local NAME=$1 dst="$SEGDATA/$NAME"
-  [ -d "$dst/rgb" ] && [ "$(ls "$dst/semantic_instance"/*.png 2>/dev/null | wc -l)" -gt 0 ] && { echo "[$NAME] staged"; return 0; }
+  [ "$(ls "$dst/rgb"/*.png 2>/dev/null | wc -l)" -gt 0 ] && [ "$(ls "$dst/semantic_instance"/*.png 2>/dev/null | wc -l)" -gt 0 ] && { echo "[$NAME] staged"; return 0; }
   local EP SID; read -r EP SID <<< "$(ep_sid "$NAME")"; [ -n "$EP" ] || { echo "[$NAME] bad name"; return 1; }
   local SRC="$DRIVE_CRCD/$EP/snippet_$SID"
   [ -d "$SRC/rgb" ] && [ -d "$SRC/semantic_instance" ] || { echo "[$NAME] raw not on Drive ($EP/snippet_$SID)"; return 1; }
-  mkdir -p "$dst"; cp -rn "$SRC/rgb" "$dst/rgb"; cp -rn "$SRC/semantic_instance" "$dst/semantic_instance"
+  rm -rf "$dst"; mkdir -p "$dst/rgb" "$dst/semantic_instance"   # clean restage; cp CONTENTS (avoid nested rgb/rgb on partial)
+  cp -rn "$SRC/rgb/." "$dst/rgb/"; cp -rn "$SRC/semantic_instance/." "$dst/semantic_instance/"
   echo "[$NAME] staged $(ls "$dst/rgb"/*.png 2>/dev/null | wc -l) frames"; }
 for NAME in $ALL20; do stage_raw "$NAME" || true; done
 
@@ -91,20 +94,23 @@ flags="--backbone $BACKBONE --backbone_weights $BACKBONE_WEIGHTS --train_blocks 
 [ "$GIN" = 1 ]         && flags="$flags --gin"
 [ "$LINEAR_HEAD" = 1 ] && flags="$flags --linear_head"
 [ "$TUNE_NORMS" = 1 ]  && flags="$flags --tune_norms"
+flags="$flags --frame_stride $FRAME_STRIDE --patience $PATIENCE"
+# sweep-only configs (non-deployable head/arch) get a _SWEEPONLY .pth so they can't be mistaken for a deploy ckpt
+SUF=""; { [ "$LINEAR_HEAD" = 1 ] || [ "$BACKBONE" = dinov3 ]; } && SUF="_SWEEPONLY"
 
-# ---- LOSO folds: for each benchmark snippet, train on the other 19 (minus 2 inner-val) --------
+# ---- LOSO folds: for each benchmark snippet, train on the other 17 (=19 non-held-out minus 2 inner-val) ----
 for S in $BENCH5; do
   TR=""; for n in $ALL20; do [ "$n" = "$S" ] && continue; case " $VAL_SNIPS " in *" $n "*) continue;; esac; TR="$TR $n"; done
-  echo ""; echo "### FOLD test=$S  (train on the other 19 minus inner-val) ###"
+  echo ""; echo "### FOLD test=$S  (train on the other 17; 19 non-held-out minus 2 inner-val) ###"
   case " $CLEAN4 " in *" $S "*) echo "    [fold] $S = TRUE cross-episode";; *) echo "    [fold] $S = IN-DOMAIN under LOSO (E_3 in train) - reported separately";; esac
-  log="$OUT_DRIVE/fold_${S}.log"
+  log="$OUT_DRIVE/fold_${S}.log"; rm -f "$OUT_DRIVE/fold_${S}.FAILED"
   python Addons/seg/train_dinov2_crcd.py \
     --crcd_root "$SEGDATA" --snippets $TR --val_snippets $VAL_SNIPS --test_snippets "$S" \
-    --dinov2_main "$DINOV2_MAIN" --out "$OUT_DRIVE/dinov2_crcd_${S}.pth" \
+    --dinov2_main "$DINOV2_MAIN" --out "$OUT_DRIVE/dinov2_crcd_${S}${SUF}.pth" \
     --rgb_subdir rgb --label_subdir semantic_instance \
     --n_classes 4 --dim 16 --img_h "$IMG_H" --img_w "$IMG_W" --crop_edge 0 \
     --epochs "$EPOCHS" --lr "$LR" $flags 2>&1 | tee "$log"
-  [ "${PIPESTATUS[0]}" -eq 0 ] || echo "[$S] FAILED (see $log)"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "[$S] FAILED (see $log)"; touch "$OUT_DRIVE/fold_${S}.FAILED"; }
 done
 
 # ---- summarize: mean over the 4 TRUE cross-episode folds; E3_005 separate ---------------------
@@ -119,12 +125,18 @@ rows={}
 for lg in sorted(glob.glob(os.path.join(out,'fold_*.log'))):
     s=os.path.basename(lg)[5:-4]; rows[s]=heldout(lg)
 import statistics as st
+failed={os.path.basename(p)[5:-7] for p in glob.glob(os.path.join(out,'fold_*.FAILED'))}
 cl=[v for s,v in rows.items() if s in clean and v is not None]
 for s,v in rows.items():
     tag='cross-episode' if s in clean else 'IN-DOMAIN(sep)'
-    print(f"  {s:<8} mIoU={v if v is None else round(v,4)}  [{tag}]")
+    mark=' FAILED' if s in failed else ''
+    print(f"  {s:<8} mIoU={v if v is None else round(v,4)}  [{tag}]{mark}")
+miss=[s for s in clean if rows.get(s) is None]
+if miss or failed:
+    print(f"  !! INCOMPLETE: missing/failed clean folds = {sorted(set(miss)|(failed&clean))} "
+          f"-> headline is n={len(cl)}/{len(clean)}; DO NOT compare to a full-{len(clean)} run")
 if cl:
-    print(f"  --> CROSS-EPISODE HEADLINE (n={len(cl)} clean folds): mean={st.mean(cl):.4f}"
+    print(f"  --> CROSS-EPISODE HEADLINE (n={len(cl)}/{len(clean)} clean folds): mean={st.mean(cl):.4f}"
           + (f" std={st.pstdev(cl):.4f}" if len(cl)>1 else ""))
 print("  (E3_005 excluded from headline: E_3 is in train under LOSO -> in-domain)")
 PY
