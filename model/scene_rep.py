@@ -587,12 +587,22 @@ class JointEncoding(nn.Module):
                 # SSIM+depth; SSIM needs spatial patches we don't sample -> depth-consistency is the
                 # doable structural signal.) flag-gated default-off -> base/geo-l2 unchanged.
                 _teacher = self.config.get('uncertainty', {}).get('teacher', 'l2')
+                # Arm-1 #2 (lit scan): STOP-GRADIENT. The err^2/sigma^2 term back-props a 1/sigma^2-weighted
+                # gradient into the PREDICTION (rgb/depth), so the model can lower the NLL by INFLATING
+                # sigma^2 on hard pixels instead of fixing the prediction (beta-NLL "explain-away",
+                # Seitzer ICLR22). Detaching the prediction in the residual decouples them: the NLL then
+                # trains sigma^2 ONLY, and the prediction is shaped by its own undistorted rgb/depth loss
+                # (the base already carries a separate full-gradient rgb_loss, so this is the clean fix
+                # for our setup). flag-gated default-off (detach_residual False) -> byte-identical base.
+                _detach = self.config.get('uncertainty', {}).get('detach_residual', False)
+                _p_rgb = rend_dict['rgb'].detach() if _detach else rend_dict['rgb']
                 if _teacher == 'l2':
-                    _rgb_err2 = ((rend_dict['rgb'] - target_rgb) ** 2).float()   # [N_rays,3] EXACT original
+                    _rgb_err2 = ((_p_rgb - target_rgb) ** 2).float()   # [N_rays,3] EXACT original when not detached
                     _nll = 0.5 * (_rgb_err2 / _s2 + torch.log(_s2))             # broadcast [N_rays,3]
                 else:
-                    _rgb_e2 = ((rend_dict['rgb'] - target_rgb) ** 2).float().mean(-1, keepdim=True)  # [N,1]
-                    _d_hat = rend_dict['depth'].float().reshape(-1, 1)
+                    _rgb_e2 = ((_p_rgb - target_rgb) ** 2).float().mean(-1, keepdim=True)  # [N,1]
+                    _p_d = rend_dict['depth'].detach() if _detach else rend_dict['depth']
+                    _d_hat = _p_d.float().reshape(-1, 1)
                     _d_gt = target_d.float().reshape(-1, 1)
                     _dep_e2 = ((_d_hat - _d_gt) / (_d_gt.abs() + 1e-6)) ** 2     # [N,1] scale-invariant
                     if _teacher == 'depth':       _err = _dep_e2

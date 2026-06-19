@@ -1,0 +1,11 @@
+# Arm-1 #2 STOP-GRADIENT test (CRCD C_1/001): geo uncertainty + uncertainty.detach_residual=true.
+# The ONLY delta vs c1_001_canon_uncert (geo, l2 teacher, detach OFF) is the stop-gradient, so any
+# metric change is attributable to JUST the explain-away fix. Teacher stays l2 (default) -> clean
+# single-variable. Detaching the prediction in the NLL residual makes the sigma^2 head train on the
+# error WITHOUT down-weighting the gradient to the rgb/depth prediction (beta-NLL explain-away).
+inherit_from: configs/CRCD/c1_001_canon_uncert.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_detach
+  exp_name: demo
+uncertainty:
+  detach_residual: true
