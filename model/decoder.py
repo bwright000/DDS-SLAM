@@ -492,8 +492,16 @@ class ColorSDFNet_v2(nn.Module):
             # modalities (semantic + appearance + geometry) -> tests whether fusing geometry/appearance
             # ONTO DINO beats geo-alone (geo-vs-dino was isolation-only). The +4 signals are concatenated
             # (detached) at the scene_rep call site. Default '' -> +0 -> same in_dim -> same RNG -> parity.
+            # geo_feat SNI-fusion (2026-06-19): fuse the INTERNAL geometry feature (the jitter-killer)
+            # into the dino sigma^2 head. fuse='geo' -> [DINO ; geo_feat]; 'geo_rgbd' -> [DINO ; geo_feat ;
+            # rgb ; depth]. _surface_geo tells forward() to RETURN geo_feat (volume-rendered per-ray in
+            # render_rays, concatenated detached at the scene_rep fuse site). '' / 'rgbd' unchanged -> parity.
             _fuse = config.get('uncertainty', {}).get('fuse', '')
-            _extra = 4 if _fuse == 'rgbd' else 0
+            self._surface_geo = _fuse in ('geo', 'geo_rgbd')
+            _Cgeo = int(config['decoder']['geo_feat_dim'])
+            _extra = 0
+            if _fuse in ('geo', 'geo_rgbd'):  _extra += _Cgeo
+            if _fuse in ('rgbd', 'geo_rgbd'): _extra += 4
             self.dino_unc_net = UncertaintyDINONet(
                 in_dim=int(config['uncertainty']['dino_dim']) + _extra,
                 hidden_dim=config.get('uncertainty', {}).get('hidden_dim', 64),
@@ -531,4 +539,7 @@ class ColorSDFNet_v2(nn.Module):
             else:
                 sigma2_raw = self.uncertainty_net(torch.cat([geo_feat], dim=-1))
 
-        return torch.cat([rgb,sdf], -1), edge_semantic, sigma2_raw
+        # geo_feat surfaced as a gated 4th element (None unless _surface_geo) so the dino sigma^2 head can
+        # fuse the geometry feature. ALWAYS-4-tuple (None when off) keeps the run_network unpack arity
+        # constant -> flags-off control flow byte-identical to base.
+        return torch.cat([rgb,sdf], -1), edge_semantic, sigma2_raw, (geo_feat if getattr(self, '_surface_geo', False) else None)

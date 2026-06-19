@@ -1,0 +1,8 @@
+# geo_feat SNI-FUSION (SemSup mirror): sigma^2 reads [DINO_reg ; geo_feat]. Render-only metric
+# (SemSup pose GT is fictional -> judge PSNR/SSIM/LPIPS + sigma2_quality, not ATE).
+inherit_from: configs/Super/trail3_moge2_uncert_dino_reg_rgbdepth.yaml
+data:
+  output: output/Super/trail3_moge2_uncert_dino_reg_rgbdepth_geofuse
+  exp_name: demo
+uncertainty:
+  fuse: geo

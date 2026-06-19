@@ -1,0 +1,9 @@
+# geo_feat SNI-FUSION companion (CRCD): full SNI modality stack -> sigma^2 reads
+# [DINO_reg ; geo_feat ; rgb ; depth]. Earns its place ONLY if it beats fuse:geo — rgb/depth may
+# dilute the clean geo_feat geometry signal (spec recommendation: geo headline, geo_rgbd companion).
+inherit_from: configs/CRCD/c1_001_canon_uncert_dino_reg_rgbdepth.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_dino_reg_rgbdepth_georgbd
+  exp_name: demo
+uncertainty:
+  fuse: geo_rgbd

@@ -1,0 +1,11 @@
+# geo_feat SNI-FUSION (CRCD, headline arm): fuse the INTERNAL geometry feature (geo's jitter-killer)
+# into the dino_reg + depth-teacher sigma^2 head -> sigma^2 reads [DINO_reg ; geo_feat]. Tests the
+# "smooth AND bounded" hypothesis: geo_feat carries geo's jitter-suppression (path-ratio ~4.2), the
+# dino_reg+teacher base carries the spike-cut (ATE_max ~5.8). Single-variable vs the parent
+# c1_001_canon_uncert_dino_reg_rgbdepth (= dino_reg_rd) -> the only delta is fuse=geo.
+inherit_from: configs/CRCD/c1_001_canon_uncert_dino_reg_rgbdepth.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_dino_reg_rgbdepth_geofuse
+  exp_name: demo
+uncertainty:
+  fuse: geo

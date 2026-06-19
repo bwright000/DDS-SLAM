@@ -234,17 +234,21 @@ class JointEncoding(nn.Module):
         if self.config['grid']['tcnn_encoding']:
             inputs_flat = (inputs_flat - self.bounding_box[:, 0]) / (self.bounding_box[:, 1] - self.bounding_box[:, 0])
 
-        # ColorSDFNet_v2 ALWAYS returns a 3-tuple (sigma2_flat is None when the
-        # Inc-1 uncertainty head is absent) — arity is constant => flags-off control
-        # flow is byte-identical to base.
-        outputs_flat, edge_semantic, sigma2_flat = batchify(self.query_color_sdf, None)(inputs_flat)
+        # ColorSDFNet_v2 ALWAYS returns a 4-tuple (sigma2_flat / geo_feat_flat are None when the
+        # respective head/fusion is absent) — arity is constant => flags-off control flow is
+        # byte-identical to base.
+        outputs_flat, edge_semantic, sigma2_flat, geo_feat_flat = batchify(self.query_color_sdf, None)(inputs_flat)
         outputs = torch.reshape(outputs_flat, list(inputs.shape[:-1]) + [outputs_flat.shape[-1]])
         edge_semantic = torch.reshape(edge_semantic, list(inputs.shape[:-1]) + [edge_semantic.shape[-1]])
         # ARM-2 Inc-1: reshape sigma2 like edge_semantic; passthrough None when off.
         sigma2 = None
         if sigma2_flat is not None:
             sigma2 = torch.reshape(sigma2_flat, list(inputs.shape[:-1]) + [sigma2_flat.shape[-1]])
-        return outputs, edge_semantic, sigma2, def_reg
+        # geo_feat SNI-fusion: reshape the per-sample geometry feature like sigma2; None unless _surface_geo.
+        geo_feat = None
+        if geo_feat_flat is not None:
+            geo_feat = torch.reshape(geo_feat_flat, list(inputs.shape[:-1]) + [geo_feat_flat.shape[-1]])
+        return outputs, edge_semantic, sigma2, geo_feat, def_reg
 
     def deform_teacher_loss(self, Xk, t, dx_target, w):
         '''ARM-2 Stage-1: supervise the deformation field DIRECTLY (the contribution the paper lacks).
@@ -420,7 +424,7 @@ class JointEncoding(nn.Module):
         if _sb and _sb > 0 and target_d is not None:
             _trunc_w = self.config['training']['trunc'] * self.config['data'].get('sc_factor', 1.0)
             surf_w = torch.exp(-((z_vals - target_d) / (_sb * _trunc_w + 1e-9)) ** 2)  # [N_rays, N_samples]
-        raw, edge_semantic, sigma2, def_reg = self.run_network(pts, oracle_w=oracle_w, surf_w=surf_w)
+        raw, edge_semantic, sigma2, geo_feat, def_reg = self.run_network(pts, oracle_w=oracle_w, surf_w=surf_w)
         # ARM-2 Inc-1: raw2outputs returns an 8th element (sigma2_map) ONLY when
         # sigma2 is not None (uncertainty head on); otherwise the 7-tuple unpack
         # below is byte-identical to base.
@@ -429,6 +433,11 @@ class JointEncoding(nn.Module):
             rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map, sigma2_map = self.raw2outputs(raw, edge_semantic, z_vals, self.config['training']['white_bkgd'], sigma2=sigma2)
         else:
             rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_semantic_map = self.raw2outputs(raw, edge_semantic, z_vals, self.config['training']['white_bkgd'])
+        # geo_feat SNI-fusion: volume-render the per-sample geometry feature to per-ray with the SAME
+        # blend weights as rgb/sigma2; None unless the dino head fuses geo_feat (decoder._surface_geo).
+        geo_feat_map = None
+        if geo_feat is not None:
+            geo_feat_map = torch.sum(weights[..., None] * geo_feat, -2)   # [N_rays, Cgeo]
 
         # Importance sampling
         if self.config['training']['n_importance'] > 0:
@@ -445,7 +454,7 @@ class JointEncoding(nn.Module):
             # NOTE: n_importance>0 branch is DEAD/BROKEN upstream (raw2outputs called
             # with wrong arity, edge_map undefined). Kept disabled via n_importance:0.
             # Unpack updated only to match run_network's new 4-tuple arity.
-            raw, edge_semantic, sigma2, def_reg = self.run_network(pts, oracle_w=oracle_w)
+            raw, edge_semantic, sigma2, geo_feat, def_reg = self.run_network(pts, oracle_w=oracle_w)
             rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_map,edge_semantic_map = self.raw2outputs(raw, z_vals, self.config['training']['white_bkgd'])
 
         # Return rendering outputs
@@ -461,6 +470,9 @@ class JointEncoding(nn.Module):
         # ARM-2 Inc-1: per-ray sigma^2 map, only present when the head is on.
         if sigma2_map is not None:
             ret['sigma2'] = sigma2_map
+        # geo_feat SNI-fusion: per-ray geometry feature, only present when the dino head fuses it.
+        if geo_feat_map is not None:
+            ret['geo_feat'] = geo_feat_map
         ret = {**ret, 'z_vals': z_vals}
         ret['raw'] = raw
 
@@ -507,12 +519,19 @@ class JointEncoding(nn.Module):
         # eval early-return so render_only also surfaces sigma2 for the viz. Gated on (target_dino present
         # AND head built) -> off/geo add no key/op -> byte-identical base (Inc-0).
         if target_dino is not None and hasattr(self.decoder, 'dino_unc_net'):
-            _feat = target_dino
-            if self.config.get('uncertainty', {}).get('fuse', '') == 'rgbd':   # SNI-spirit fusion
-                # [DINO(semantic) ; rgb(appearance) ; depth(geometry)] — detached so sigma^2 reads the
-                # render but doesn't drive it (stop-gradient, lit #2). Per-dim scales comparable.
-                _feat = torch.cat([target_dino, rend_dict['rgb'].detach().reshape(target_dino.shape[0], 3),
-                                   rend_dict['depth'].detach().reshape(target_dino.shape[0], 1)], dim=-1)
+            # SNI-spirit fusion (uncertainty.fuse): '' = DINO only; 'rgbd' = [DINO ; rgb ; depth];
+            # 'geo' = [DINO ; geo_feat] (the geometry jitter-killer); 'geo_rgbd' = [DINO ; geo_feat ; rgb ;
+            # depth]. All extra modalities DETACHED so sigma^2 READS them but doesn't drive geometry/render
+            # (stop-gradient, lit #2). Concat order [dino, geo, rgb, depth] matches the decoder in_dim
+            # arithmetic (decoder.py:495). '' / 'rgbd' byte-identical to before.
+            _fuse = self.config.get('uncertainty', {}).get('fuse', '')
+            _parts = [target_dino]
+            if _fuse in ('geo', 'geo_rgbd') and 'geo_feat' in rend_dict:
+                _parts.append(rend_dict['geo_feat'].detach().reshape(target_dino.shape[0], -1))
+            if _fuse in ('rgbd', 'geo_rgbd'):
+                _parts.append(rend_dict['rgb'].detach().reshape(target_dino.shape[0], 3))
+                _parts.append(rend_dict['depth'].detach().reshape(target_dino.shape[0], 1))
+            _feat = torch.cat(_parts, dim=-1) if len(_parts) > 1 else target_dino
             _sig = torch.nn.functional.softplus(self.decoder.dino_unc_net(_feat).float()) + 1e-6
             rend_dict['sigma2'] = torch.clamp_min(_sig, 1e-6)
 
