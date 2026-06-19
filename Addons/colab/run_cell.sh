@@ -7,6 +7,7 @@
 # produces neither. Auto-detects CRCD vs SemSup from the config's datadir.
 #   bash Addons/colab/run_cell.sh configs/CRCD/c1_001_canon_base.yaml base_v0
 set -uo pipefail
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True   # reduce CUDA fragmentation on long T4 runs (anti-OOM)
 CFG=$1; NAME=$2; SEED=${3:-0}
 REPO=/content/DDS-SLAM; cd "$REPO"
 OUT="output/$NAME"; RUN="$OUT/demo"; OVR="/content/_cell_${NAME}.yaml"

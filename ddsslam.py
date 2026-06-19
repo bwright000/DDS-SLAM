@@ -375,29 +375,28 @@ class DDSSLAM():
                 cur_id = (cur_frame_id*torch.ones(rays_o.shape[0]))
                 timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1]; flag default off = upstream behaviour
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
-            # Forward
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d,target_edge_semantic=target_edge_semantic, target_dino=target_dino)
-            loss = self.get_loss_from_ret(ret)
-            # ARM-2 Stage-1: direct deformation-field teacher loss (default-off: deformation_sup_weight=0 => base).
+            # ARM-2 Stage-1 teacher. deform_teacher_only -> the field is trained on the teacher ALONE, so the
+            # render forward is UNUSED: skip it entirely (big T4 memory + ~2x compute saving; fixes the
+            # end-of-run OOM where the wasted forward tipped the GPU over on the last frame).
             _ds_w = self.config['training'].get('deformation_sup_weight', 0)
-            if _ds_w > 0 and self.config['dynamic']:
-                if deform_dx is None:
-                    if i == 0 and cur_frame_id <= 3:
-                        print(f'[teacher] frame {cur_frame_id}: deform_dx is None (targets NOT attached) -> teacher INACTIVE')
-                else:
-                    Xk = rays_o[..., :3] + rays_d * target_d                   # [N,3] world surface pts
+            _teach = _ds_w > 0 and self.config['dynamic'] and deform_dx is not None
+            if _teach and self.config['training'].get('deform_teacher_only', False):
+                Xk = rays_o[..., :3] + rays_d * target_d                       # [N,3] world surface pts
+                def_sup = self.model.deform_teacher_loss(Xk, timestamps.unsqueeze(-1), deform_dx, deform_w)
+                loss = _ds_w * def_sup
+                ret = None                                                     # render forward skipped (teacher-only)
+            else:
+                ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino)
+                loss = self.get_loss_from_ret(ret)
+                if _teach:                                                     # joint: render loss + teacher
+                    Xk = rays_o[..., :3] + rays_d * target_d
                     def_sup = self.model.deform_teacher_loss(Xk, timestamps.unsqueeze(-1), deform_dx, deform_w)
-                    # deform_teacher_only: train the field on the teacher ALONE in this step (drop the render
-                    # loss so the sdf/render gradient can't pin time_net at 0). Isolates "can the field learn
-                    # Δx*?" from the render-collapse competition. Default off = joint (render + teacher).
-                    if self.config['training'].get('deform_teacher_only', False):
-                        loss = _ds_w * def_sup
-                    else:
-                        loss = loss + _ds_w * def_sup
-                    # DIAGNOSTIC (frames<=3, first+last cur-iter): is the teacher firing + does its loss DROP
-                    # (field moving toward Δx*)? Flat/high def_sup = field not learning; None above = not attached.
-                    if cur_frame_id <= 3 and (i == 0 or i == self.config['mapping']['cur_frame_iters'] - 1):
-                        print(f'[teacher] frame {cur_frame_id} it{i:3d}: def_sup={def_sup.item():.7f}  weighted={_ds_w*def_sup.item():.5f}  |dx*|mean={deform_dx.norm(dim=-1).mean().item():.5f}  w.sum={deform_w.sum().item():.1f}')
+                    loss = loss + _ds_w * def_sup
+            # diagnostics (frames<=3): does def_sup DROP it0->it99 (field learning)? / are targets attached?
+            if _teach and cur_frame_id <= 3 and (i == 0 or i == self.config['mapping']['cur_frame_iters'] - 1):
+                print(f'[teacher] frame {cur_frame_id} it{i:3d}: def_sup={def_sup.item():.7f}  weighted={_ds_w*def_sup.item():.5f}  |dx*|mean={deform_dx.norm(dim=-1).mean().item():.5f}  w.sum={deform_w.sum().item():.1f}')
+            elif _ds_w > 0 and self.config['dynamic'] and deform_dx is None and i == 0 and cur_frame_id <= 3:
+                print(f'[teacher] frame {cur_frame_id}: deform_dx is None (targets NOT attached) -> teacher INACTIVE')
             loss.backward()
             self.cur_map_optimizer.step()
         return ret, loss
