@@ -749,26 +749,32 @@ class DDSSLAM():
         # (timenet_weight_decay=1e-6, timenet_lr_mult=1.0) reproduce the original
         # single decoder group exactly (Adam state is per-param; identical hyperparams
         # in two groups == one group).
-        def _dec_groups():
+        def _dec_groups(include_timenet=True):
             lr_dec = self.config['mapping']['lr_decoder']
             tn_wd = self.config['training'].get('timenet_weight_decay', 1e-6)
             tn_mult = self.config['training'].get('timenet_lr_mult', 1.0)
             main = [p for n, p in self.model.decoder.named_parameters() if 'time_net' not in n]
             timep = [p for n, p in self.model.decoder.named_parameters() if 'time_net' in n]
             g = [{'params': main, 'weight_decay': 1e-6, 'lr': lr_dec}]
-            if timep:
+            if timep and include_timenet:
                 g.append({'params': timep, 'weight_decay': tn_wd, 'lr': lr_dec * tn_mult})
             return g
 
+        # deform_field_teacher_only: keep time_net OUT of the global_BA (map) optimizer, so the render
+        # loss can NEVER step/collapse the deformation field -> the field is trained ONLY by the teacher
+        # (current_frame_mapping). v0 showed global_BA collapses the field to 0 before the teacher acts;
+        # this is the fix. Default off = field trained by both (upstream behaviour).
+        _fto = self.config['training'].get('deform_field_teacher_only', False)
+
         # Optimizer for BA
-        trainable_parameters = _dec_groups() + [{'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
+        trainable_parameters = _dec_groups(include_timenet=not _fto) + [{'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
         if not self.config['grid']['oneGrid']:
             trainable_parameters.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
         self.map_optimizer = optim.Adam(trainable_parameters, betas=(0.9, 0.99))
 
-        # Optimizer for current frame mapping
+        # Optimizer for current frame mapping (ALWAYS trains time_net -> the teacher's update path)
         if self.config['mapping']['cur_frame_iters'] > 0:
-            params_cur_mapping = _dec_groups() + [{'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
+            params_cur_mapping = _dec_groups(include_timenet=True) + [{'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
             if not self.config['grid']['oneGrid']:
                 params_cur_mapping.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
             self.cur_map_optimizer = optim.Adam(params_cur_mapping, betas=(0.9, 0.99))
