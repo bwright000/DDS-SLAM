@@ -90,8 +90,14 @@ build_env(){
       && git -C "$RAST" checkout -q cb65e4b86bc3bd8ed42174b72a62e8d3a3a71110 \
       && git -C "$RAST" submodule update --init --recursive || echo "[env] WARN rasterizer clone/submodule issue"
   fi
+  # conda torch does NOT bundle pybind11 headers and --no-build-isolation skips pip's auto build-deps,
+  # so install pybind11 + put its include on CPATH (else: "fatal error: pybind11/pybind11.h: No such file").
+  PYTHONPATH= "$ENV_PY" -m pip install -q pybind11 || echo "[env] WARN pybind11 install"
+  local PYBIND_INC; PYBIND_INC=$(PYTHONPATH= "$ENV_PY" -c "import pybind11; print(pybind11.get_include())" 2>/dev/null)
+  echo "[env] pybind11 include: $PYBIND_INC"
   # VERBOSE (no -q, -v) + tee FULL build log so the real nvcc/g++ error is visible, not "No available output"
   PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="$ARCH" \
+     CPATH="${PYBIND_INC}${CPATH:+:$CPATH}" \
      "$ENV_PY" -m pip install --no-build-isolation --force-reinstall --no-deps -v "$RAST" 2>&1 | tee /content/rasterizer_build.log
   PYTHONPATH= "$ENV_PY" -c "import diff_gaussian_rasterization" 2>/dev/null \
      && echo "[env] rasterizer import OK" \
