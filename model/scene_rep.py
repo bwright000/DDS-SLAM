@@ -507,7 +507,13 @@ class JointEncoding(nn.Module):
         # eval early-return so render_only also surfaces sigma2 for the viz. Gated on (target_dino present
         # AND head built) -> off/geo add no key/op -> byte-identical base (Inc-0).
         if target_dino is not None and hasattr(self.decoder, 'dino_unc_net'):
-            _sig = torch.nn.functional.softplus(self.decoder.dino_unc_net(target_dino).float()) + 1e-6
+            _feat = target_dino
+            if self.config.get('uncertainty', {}).get('fuse', '') == 'rgbd':   # SNI-spirit fusion
+                # [DINO(semantic) ; rgb(appearance) ; depth(geometry)] — detached so sigma^2 reads the
+                # render but doesn't drive it (stop-gradient, lit #2). Per-dim scales comparable.
+                _feat = torch.cat([target_dino, rend_dict['rgb'].detach().reshape(target_dino.shape[0], 3),
+                                   rend_dict['depth'].detach().reshape(target_dino.shape[0], 1)], dim=-1)
+            _sig = torch.nn.functional.softplus(self.decoder.dino_unc_net(_feat).float()) + 1e-6
             rend_dict['sigma2'] = torch.clamp_min(_sig, 1e-6)
 
         if not self.training:

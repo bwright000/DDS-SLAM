@@ -1,0 +1,10 @@
+# SNI-spirit FUSION test: dino_reg uncertainty, sigma^2 head reads the 3 SNI modalities fused
+# ([DINO(semantic) ; rgb(appearance) ; depth(geometry)]) via uncertainty.fuse='rgbd'. Tests whether
+# fusing geometry+appearance ONTO DINO beats geo-ALONE (geo-vs-dino was isolation-only). Teacher stays
+# l2 (default) -> clean single-variable vs the l2 dino_reg baseline.
+inherit_from: configs/CRCD/c1_001_canon_uncert_dino_reg.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_dino_reg_fused
+  exp_name: demo
+uncertainty:
+  fuse: rgbd

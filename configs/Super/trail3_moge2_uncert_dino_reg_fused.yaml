@@ -1,0 +1,8 @@
+# SNI-spirit FUSION test (SemSup): dino_reg + uncertainty.fuse='rgbd' ([DINO ; rgb ; depth] into the
+# sigma^2 head). Judge on render (SemSup pose GT fictional).
+inherit_from: configs/Super/trail3_moge2_uncert_dino_reg.yaml
+data:
+  output: output/Super/trail3_moge2_uncert_dino_reg_fused
+  exp_name: demo
+uncertainty:
+  fuse: rgbd

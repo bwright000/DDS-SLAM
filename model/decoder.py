@@ -487,8 +487,15 @@ class ColorSDFNet_v2(nn.Module):
         # draw -> base/geo bit-identical (Inc-0).
         elif config.get('uncertainty', {}).get('enable', False) \
                 and config.get('uncertainty', {}).get('mode', 'geo') == 'dino':
+            # SNI-spirit FUSION (uncertainty.fuse): default '' = DINO only (bit-identical). 'rgbd'
+            # widens the head to read [DINO ; rendered rgb(3) ; rendered depth(1)] = the three SNI
+            # modalities (semantic + appearance + geometry) -> tests whether fusing geometry/appearance
+            # ONTO DINO beats geo-alone (geo-vs-dino was isolation-only). The +4 signals are concatenated
+            # (detached) at the scene_rep call site. Default '' -> +0 -> same in_dim -> same RNG -> parity.
+            _fuse = config.get('uncertainty', {}).get('fuse', '')
+            _extra = 4 if _fuse == 'rgbd' else 0
             self.dino_unc_net = UncertaintyDINONet(
-                in_dim=int(config['uncertainty']['dino_dim']),
+                in_dim=int(config['uncertainty']['dino_dim']) + _extra,
                 hidden_dim=config.get('uncertainty', {}).get('hidden_dim', 64),
                 num_layers=config.get('uncertainty', {}).get('num_layers', 2),
                 dropout=config.get('uncertainty', {}).get('dino_dropout', 0.0))

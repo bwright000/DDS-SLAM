@@ -117,8 +117,8 @@ PY
   say "  $NAME -> $(grep -h PSNR "$DST/render.txt" 2>/dev/null|head -1) $(grep -h 'mean=' "$DST/sim3.txt" 2>/dev/null|head -1)"
 }
 
-declare -A CR=( [base]=c1_001_canon_base [geo]=c1_001_canon_uncert [dino]=c1_001_canon_uncert_dino [dino_reg]=c1_001_canon_uncert_dino_reg [geo_rd]=c1_001_canon_uncert_rgbdepth [dino_reg_rd]=c1_001_canon_uncert_dino_reg_rgbdepth )
-declare -A SU=( [base]=trail3_moge2_uncert_base [geo]=trail3_moge2_uncert [dino]=trail3_moge2_uncert_dino [dino_reg]=trail3_moge2_uncert_dino_reg [geo_rd]=trail3_moge2_uncert_rgbdepth [dino_reg_rd]=trail3_moge2_uncert_dino_reg_rgbdepth )
+declare -A CR=( [base]=c1_001_canon_base [geo]=c1_001_canon_uncert [dino]=c1_001_canon_uncert_dino [dino_reg]=c1_001_canon_uncert_dino_reg [geo_rd]=c1_001_canon_uncert_rgbdepth [dino_reg_rd]=c1_001_canon_uncert_dino_reg_rgbdepth [dino_reg_f]=c1_001_canon_uncert_dino_reg_fused )
+declare -A SU=( [base]=trail3_moge2_uncert_base [geo]=trail3_moge2_uncert [dino]=trail3_moge2_uncert_dino [dino_reg]=trail3_moge2_uncert_dino_reg [geo_rd]=trail3_moge2_uncert_rgbdepth [dino_reg_rd]=trail3_moge2_uncert_dino_reg_rgbdepth [dino_reg_f]=trail3_moge2_uncert_dino_reg_fused )
 JOBS=(); for s in $SEEDS; do for c in $CELLS; do
   [[ " $DATASETS " == *crcd* ]] && JOBS+=("configs/CRCD/${CR[$c]}.yaml|${c}_crcd_s$s|$s|$REPO/data/CRCD/C1_001|crcd")
   [[ " $DATASETS " == *super* ]] && JOBS+=("configs/Super/${SU[$c]}.yaml|${c}_super_s$s|$s|$REPO/data/Super/trail_3|super")
