@@ -10,4 +10,9 @@ data:
   exp_name: demo
   deform_subdir: deform
 training:
-  deformation_sup_weight: 100
+  # v0 finding: global_BA collapses the field to 0 before the teacher acts. The two flags below make the
+  # deformation field the TEACHER's sole trainee (out of global_BA; render-free current_frame_mapping) ->
+  # def_sup drops 237x/frame, the field learns Δx*. weight is large because the teacher is now uncontested.
+  deformation_sup_weight: 10000
+  deform_field_teacher_only: true    # keep time_net OUT of global_BA's optimizer -> render loss can't collapse it (THE fix)
+  deform_teacher_only: true          # current_frame_mapping loss = def_sup ALONE (no render competition on the field)
