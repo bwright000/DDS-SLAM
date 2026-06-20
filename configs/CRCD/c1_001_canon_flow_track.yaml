@@ -1,0 +1,15 @@
+# C_1/001 flow-as-sensor A/B: base + the CAUSAL camera-vs-scene flow residual -> Inc-2 tracking
+# down-weight. uncertainty stays OFF -> isolates the flow contribution (base vs base+flow). flow_track
+# adds NO model module (RAFT lives in the orchestrator, loaded in fork_rng) -> base stays bit-identical
+# when off; the parity gate (which snapshots JointEncoding) is untouched.
+inherit_from: configs/CRCD/c1_001_canon_base.yaml
+data:
+  output: output/CRCD/C1_001_canon_flow_track
+flow_track:
+  enable: true
+  ref_stride: 8        # flow from frame t-ref_stride -> t (CAUSAL; matches the validated probe stride 8)
+  alpha: 0.5           # w = clip(1/(1+alpha*resid)); larger -> more aggressive down-weight of deformers
+  w_min: 0.1           # floor (never fully zero a ray)
+  w_max: 1.0           # cap (down-weight only; never up-weight beyond 1)
+  ransac_thresh: 1.0   # fundamental-matrix RANSAC pixel tolerance
+  raft_small: false    # RAFT-large (accurate); true = faster/less accurate

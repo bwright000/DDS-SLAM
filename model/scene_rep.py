@@ -490,7 +490,7 @@ class JointEncoding(nn.Module):
 
         return ret
     
-    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None):
+    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None, track_ray_w=None):
         '''
         Params:
             rays_o: ray origins (Bs, 3)
@@ -573,6 +573,16 @@ class JointEncoding(nn.Module):
                 _w_ray = torch.clamp(1.0 / rend_dict['sigma2'], _wmin, _wmax).detach()  # [N_rays,1]
                 rgb_unc_w = _w_ray  # broadcasts over the 3 rgb channels
                 depth_unc_w = _w_ray.squeeze()[valid_depth_mask]  # match masked depth shape
+
+            # --- flow-as-sensor: tracking-only per-ray down-weight from the CAUSAL camera-vs-scene
+            # flow residual (w = clip(1/(1+a*resid)); ~1 on static/camera, small on deforming). It is
+            # INDEPENDENT of sigma^2 — it MULTIPLIES the sigma^2 weight, or stands alone if Inc-2 is off.
+            # Already .detach()ed by the caller. track_ray_w is None unless flow_track.enable -> the
+            # flags-off base path is byte-identical (this block is skipped).
+            if tracking and (track_ray_w is not None):
+                rgb_unc_w = track_ray_w if rgb_unc_w is None else rgb_unc_w * track_ray_w
+                _fw_d = track_ray_w.squeeze()[valid_depth_mask]
+                depth_unc_w = _fw_d if depth_unc_w is None else depth_unc_w * _fw_d
 
             rgb_loss = compute_loss(rend_dict["rgb"]*rgb_weight, target_rgb*rgb_weight, weights=rgb_unc_w)
             psnr = mse2psnr(rgb_loss)

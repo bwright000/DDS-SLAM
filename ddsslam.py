@@ -73,6 +73,23 @@ class DDSSLAM():
         self.deform_replay = []
         self.field_optimizer = None
 
+        # flow-as-sensor (flow_track.enable): load RAFT ONCE, in fork_rng so the model RNG above is
+        # UNTOUCHED (the flow arm's init == base's init -> clean A/B); OFF => never imported/loaded =>
+        # base byte-identical. RAFT lives here (orchestrator), NOT in JointEncoding -> the parity gate
+        # (which snapshots the model) is unaffected.
+        self.flow_track_on = bool(self.config.get('flow_track', {}).get('enable', False))
+        self._flow_buf = None
+        if self.flow_track_on:
+            from collections import deque
+            from Addons.motion.flow_track import load_raft
+            _ft = self.config['flow_track']
+            with torch.random.fork_rng(devices=(list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [])):
+                self._raft, self._raft_tf = load_raft(self.device, bool(_ft.get('raft_small', False)))
+            self._flow_buf = deque(maxlen=int(_ft.get('ref_stride', 8)))
+            print(f"[flow_track] ON: RAFT-{'small' if _ft.get('raft_small') else 'large'} "
+                  f"ref_stride={_ft.get('ref_stride', 8)} alpha={_ft.get('alpha', 0.5)} "
+                  f"w=[{_ft.get('w_min', 0.1)},{_ft.get('w_max', 1.0)}]")
+
         _dbg_dir = os.path.join(config['data']['output'], config['data']['exp_name'], 'debug')
         self.debug_logger = DebugLogger(_dbg_dir)
 
@@ -600,6 +617,11 @@ class DDSSLAM():
         
         return self.est_c2w_data[frame_id]
 
+    def _rgb_to_bgr_u8(self, rgb):
+        '''batch['rgb'] [1,H,W,3] float RGB [0,1] -> [H,W,3] uint8 BGR (for RAFT/cv2).'''
+        a = (rgb.squeeze(0).detach().cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
+        return cv2.cvtColor(a, cv2.COLOR_RGB2BGR)
+
     def tracking_render(self, batch, frame_id):
         '''
         Tracking camera pose using of the current frame
@@ -626,6 +648,25 @@ class DDSSLAM():
 
         iW = self.config['tracking']['ignore_edge_W']
         iH = self.config['tracking']['ignore_edge_H']
+
+        # flow-as-sensor: per-pixel tracking down-weight, computed ONCE per frame from a PAST reference
+        # (STRICT causality: ref index < frame_id, asserted). Static/camera ~1, deforming ~small. None
+        # unless flow_track.enable. Cheap (1 RAFT call); gathered per sampled ray inside the loop.
+        track_w_map = None
+        if getattr(self, 'flow_track_on', False):
+            cur_bgr = self._rgb_to_bgr_u8(batch['rgb'])
+            ref = self._flow_buf[0] if (len(self._flow_buf) == self._flow_buf.maxlen) else None
+            if ref is not None:
+                ref_id, ref_bgr = ref
+                assert ref_id < frame_id, f"flow_track NON-CAUSAL: ref {ref_id} >= cur {frame_id}"
+                from Addons.motion.flow_track import flow_residual, residual_to_weight
+                _ft = self.config['flow_track']
+                _resid = flow_residual(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device,
+                                       float(_ft.get('ransac_thresh', 1.0)))
+                _w = residual_to_weight(_resid[iH:-iH, iW:-iW], float(_ft.get('alpha', 0.5)),
+                                        float(_ft.get('w_min', 0.1)), float(_ft.get('w_max', 1.0)))
+                track_w_map = torch.from_numpy(_w)   # CPU [H-2iH, W-2iW]
+            self._flow_buf.append((frame_id, cur_bgr))
 
         cur_rot, cur_trans, pose_optimizer = self.get_pose_param_optim(cur_c2w[None,...], mapping=False)
 
@@ -665,7 +706,9 @@ class DDSSLAM():
             # sigma^2 (TRACKING-ONLY). Mapping/BA forwards (first_frame/current_frame/
             # global_BA) leave tracking=False (default) so they are untouched. No-op
             # when uncertainty.enable=false (forward guards on unc_on).
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, border=border, UseBorder=True, tracking=True)
+            # gather the per-ray flow down-weight at the SAME sampled pixels (cropped-image coords); None on base
+            track_ray_w = track_w_map[indice_h, indice_w].view(-1, 1).to(self.device) if track_w_map is not None else None
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, border=border, UseBorder=True, tracking=True, track_ray_w=track_ray_w)
             loss = self.get_loss_from_ret(ret)
             if i == 0:
                 loss_iter0 = float(loss.cpu().item())
