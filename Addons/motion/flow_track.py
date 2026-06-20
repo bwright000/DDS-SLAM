@@ -58,6 +58,15 @@ def flow_residual(ref_bgr, cur_bgr, model, tf, device, ransac_thresh=1.0, max_fi
     return _sampson(F.astype(np.float64), p1, p2).reshape(H, W)
 
 
+def camera_motion(ref_bgr, cur_bgr, model, tf, device):
+    """|median flow vector| = the dominant rigid motion = 'is the camera moving' proxy
+    (validated +0.94 vs GT camera). Robust to a deforming minority (median sits on the static
+    majority). Used by the ON/OFF gate: small -> camera still, large -> camera moving."""
+    flow = _raft_flow(model, tf, ref_bgr, cur_bgr, device)
+    gvec = np.median(flow.reshape(-1, 2), axis=0)
+    return float(np.linalg.norm(gvec))
+
+
 def residual_to_weight(resid, alpha=0.5, w_min=0.1, w_max=1.0, deadband=0.0):
     """resid[...] -> down-weight. DEADBAND: w=1 for resid<=deadband, so clean/camera frames (low,
     NOISY residual) are a TRUE NOP (uniform weight -> no pose perturbation) and the down-weight

@@ -652,26 +652,41 @@ class DDSSLAM():
         iW = self.config['tracking']['ignore_edge_W']
         iH = self.config['tracking']['ignore_edge_H']
 
-        # flow-as-sensor: per-pixel tracking down-weight, computed ONCE per frame from a PAST reference
-        # (STRICT causality: ref index < frame_id, asserted). Static/camera ~1, deforming ~small. None
-        # unless flow_track.enable. Cheap (1 RAFT call); gathered per sampled ray inside the loop.
+        # flow-as-sensor: from a PAST reference (CAUSAL, ref index < frame_id). Two modes:
+        #   gate -> if the CAMERA is ~still (|median flow| <= cam_thresh): FIX the pose (= previous frame)
+        #           and SKIP tracking (don't drift while the camera isn't moving); the mapper still runs.
+        #   else -> per-pixel down-weight (scene-moving rays trusted less in the pose solve).
+        # Nothing runs unless flow_track.enable -> base byte-identical.
         track_w_map = None
         if getattr(self, 'flow_track_on', False):
+            _ft = self.config['flow_track']
             cur_bgr = self._rgb_to_bgr_u8(batch['rgb'])
             ref = self._flow_buf[0] if (len(self._flow_buf) == self._flow_buf.maxlen) else None
+            self._flow_buf.append((frame_id, cur_bgr))   # ref captured above; append for FUTURE frames
             if ref is not None:
                 ref_id, ref_bgr = ref
-                if ref_id >= frame_id:   # CAUSALITY: hard-enforced via raise (NOT assert -> not stripped by python -O)
+                if ref_id >= frame_id:   # CAUSALITY: raise (NOT assert -> not stripped by python -O)
                     raise RuntimeError(f"flow_track NON-CAUSAL: ref {ref_id} >= cur {frame_id}")
-                from Addons.motion.flow_track import flow_residual, residual_to_weight
-                _ft = self.config['flow_track']
-                _resid = flow_residual(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device,
-                                       float(_ft.get('ransac_thresh', 1.0)))
-                _w = residual_to_weight(_resid[iH:-iH, iW:-iW], float(_ft.get('alpha', 0.5)),
-                                        float(_ft.get('w_min', 0.1)), float(_ft.get('w_max', 1.0)),
-                                        deadband=float(_ft.get('deadband', 0.0)))
-                track_w_map = torch.from_numpy(_w)   # CPU [H-2iH, W-2iW]
-            self._flow_buf.append((frame_id, cur_bgr))
+                if _ft.get('gate', False):
+                    from Addons.motion.flow_track import camera_motion
+                    cam_mag = camera_motion(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device)
+                    if cam_mag <= float(_ft.get('cam_thresh', 2.0)):
+                        # CAMERA STILL -> fix pose = previous frame, skip tracking (mapper still runs)
+                        self.est_c2w_data[frame_id] = self.est_c2w_data[frame_id - 1].detach().clone()
+                        if frame_id % self.config['mapping']['keyframe_every'] != 0:
+                            _kf = (frame_id // self.config['mapping']['keyframe_every']) * self.config['mapping']['keyframe_every']
+                            self.est_c2w_data_rel[frame_id] = self.est_c2w_data[frame_id] @ self.est_c2w_data[_kf].float().inverse()
+                        print(f"[flow_gate] f{frame_id}: cam_mag {cam_mag:.2f} <= {_ft.get('cam_thresh', 2.0)} -> FIX pose, skip tracking")
+                        return
+                    # else: camera moving -> fall through to normal tracking
+                else:
+                    from Addons.motion.flow_track import flow_residual, residual_to_weight
+                    _resid = flow_residual(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device,
+                                           float(_ft.get('ransac_thresh', 1.0)))
+                    _w = residual_to_weight(_resid[iH:-iH, iW:-iW], float(_ft.get('alpha', 0.5)),
+                                            float(_ft.get('w_min', 0.1)), float(_ft.get('w_max', 1.0)),
+                                            deadband=float(_ft.get('deadband', 0.0)))
+                    track_w_map = torch.from_numpy(_w)   # CPU [H-2iH, W-2iW]
 
         cur_rot, cur_trans, pose_optimizer = self.get_pose_param_optim(cur_c2w[None,...], mapping=False)
 

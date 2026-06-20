@@ -1,0 +1,13 @@
+# C_1/001 flow GATE (simple on/off): camera moving (|median flow| > cam_thresh) -> track normally;
+# camera still -> FIX pose (= previous frame) + SKIP tracking (the mapper still runs). NO per-pixel
+# weight, NO geo, NO field. Tests the hypothesis: NOT tracking a non-moving camera kills the drift/jitter
+# (and on CRCD it should match the frozen-because-still GT in the static windows).
+inherit_from: configs/CRCD/c1_001_canon_base.yaml
+data:
+  output: output/CRCD/C1_001_canon_flow_gate
+flow_track:
+  enable: true
+  gate: true           # ON/OFF gate (NOT the per-pixel weight)
+  ref_stride: 8        # |median flow| from frame t-8 -> t (causal)
+  cam_thresh: 2.0      # |median flow| > 2px = camera MOVING -> track; else FIX pose (still ~0.1-1, pan ~12-35)
+  raft_small: false
