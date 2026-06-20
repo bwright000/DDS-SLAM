@@ -90,9 +90,10 @@ class DDSSLAM():
                     from Addons.motion.flow_track import load_dino
                     self._dino = load_dino(self.device)
             self._flow_buf = deque(maxlen=int(_ft.get('ref_stride', 8)))
+            self._gate_fixed_pose = {}   # frame_id -> the pose the gate FROZE (for freeze_ba: re-apply after BA)
             print(f"[flow_track] ON: RAFT-{'small' if _ft.get('raft_small') else 'large'} "
                   f"ref_stride={_ft.get('ref_stride', 8)} gate={_ft.get('gate', False)} "
-                  f"agreement={_ft.get('agreement', False)} alpha={_ft.get('alpha', 0.5)}")
+                  f"agreement={_ft.get('agreement', False)} freeze_ba={_ft.get('freeze_ba', False)}")
 
         _dbg_dir = os.path.join(config['data']['output'], config['data']['exp_name'], 'debug')
         self.debug_logger = DebugLogger(_dbg_dir)
@@ -607,7 +608,15 @@ class DDSSLAM():
             if self.config['mapping']['optim_cur']:
                 print('Update current pose')
                 self.est_c2w_data[cur_frame_id] = self.matrix_from_tensor(cur_rot[-1:], cur_trans[-1:]).detach().clone()[0]
- 
+
+        # flow_track freeze_ba: re-apply the gate's FIX to gate-fixed KEYFRAMES that BA just re-optimised,
+        # so the still-window freeze persists (keyframes anchor the non-keyframes via the relative poses).
+        if self.config.get('flow_track', {}).get('freeze_ba', False) and getattr(self, '_gate_fixed_pose', None):
+            _ke = self.config['mapping']['keyframe_every']
+            for _f, _p in self._gate_fixed_pose.items():
+                if _f % _ke == 0 and _f <= cur_frame_id and _f in self.est_c2w_data:
+                    self.est_c2w_data[_f] = _p.to(self.device)
+
     def predict_current_pose(self, frame_id, constant_speed=True):
         '''
         Predict current pose from previous pose using camera motion model
@@ -692,6 +701,7 @@ class DDSSLAM():
                     if not do_track:
                         # FIX pose = previous frame, skip tracking (mapper still runs)
                         self.est_c2w_data[frame_id] = self.est_c2w_data[frame_id - 1].detach().clone()
+                        self._gate_fixed_pose[frame_id] = self.est_c2w_data[frame_id].detach().clone()  # freeze_ba: re-applied after BA
                         if frame_id % self.config['mapping']['keyframe_every'] != 0:
                             _kf = (frame_id // self.config['mapping']['keyframe_every']) * self.config['mapping']['keyframe_every']
                             self.est_c2w_data_rel[frame_id] = self.est_c2w_data[frame_id] @ self.est_c2w_data[_kf].float().inverse()

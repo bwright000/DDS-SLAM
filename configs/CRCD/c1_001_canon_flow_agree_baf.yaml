@@ -1,0 +1,9 @@
+# C_1/001 flow AGREEMENT gate + FREEZE-BA: same as flow_agree, but global_BA re-applies the gate's FIX
+# to gate-fixed KEYFRAMES after bundle adjustment, so the still-window freeze persists. Without this, BA
+# (optim_cur:True) re-optimises the fixed keyframes and washes the gate out, since keyframes anchor the
+# non-keyframes via the relative poses. A/B vs flow_agree = does freezing the fixed keyframes in BA matter.
+inherit_from: configs/CRCD/c1_001_canon_flow_agree.yaml
+data:
+  output: output/CRCD/C1_001_canon_flow_agree_baf
+flow_track:
+  freeze_ba: true
