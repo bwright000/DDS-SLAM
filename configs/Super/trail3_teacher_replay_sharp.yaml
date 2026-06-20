@@ -1,0 +1,16 @@
+# ARM-2 render recovery: keep the current-frame SHARPENING pass WITHOUT losing the deformation field.
+# teacher_replay alive (+67% pin) but render 28->22 partly because (a) the field is un-routed and (b) we
+# turned OFF current_frame_mapping (cur:0) to stop it collapsing the field. This arm turns the sharpening
+# pass BACK ON (cur:100) but in MAP-ONLY mode: the field is excluded from cur_map_optimizer, so the render
+# gradient sharpens the MAP while the field stays alive (trained by the replay). The render forward still
+# USES the alive field -> the map co-adapts to the warp. This is co-adapting the MAP to the field (the right
+# direction); naive coadapt did it backwards (field to render -> field collapsed).
+# Hypothesis: render climbs back toward 28 AND pin-EPE stays ~+67%.
+inherit_from: configs/Super/trail3_teacher_replay.yaml
+data:
+  output: output/trail3_teacher_replay_sharp
+  exp_name: demo
+mapping:
+  cur_frame_iters: 100        # sharpening pass back ON (base value)
+training:
+  cur_frame_map_only: true    # ...but MAP-ONLY: field excluded from cur_map_optimizer (render can't collapse it)

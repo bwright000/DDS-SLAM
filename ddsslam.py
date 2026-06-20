@@ -415,7 +415,10 @@ class DDSSLAM():
             # render forward is UNUSED: skip it entirely (big T4 memory + ~2x compute saving; fixes the
             # end-of-run OOM where the wasted forward tipped the GPU over on the last frame).
             _ds_w = self.config['training'].get('deformation_sup_weight', 0)
-            _teach = _ds_w > 0 and self.config['dynamic'] and deform_dx is not None
+            # cur_frame_map_only: render-ONLY sharpening (no teacher loss here; the field is trained by the
+            # replay and is excluded from cur_map_optimizer). Lets the map sharpen WITHOUT touching the field.
+            _cfmo = self.config['training'].get('cur_frame_map_only', False)
+            _teach = _ds_w > 0 and self.config['dynamic'] and deform_dx is not None and not _cfmo
             if _teach and self.config['training'].get('deform_teacher_only', False):
                 Xk = rays_o[..., :3] + rays_d * target_d                       # [N,3] world surface pts
                 def_sup = self.model.deform_teacher_loss(Xk, timestamps.unsqueeze(-1), deform_dx, deform_w)
@@ -836,7 +839,11 @@ class DDSSLAM():
 
         # Optimizer for current frame mapping (ALWAYS trains time_net -> the teacher's update path)
         if self.config['mapping']['cur_frame_iters'] > 0:
-            params_cur_mapping = _dec_groups(include_timenet=True) + [{'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
+            # cur_frame_map_only: keep the current-frame SHARPENING pass but train the MAP ONLY -- exclude the
+            # field from this optimizer so the render gradient can't collapse it (the replay keeps it alive).
+            # The render forward still USES the alive field, so the map co-adapts to the warp. Default off =
+            # field IN (base/teacher_on bit-identical). This is the render-recovery fix for the un-routed gap.
+            params_cur_mapping = _dec_groups(include_timenet=not self.config['training'].get('cur_frame_map_only', False)) + [{'params': self.model.embed_fn.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed']}]
             if not self.config['grid']['oneGrid']:
                 params_cur_mapping.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
             self.cur_map_optimizer = optim.Adam(params_cur_mapping, betas=(0.9, 0.99))
