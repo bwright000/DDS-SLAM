@@ -298,7 +298,7 @@ def main():
     vw = None; prev_cent = None
     agg = {'mag': [], 'conf': [], 'epe_reg': [], 'epe_glob': [], 'epe_patch': [], 'coh': [],
            'resid': [], 'resid_hi': [], 'deform_frac': []}
-    table = None
+    table = None; rows = []
 
     for n, i in enumerate(idx):
         a = cv2.imread(R[i]); b = cv2.imread(R[i + args.stride])
@@ -335,6 +335,9 @@ def main():
         agg['resid'].append(float(np.mean(resid[conf])) if conf.any() else np.nan)
         agg['resid_hi'].append(float(np.percentile(resid[conf], 90)) if conf.any() else np.nan)
         agg['deform_frac'].append(float(deform.sum()) / max(conf.sum(), 1))
+        # per-pair time series: cam_mag = |median flow| (dominant rigid = camera proxy) vs resid (scene)
+        rows.append((i, i + args.stride, round(mag, 3), round(float(np.linalg.norm(gvec)), 3),
+                     round(agg['resid'][-1], 3), round(agg['deform_frac'][-1], 4)))
         if n == len(idx) // 2:
             table = (i, vecs.copy(), coh.copy(), rres.copy(), thr, npx.copy())
 
@@ -381,10 +384,13 @@ def main():
             mg = np.linalg.norm(vecs[k]) if not np.isnan(vecs[k, 0]) else np.nan
             rt = 'MAP(deform)' if (not np.isnan(rres[k]) and rres[k] > thr) else 'track(static)'
             print(f"  {k:3d} {npx[k]:7d}   {mg:6.2f}    {coh[k]:+.2f}     {rres[k]:6.2f}   {rt}")
-    import json
+    import json, csv
     json.dump({k: mean(v) for k, v in agg.items()} | {'region_EPE': eR, 'global_EPE': eG, 'patch_EPE': eP, 'explained': explained},
               open(os.path.join(args.out_dir, 'feature_flow_metrics.json'), 'w'), indent=2)
+    with open(os.path.join(args.out_dir, 'feature_flow_pairs.csv'), 'w', newline='') as fp:   # per-pair time series for GT-timing
+        w = csv.writer(fp); w.writerow(['frame_a', 'frame_b', 'flow_mag', 'cam_mag', 'resid_mean', 'deform_frac']); w.writerows(rows)
     print(f"\nvideo  -> {os.path.join(args.out_dir, 'feature_flow.mp4')}")
+    print(f"pairs  -> {os.path.join(args.out_dir, 'feature_flow_pairs.csv')}")
     print(f"metrics-> {os.path.join(args.out_dir, 'feature_flow_metrics.json')}")
 
 

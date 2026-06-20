@@ -44,7 +44,17 @@ python Addons/motion/feature_flow_probe.py \
   --rgb_dir "$CRCD/video_frames" --rgb_glob '*l.png' "${DINOARG[@]}" \
   --out_dir "$OUT" --n_groups "$K" --stride "$STRIDE" --max_frames "$MAXF"
 
-# 4. ship to Drive so the video is viewable off-instance
+# 3b. GT-timing check (if a GT was staged): does the flow camera estimate track GT camera motion over time?
+if [ -f "$CRCD/groundtruth.txt" ]; then
+  say "[3b] GT-timing correlation (flow camera proxy vs GT camera motion)"
+  python Addons/motion/gt_timing.py --pairs_csv "$OUT/feature_flow_pairs.csv" \
+    --gt "$CRCD/groundtruth.txt" --fx "${FX:-1096.7}" --out_fig "$OUT/gt_timing.png" || echo WARN-gt_timing
+else
+  say "[3b] (no GT staged -> skip timing check)"
+fi
+
+# 4. ship to Drive so the video + timing plot are viewable off-instance
 say "[4] ship to Drive"
-mkdir -p "$DRIVEOUT" && cp -f "$OUT"/feature_flow.mp4 "$OUT"/feature_flow_metrics.json "$DRIVEOUT/" 2>/dev/null
-say "DONE -> $DRIVEOUT/feature_flow.mp4 (+ metrics.json). Open from Drive to watch."
+mkdir -p "$DRIVEOUT" && cp -f "$OUT"/feature_flow.mp4 "$OUT"/feature_flow_metrics.json \
+  "$OUT"/feature_flow_pairs.csv "$OUT"/gt_timing.png "$DRIVEOUT/" 2>/dev/null
+say "DONE -> $DRIVEOUT/ (feature_flow.mp4, gt_timing.png, metrics.json, pairs.csv). Open from Drive."
