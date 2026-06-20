@@ -91,20 +91,28 @@ ensure_dino(){
 
 ensure_deform(){
   local OUT="$DD/deform"
-  [ "$(ls "$OUT"/*_deform.npz 2>/dev/null|wc -l)" -ge 151 ] && { say "Δx* targets present ($(ls "$OUT"/*_deform.npz|wc -l))"; return 0; }
-  if [ "$(ls "$DATASET/deform"/*_deform.npz 2>/dev/null|wc -l)" -ge 151 ]; then
-    mkdir -p "$OUT"; cp "$DATASET/deform"/*_deform.npz "$OUT"/; say "Δx* targets RESTORED from Drive ($(ls "$OUT"/*_deform.npz|wc -l)) — no re-bake"; return 0; fi
-  say "baking Δx* targets (grid_scale $GRID_SCALE, fast matmul ~10-26 min) -> $OUT"
-  $DINO_PY "$REPO/Addons/deform/generate_deform_targets.py" \
-    --dino_dir "$DD/dino" --dino_glob '*_dino.npy' \
-    --depth_dir "$DD/depth/moge2" --depth_glob '*left_depth.npy' \
-    --out_dir "$OUT" --grid_scale "$GRID_SCALE" 2>&1 | tail -6
-  [ "$(ls "$OUT"/*_deform.npz 2>/dev/null|wc -l)" -ge 151 ] || { say "FATAL Δx* bake incomplete"; exit 1; }
-  say "validate Δx* vs held-out pins (expect valid-only reduction >=72%, cos>0.85):"
-  $DINO_PY "$REPO/Addons/deform/validate_deform_targets.py" \
-    --pts "$REPO/Addons/eval/gt_pins/trial_3_l_pts.npy" --deform_dir "$OUT" \
-    --depth_dir "$DD/depth/moge2" --depth_glob '*left_depth.npy' 2>&1 | tee "$DRIVE/deform_validate.txt"
-  mkdir -p "$DATASET/deform"; cp "$OUT"/*_deform.npz "$DATASET/deform"/ && say "Δx* targets PERSISTED to Drive dataset (a dead runtime never costs the bake again)"
+  if [ "$(ls "$OUT"/*_deform.npz 2>/dev/null|wc -l)" -ge 151 ]; then
+    say "Δx* targets present ($(ls "$OUT"/*_deform.npz|wc -l))"
+  elif [ "$(ls "$DATASET/deform"/*_deform.npz 2>/dev/null|wc -l)" -ge 151 ]; then
+    mkdir -p "$OUT"; cp "$DATASET/deform"/*_deform.npz "$OUT"/; say "Δx* targets RESTORED from Drive ($(ls "$OUT"/*_deform.npz|wc -l)) — no re-bake"
+  else
+    say "baking Δx* targets (grid_scale $GRID_SCALE, fast matmul ~10-26 min) -> $OUT"
+    $DINO_PY "$REPO/Addons/deform/generate_deform_targets.py" \
+      --dino_dir "$DD/dino" --dino_glob '*_dino.npy' \
+      --depth_dir "$DD/depth/moge2" --depth_glob '*left_depth.npy' \
+      --out_dir "$OUT" --grid_scale "$GRID_SCALE" 2>&1 | tail -6
+    [ "$(ls "$OUT"/*_deform.npz 2>/dev/null|wc -l)" -ge 151 ] || { say "FATAL Δx* bake incomplete"; exit 1; }
+    say "validate Δx* vs held-out pins in IDENTITY frame (pre-regauge sanity; expect valid-only >=72%, cos>0.85):"
+    $DINO_PY "$REPO/Addons/deform/validate_deform_targets.py" \
+      --pts "$REPO/Addons/eval/gt_pins/trial_3_l_pts.npy" --deform_dir "$OUT" \
+      --depth_dir "$DD/depth/moge2" --depth_glob '*left_depth.npy' 2>&1 | tee "$DRIVE/deform_validate.txt"
+  fi
+  # GAUGE FIX (2026-06-20, decisive): the bake is IDENTITY-frame, but the SLAM runs in a constant
+  # diag(1,-1,-1) gauge -> rotate every Δx* into the SLAM frame. Without it the field learns the targets
+  # faithfully but wrong-frame (judge cos -0.64, baked-at-pins -81%). Idempotent (gauge stored per-npz ->
+  # NEVER double-flips, marker travels to Drive so future restores are already correct).
+  $DINO_PY "$REPO/Addons/deform/regauge_deform_targets.py" --deform_dir "$OUT" --gauge xflip 2>&1 | tail -2
+  mkdir -p "$DATASET/deform"; cp "$OUT"/*_deform.npz "$DATASET/deform"/ 2>/dev/null && say "Δx* (gauge-fixed) persisted to Drive" || say "Δx* persist skipped (Drive busy); local copy is correct"
 }
 
 # integration smoke: code couldn't be tested locally (no tcnn). ABORT ONLY on a real crash/NaN.
@@ -149,6 +157,7 @@ judge_one(){  # NAME CFG -> field-warped pin EPE (the arbiter) + 6-panel figure 
     --checkpoint "$CK" --est_c2w "$RUN/est_c2w_data.txt" \
     --pts "$REPO/Addons/eval/gt_pins/trial_3_l_pts.npy" \
     --depth_dir "$DD/depth/moge2" --depth_glob '*left_depth.npy' \
+    --deform_dir "$DD/deform" \
     --fig_dir "$DST" --tag "$NAME" 2>&1 | tee "$DST/pin_epe.txt"
 }
 
@@ -171,7 +180,7 @@ for S in $SEEDS; do
 done
 
 say "########## SUMMARY ##########"
-for S in $SEEDS; do for ARM in off on; do
+for S in $SEEDS; do for ARM in ${ARMS:-off on}; do
   NAME="teacher_${ARM}"; [ "$S" != "0" ] && NAME="teacher_${ARM}_s${S}"
   echo "--- $NAME ---"; grep -E "reduction|cos\(|Δx\| field|VERDICT|PSNR:" "/content/drive/MyDrive/Outputs/manual_cells/$NAME/pin_epe.txt" "/content/drive/MyDrive/Outputs/manual_cells/$NAME/render_metrics.txt" 2>/dev/null | sed 's#.*/##'
 done; done
