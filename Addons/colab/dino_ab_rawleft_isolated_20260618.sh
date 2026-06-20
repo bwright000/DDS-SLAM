@@ -107,8 +107,8 @@ PY
       CUDA_VISIBLE_DEVICES="" python -u Addons/eval/eval_rendering.py --gt_dir "$DD/rgb" --render_dir "$OUT" --name "$NAME" --sequence "Lab1 (trail3)" > "$DST/render.txt" 2>&1 || echo WARN-render
     fi
     # 6-panel video — standing rule: every result ships metrics + the canonical video
-    VA=(--rgb_output_dir "$OUT" --rgb_output_pattern '[0-9]*.jpg' --depth_output_dir "$OUT/depth" --uncert_dir "$OUT/uncert" --output "$DST/panels.mp4" --fps 15)
-    if [ "$VT" = crcd ]; then VA+=(--rgb_input_dir "$DD/video_frames" --rgb_input_pattern '*l.png' --depth_input_dir "$DD/depth" --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DD/groundtruth.txt")
+    VA=(--rgb_output_dir "$OUT" --rgb_output_pattern '[0-9]*.jpg' --depth_output_dir "$OUT/depth" --uncert_dir "$OUT/uncert" --whatkind_dir "$OUT/whatkind" --output "$DST/panels.mp4" --fps 15)
+    if [ "$VT" = crcd ]; then VA+=(--rgb_input_dir "$DD/video_frames" --rgb_input_pattern '*l.png' --depth_input_dir "$DD/depth" --seg_dir "$DD/masks" --seg_classmap --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DD/groundtruth.txt")
     else VA+=(--rgb_input_dir "$DD/rgb" --rgb_input_pattern '*left.png' --depth_input_dir "$DD/depth/moge2"); fi
     python Addons/viz/generate_video.py "${VA[@]}" || echo WARN-video
     # Arm-1 σ² judges — run on the EPHEMERAL uncert/ before it's lost; ship JSON+PNG (uncert cells only).
@@ -125,8 +125,8 @@ PY
   say "  $NAME -> $(grep -h PSNR "$DST/render.txt" 2>/dev/null|head -1) $(grep -h 'mean=' "$DST/sim3.txt" 2>/dev/null|head -1)"
 }
 
-declare -A CR=( [base]=c1_001_canon_base [geo]=c1_001_canon_uncert [dino]=c1_001_canon_uncert_dino [dino_reg]=c1_001_canon_uncert_dino_reg [geo_rd]=c1_001_canon_uncert_rgbdepth [dino_reg_rd]=c1_001_canon_uncert_dino_reg_rgbdepth [dino_reg_f]=c1_001_canon_uncert_dino_reg_fused [geofuse]=c1_001_canon_uncert_dino_reg_rgbdepth_geofuse [georgbd]=c1_001_canon_uncert_dino_reg_rgbdepth_georgbd )
-declare -A SU=( [base]=trail3_moge2_uncert_base [geo]=trail3_moge2_uncert [dino]=trail3_moge2_uncert_dino [dino_reg]=trail3_moge2_uncert_dino_reg [geo_rd]=trail3_moge2_uncert_rgbdepth [dino_reg_rd]=trail3_moge2_uncert_dino_reg_rgbdepth [dino_reg_f]=trail3_moge2_uncert_dino_reg_fused [geofuse]=trail3_moge2_uncert_dino_reg_rgbdepth_geofuse )
+declare -A CR=( [base]=c1_001_canon_base [geo]=c1_001_canon_uncert [dino]=c1_001_canon_uncert_dino [dino_reg]=c1_001_canon_uncert_dino_reg [geo_rd]=c1_001_canon_uncert_rgbdepth [dino_reg_rd]=c1_001_canon_uncert_dino_reg_rgbdepth [dino_reg_f]=c1_001_canon_uncert_dino_reg_fused [geofuse]=c1_001_canon_uncert_dino_reg_rgbdepth_geofuse [georgbd]=c1_001_canon_uncert_dino_reg_rgbdepth_georgbd [slot]=c1_001_canon_uncert_dino_reg_slot [slot_v1a]=c1_001_canon_uncert_dino_reg_slot_v1a )
+declare -A SU=( [base]=trail3_moge2_uncert_base [geo]=trail3_moge2_uncert [dino]=trail3_moge2_uncert_dino [dino_reg]=trail3_moge2_uncert_dino_reg [geo_rd]=trail3_moge2_uncert_rgbdepth [dino_reg_rd]=trail3_moge2_uncert_dino_reg_rgbdepth [dino_reg_f]=trail3_moge2_uncert_dino_reg_fused [geofuse]=trail3_moge2_uncert_dino_reg_rgbdepth_geofuse [slot]=trail3_moge2_uncert_dino_reg_slot )
 JOBS=(); for s in $SEEDS; do for c in $CELLS; do
   [[ " $DATASETS " == *crcd* ]] && JOBS+=("configs/CRCD/${CR[$c]}.yaml|${c}_crcd_s$s|$s|$REPO/data/CRCD/C1_001|crcd")
   [[ " $DATASETS " == *super* ]] && JOBS+=("configs/Super/${SU[$c]}.yaml|${c}_super_s$s|$s|$REPO/data/Super/trail_3|super")

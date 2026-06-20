@@ -355,6 +355,10 @@ def main():
                         help='Directory of the model-rendered per-pixel uncertainty (sigma^2) '
                              'uint16 PNGs (ddsslam output/<exp>/uncert). Adds an "Uncertainty" '
                              'panel (inferno, robust). Empty/missing dir -> panel omitted.')
+    parser.add_argument('--whatkind_dir', type=str, default=None,
+                        help='Directory of the LEARNED what-kind attribution PNGs (slot-attention; '
+                             'ddsslam output/<exp>/whatkind; already coloured bg=black/tissue=green/'
+                             'tool=red). Adds a "Learned Group" panel. Empty/missing -> omitted.')
     args = parser.parse_args()
 
     panel_size = (args.panel_height, args.panel_width)
@@ -427,6 +431,14 @@ def main():
             panels.append('Uncertainty')
             panel_data['Uncertainty'] = paths
             print(f"Uncertainty: {len(paths)} frames")
+
+    if args.whatkind_dir:
+        paths = sorted(glob.glob(os.path.join(args.whatkind_dir, '*.png')))
+        paths = _slice(paths, args.input_frame_slice)
+        if paths:
+            panels.append('Learned Group')                  # coloured PNG -> generic image-path render (else branch)
+            panel_data['Learned Group'] = paths
+            print(f"Learned Group: {len(paths)} frames")
 
     if args.trajectory_est:
         if not args.skip_horn_traj:
