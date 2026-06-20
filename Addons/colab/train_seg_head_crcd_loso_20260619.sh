@@ -27,9 +27,14 @@ set -uo pipefail
 REPO=${REPO:-/content/DDS-SLAM}; cd "$REPO"
 
 TRAIN15="B2_001 E1_001 E3_001 E3_002 E3_003 E3_004 F1_002 F3_001 F3_002 F3_003 F3_004 F3_005 F3_006 F3_007 G2_003"
-BENCH5=${BENCH5:-"C1_001 C2_001 E3_005 C3_001 G3_001"}
+BENCH5=${BENCH5:-"C1_001 C2_001 E3_005 C3_001 G3_001"}    # the FULL benchmark set = part of the train pool
+BENCH5=$(echo "$BENCH5" | tr 'a-z' 'A-Z')                 # case-normalize (Drive episode dirs are UPPERCASE)
 CLEAN4="C1_001 C2_001 C3_001 G3_001"     # E3_005 excluded from the cross-episode headline (in-domain under LOSO)
 ALL20="$TRAIN15 $BENCH5"
+# FOLDS = which benchmark snippets to actually run as held-out folds (default ALL of BENCH5).
+# Set FOLDS="C1_001" to run ONE proper LOSO fold (still trains on the other 19 — pool stays full).
+FOLDS=${FOLDS:-$BENCH5}
+FOLDS=$(echo "$FOLDS" | tr 'a-z' 'A-Z')
 
 # ---- config (env-driven; defaults = the improved recipe on generic DINOv2) ------------------
 TAG=${TAG:-v2_freeze}
@@ -78,7 +83,7 @@ elif [ "$BACKBONE" = dinov3 ]; then
 fi
 
 # snippet NAME -> "EP SID" (C1_001 -> C_1 001)
-ep_sid(){ local n=$1; [[ "$n" =~ ^[A-Za-z][0-9]_[0-9]{3}$ ]] || { echo ""; return; }; echo "${n:0:1}_${n:1:1} ${n:3}"; }
+ep_sid(){ local n; n=$(echo "$1" | tr 'a-z' 'A-Z'); [[ "$n" =~ ^[A-Z][0-9]_[0-9]{3}$ ]] || { echo ""; return; }; echo "${n:0:1}_${n:1:1} ${n:3}"; }
 stage_raw(){ local NAME=$1 dst="$SEGDATA/$NAME"
   [ "$(ls "$dst/rgb"/*.png 2>/dev/null | wc -l)" -gt 0 ] && [ "$(ls "$dst/semantic_instance"/*.png 2>/dev/null | wc -l)" -gt 0 ] && { echo "[$NAME] staged"; return 0; }
   local EP SID; read -r EP SID <<< "$(ep_sid "$NAME")"; [ -n "$EP" ] || { echo "[$NAME] bad name"; return 1; }
@@ -99,7 +104,7 @@ flags="$flags --frame_stride $FRAME_STRIDE --patience $PATIENCE"
 SUF=""; { [ "$LINEAR_HEAD" = 1 ] || [ "$BACKBONE" = dinov3 ]; } && SUF="_SWEEPONLY"
 
 # ---- LOSO folds: for each benchmark snippet, train on the other 17 (=19 non-held-out minus 2 inner-val) ----
-for S in $BENCH5; do
+for S in $FOLDS; do            # loop the REQUESTED folds; the train pool (ALL20) stays the full benchmark
   TR=""; for n in $ALL20; do [ "$n" = "$S" ] && continue; case " $VAL_SNIPS " in *" $n "*) continue;; esac; TR="$TR $n"; done
   echo ""; echo "### FOLD test=$S  (train on the other 17; 19 non-held-out minus 2 inner-val) ###"
   case " $CLEAN4 " in *" $S "*) echo "    [fold] $S = TRUE cross-episode";; *) echo "    [fold] $S = IN-DOMAIN under LOSO (E_3 in train) - reported separately";; esac
