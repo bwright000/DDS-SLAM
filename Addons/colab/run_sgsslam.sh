@@ -14,12 +14,23 @@
 #   Depth-L1 0.356cm | ATE 0.412cm | mIoU 92.72%. Metrics parsed from slam.py STDOUT.
 #   Scope: validate room0 first (`repro room0`), then full 8 (`repro`).
 #
-# CRCD (Phase B) STUBBED (needs CRCDGradSLAMDataset + adapters, A4-1.3/1.4).
+# CRCD (Phase B) WIRED: 'crcd [snippet|bench5]' (default c1_001). RECTIFIED is the DEFAULT
+#   (user 06-20: rectified on ALL CRCD methods — CRCD rgb is pre-rectification/distorted + SGS is
+#   a pinhole rasterizer; depth/ is the raw-space MoGe corpus -> the rectified assembly REMAPS it).
+#   raw-left is DEPRECATED, behind RAW_LEFT=1 (distorted frames, pinhole-imperfect).
+#   Per snippet: stage raw+MoGe -> preprocess(rectify) + assemble SGS layout + crcd.yaml -> patch
+#   eval() raw-depth dump -> scripts/slam.py -> npz->est + render-rename -> DDS eval (sim3_ate
+#   [CANONICAL] + eval_rendering + depth_l1 + 6-panel video) -> metrics.json/status.txt to Drive.
+#   n=1, native res, replica hyperparams (swap only H/W + n_classes + intrinsics).
 # RUNS ON COLAB/A100. The conda build is slow (~20-30 min, one-time) and fails LOUD.
 #
 # Usage:  bash Addons/colab/run_sgsslam.sh env
 #         bash Addons/colab/run_sgsslam.sh repro room0
 #         bash Addons/colab/run_sgsslam.sh repro
+#         bash Addons/colab/run_sgsslam.sh crcd                 # c1_001, rectified (default)
+#         bash Addons/colab/run_sgsslam.sh crcd c2_001
+#         bash Addons/colab/run_sgsslam.sh crcd bench5          # all 5 benchmark snippets
+#         RAW_LEFT=1 DEPTH_SCALE=10000 bash Addons/colab/run_sgsslam.sh crcd c1_001   # deprecated raw-left
 # ============================================================================
 set -uo pipefail
 PHASE=${1:-all}; SCENE_ARG=${2:-}
@@ -225,6 +236,259 @@ txt = "\n".join(L); print("\n"+txt); open(os.path.join(root, 'COMBINED.txt'), 'w
 PY
 }
 
+# ============================================================================
+# CRCD (Phase B) — wire SGS-SLAM onto the 5-snippet CRCD benchmark.
+#   RECTIFIED is the DEFAULT (user 06-20: rectified on ALL CRCD; rgb is distorted pre-rect + SGS is
+#   pinhole; depth/ is raw-space -> remapped). raw-left DEPRECATED behind RAW_LEFT=1. n=1, native
+#   resolution, replica hyperparams (swap only H/W + n_classes + intrinsics). CANONICAL tracking
+#   metric = sim3_ate (NEVER the rigid output.txt).
+# ============================================================================
+REPO=${REPO:-/content/DDS-SLAM}                            # this repo (DDS-SLAM working copy)
+DDS_PY=${DDS_PY:-python}                                   # torch2 env python for DDS eval CLIs
+DEPTH_SCALE=${DEPTH_SCALE:-10000}                          # MoGe png value/scale=metres; verify via Sim3 path-ratio
+RAW_LEFT=${RAW_LEFT:-0}                                    # default 0 = RECTIFIED (user 06-20: rectified on ALL CRCD); 1 = DEPRECATED raw-left
+DRIVE_CRCD=${DRIVE_CRCD:-/content/drive/MyDrive/Datasets/CRCD-Published}
+DRIVE_CRCD_MOGE=${DRIVE_CRCD_MOGE:-/content/drive/MyDrive/Datasets/CRCD-Published-MoGe-2}
+CALIB_PKL=${CALIB_PKL:-$DRIVE_CRCD/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl}
+CRCD_LOCAL=${CRCD_LOCAL:-/content/data/CRCD}               # local staging root
+CRCD_STAGED=${CRCD_STAGED:-/content/data/CRCD_staged}      # rectified preprocess outputs (guarded)
+CRCD_DRIVE=${CRCD_DRIVE:-/content/drive/MyDrive/Outputs/SGS-SLAM_CRCD_${DATE}}
+BENCH5="c1_001 c2_001 e3_005 c3_001 g3_001"               # the 5 benchmark snippets
+
+# NAME (e.g. c1_001 / C1_001) -> "EP SID" (e.g. "C_1 001"); reuse the LOSO parser convention.
+crcd_ep_sid(){
+  local n; n=$(echo "$1" | tr 'a-z' 'A-Z')
+  [[ "$n" =~ ^[A-Z][0-9]_[0-9]{3}$ ]] || { echo ""; return; }
+  echo "${n:0:1}_${n:1:1} ${n:3}"
+}
+
+# stage the raw snippet (rgb, semantic_instance, groundtruth.txt, intrinsics.yaml) + MoGe depth
+# from Drive to local. Returns 0 on success; the dirs land under $CRCD_LOCAL/<NAME>/.
+crcd_stage(){
+  local NAME=$1 EP SID
+  read -r EP SID <<< "$(crcd_ep_sid "$NAME")"
+  [ -n "$EP" ] || { echo "[$NAME] bad snippet name (want e.g. c1_001)"; return 1; }
+  local SRC="$DRIVE_CRCD/$EP/snippet_$SID" MOGE="$DRIVE_CRCD_MOGE/$EP/snippet_$SID/depth"
+  [ -d "$SRC/rgb" ] && [ -d "$SRC/semantic_instance" ] || {
+    echo "[$NAME] raw snippet missing on Drive: $SRC (rgb/ + semantic_instance/)"; return 1; }
+  [ -d "$MOGE" ] || { echo "[$NAME] MoGe depth missing on Drive: $MOGE"; return 1; }
+  local dst="$CRCD_LOCAL/$NAME"
+  rm -rf "$dst"; mkdir -p "$dst/rgb" "$dst/semantic_instance" "$dst/depth"
+  cp -rn "$SRC/rgb/." "$dst/rgb/"
+  cp -rn "$SRC/semantic_instance/." "$dst/semantic_instance/"
+  cp -rn "$MOGE/." "$dst/depth/"
+  cp -f "$SRC/groundtruth.txt" "$dst/groundtruth.txt" 2>/dev/null || {
+    echo "[$NAME] FATAL no groundtruth.txt at $SRC"; return 1; }
+  cp -f "$SRC/intrinsics.yaml" "$dst/intrinsics.yaml" 2>/dev/null || \
+    echo "[$NAME] WARN no intrinsics.yaml (raw-K will fall back to calib pickle)"
+  echo "[$NAME] staged rgb=$(ls "$dst/rgb"/*.png 2>/dev/null | wc -l) "\
+       "sem=$(ls "$dst/semantic_instance"/*.png 2>/dev/null | wc -l) "\
+       "depth=$(ls "$dst/depth"/*.png 2>/dev/null | wc -l)"
+}
+
+# idempotently patch the cloned SGS eval() to ALSO dump raw uint16 rendered depth (for depth_l1).
+# WHY — utils/eval_helpers.py saves only a JET-colormapped png; depth_l1 needs metric uint16.
+crcd_patch_raw_depth(){
+  PYTHONPATH= "$ENV_PY" - "$SGS/utils/eval_helpers.py" "$DEPTH_SCALE" <<'PY'
+import sys, io
+path, scale = sys.argv[1], float(sys.argv[2])
+lines = io.open(path, encoding='utf-8').read().split('\n')
+MARK = "# [DDS] raw-depth dump"
+if any(MARK in l for l in lines):
+    print("[patch] raw-depth already present -> skip"); sys.exit(0)
+if not any('viz_render_depth' in l for l in lines):
+    print("[patch] FATAL 'viz_render_depth' not in eval_helpers.py - raw-depth var renamed; "
+          "inspect the cloned source + update the patch."); sys.exit(1)
+def ind(s): return s[:len(s) - len(s.lstrip())]
+out, did_mk, did_save = [], False, False
+for l in lines:
+    out.append(l)
+    # 1) make rendered_depth_raw/ right after render_depth_dir is assigned
+    if (not did_mk) and ('render_depth_dir =' in l) and ('os.path.join' in l):
+        sp = ind(l)
+        out.append(f"{sp}render_depth_raw_dir = os.path.join(eval_dir, 'rendered_depth_raw')  {MARK}")
+        out.append(f"{sp}os.makedirs(render_depth_raw_dir, exist_ok=True)")
+        did_mk = True
+    # 2) dump raw uint16 depth right after the JET imwrite (same loop var time_idx, same indent)
+    if (not did_save) and ('cv2.imwrite(' in l) and ('render_depth_dir' in l):
+        sp = ind(l)
+        out.append(f"{sp}cv2.imwrite(os.path.join(render_depth_raw_dir, 'gs_{{:04d}}.png'.format(time_idx)), "
+                   f"np.clip(viz_render_depth * {scale}, 0, 65535).astype(np.uint16))  {MARK}")
+        did_save = True
+if not (did_mk and did_save):
+    print(f"[patch] FATAL anchors not found (mk={did_mk} save={did_save}) - eval_helpers.py "
+          "structure changed; aborting (fix the anchors)."); sys.exit(1)
+io.open(path, 'w', encoding='utf-8').write('\n'.join(out))
+print(f"[patch] raw-depth dump injected (scale={scale})")
+PY
+}
+
+# write the CRCD slam config by sed-ing the replica template (native H/W, 4 classes, no wandb)
+crcd_write_cfg(){
+  local NAME=$1 scene_dir=$2 H=$3 W=$4 cfg=$5
+  sed -e "s/^scene_name = .*/scene_name = \"$NAME\"/" \
+      -e "s/use_wandb=True/use_wandb=False/" \
+      -e "s/num_semantic_classes=101/num_semantic_classes=4/" \
+      -e "s#group_name=\"[^\"]*\"#group_name=\"CRCD\"#" \
+      -e "s#basedir=\"./data/Replica\"#basedir=\"$(dirname "$scene_dir")\"#" \
+      -e "s#gradslam_data_cfg=\"[^\"]*\"#gradslam_data_cfg=\"./configs/data/crcd.yaml\"#" \
+      -e "s/desired_image_height=[0-9]*/desired_image_height=$H/" \
+      -e "s/desired_image_width=[0-9]*/desired_image_width=$W/" \
+      "$SGS/configs/replica/slam.py" > "$cfg"
+}
+
+# run ONE CRCD snippet end-to-end (assemble -> patch -> SGS -> npz->est -> rename -> DDS eval)
+run_crcd_one(){
+  local NAME; NAME=$(echo "$1" | tr 'A-Z' 'a-z')
+  local UP; UP=$(echo "$NAME" | tr 'a-z' 'A-Z')             # C1_001 for paths/run_name
+  local EP SID; read -r EP SID <<< "$(crcd_ep_sid "$NAME")"
+  local OUT="$CRCD_DRIVE/$UP"; mkdir -p "$OUT"
+  local scene_dir="$SGS/data/crcd/$UP"
+  local local_snip="$CRCD_LOCAL/$NAME"
+
+  crcd_stage "$NAME" || { echo "FAILED stage" > "$OUT/status.txt"; return 1; }
+
+  # ---- assemble into the SGS ReplicaDataset layout + emit crcd.yaml ----
+  rm -rf "$scene_dir"
+  if [ "$RAW_LEFT" != 1 ]; then
+    echo "[$NAME] RECTIFIED assembly (DEFAULT; rectified-on-all; depth/ is raw-space -> remapped via left map)"
+    local staged="$CRCD_STAGED/$UP"; rm -rf "$staged"; mkdir -p "$staged"
+    PYTHONPATH= "$DDS_PY" "$REPO/Addons/preprocess/preprocess_crcd_published.py" \
+       --snippet_dir "$local_snip" --calib_pkl "$CALIB_PKL" --output_dir "$staged" \
+       || { echo "FAILED preprocess" > "$OUT/status.txt"; return 1; }
+    PYTHONPATH= "$DDS_PY" "$REPO/Addons/colab/crcd_assemble_sgs.py" --mode rectified \
+       --staged "$staged" --moge_depth "$local_snip/depth" --calib_pkl "$CALIB_PKL" \
+       --out "$scene_dir" --depth_scale "$DEPTH_SCALE" --n_classes 4 \
+       --emit_yaml "$SGS/configs/data/crcd.yaml" \
+       || { echo "FAILED assemble(rect)" > "$OUT/status.txt"; return 1; }
+  else
+    echo "[$NAME] RAW_LEFT=1 -> DEPRECATED raw-left assembly (distorted frames; pinhole-imperfect; non-default)"
+    PYTHONPATH= "$DDS_PY" "$REPO/Addons/colab/crcd_assemble_sgs.py" --mode rawleft \
+       --rgb_dir "$local_snip/rgb" --sem_dir "$local_snip/semantic_instance" \
+       --moge_depth "$local_snip/depth" --groundtruth "$local_snip/groundtruth.txt" \
+       --intrinsics_yaml "$local_snip/intrinsics.yaml" --calib_pkl "$CALIB_PKL" \
+       --out "$scene_dir" --depth_scale "$DEPTH_SCALE" --n_classes 4 \
+       --emit_yaml "$SGS/configs/data/crcd.yaml" \
+       || { echo "FAILED assemble(rawleft)" > "$OUT/status.txt"; return 1; }
+  fi
+
+  # native res = the assembled frame size (read from crcd.yaml we just wrote)
+  local H W
+  H=$(grep -E '^\s*image_height:' "$SGS/configs/data/crcd.yaml" | grep -oE '[0-9]+' | head -1)
+  W=$(grep -E '^\s*image_width:'  "$SGS/configs/data/crcd.yaml" | grep -oE '[0-9]+' | head -1)
+  [ -n "$H" ] && [ -n "$W" ] || { echo "FAILED no H/W from crcd.yaml" > "$OUT/status.txt"; return 1; }
+  echo "[$NAME] native res H=$H W=$W"
+
+  local cfg="/content/sgs_crcd_${NAME}.py"
+  crcd_write_cfg "$UP" "$scene_dir" "$H" "$W" "$cfg"
+  crcd_patch_raw_depth || { echo "FAILED depth-patch (eval_helpers anchors changed)" > "$OUT/status.txt"; return 1; }
+
+  # ---- run SGS-SLAM ----
+  echo "[$NAME] running SGS-SLAM (full SLAM pass)"
+  ( cd "$SGS" && PYTHONPATH= "$ENV_PY" scripts/slam.py "$cfg" ) 2>&1 | tee "$OUT/slam.log"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "FAILED slam.py" > "$OUT/status.txt"; return 1; }
+
+  # SGS output_dir = experiments/<group_name>/<run_name>; run_name=<scene>_<seed=0>
+  local output_dir="$SGS/experiments/CRCD/${UP}_0"
+  [ -f "$output_dir/params.npz" ] || {
+    # fall back: find the newest params.npz under experiments/CRCD
+    output_dir=$(dirname "$(ls -t "$SGS"/experiments/CRCD/*/params.npz 2>/dev/null | head -1)")
+  }
+  [ -f "$output_dir/params.npz" ] || { echo "FAILED no params.npz" > "$OUT/status.txt"; return 1; }
+  echo "[$NAME] SGS output_dir=$output_dir"
+  [ "$(ls "$output_dir/eval/rendered_depth_raw"/*.png 2>/dev/null | wc -l)" -gt 0 ] || \
+     echo "[$NAME] WARN rendered_depth_raw empty -> depth_l1 will be nan (patch fired? eval save_frames on?)"
+
+  # ---- npz -> est_c2w_data.txt ----
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/sgsslam_npz_to_est.py" \
+     --npz "$output_dir/params.npz" --out "$OUT/est_c2w_data.txt" \
+     || { echo "FAILED npz->est" > "$OUT/status.txt"; return 1; }
+  [ -s "$OUT/est_c2w_data.txt" ] || { echo "FAILED empty est" > "$OUT/status.txt"; return 1; }
+
+  # ---- rename renders for eval_rendering Mode-1: render gs_{idx}.png -> $OUT/{idx}.jpg,
+  #      and copy the scene GT frame -> $OUT/{idx}_gt.png (pairs by stem). Renders are STRIDED
+  #      by config eval_every (default 5) so only those indices get a GT sibling. ----
+  PYTHONPATH= "$DDS_PY" - "$output_dir/eval/rendered_rgb" "$scene_dir/frames" "$OUT" <<'PY'
+import sys, os, glob, re, shutil
+ren_dir, frames_dir, out = sys.argv[1], sys.argv[2], sys.argv[3]
+os.makedirs(out, exist_ok=True)
+n = 0
+for p in sorted(glob.glob(os.path.join(ren_dir, 'gs_*.png'))):
+    m = re.search(r'gs_(\d+)\.png$', os.path.basename(p))
+    if not m: continue
+    idx = int(m.group(1))
+    shutil.copy(p, os.path.join(out, f'{idx}.jpg'))                       # render
+    gt = os.path.join(frames_dir, f'frame{idx:06d}.jpg')
+    if os.path.exists(gt):
+        shutil.copy(gt, os.path.join(out, f'{idx}_gt.png'))              # GT sibling (Mode-1)
+    n += 1
+print(f"[rename] {n} renders -> {out}/{{idx}}.jpg (+ {{idx}}_gt.png)")
+PY
+
+  # ---- DDS eval: sim3 ATE (canonical) + render PSNR/SSIM/LPIPS + depth L1 + 6-panel video ----
+  # sim3_ate --out and eval_rendering --summary_csv both APPEND; clear stale files so a re-run is fresh.
+  rm -f "$OUT/sim3_metrics.txt" "$OUT/render_eval.txt" "$OUT/render_eval.csv"
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/sim3_ate.py" \
+     --est "$OUT/est_c2w_data.txt" --gt "$local_snip/groundtruth.txt" \
+     --name "CRCD $UP" --out "$OUT/sim3_metrics.txt" || echo "[$NAME] WARN sim3_ate failed"
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/eval_rendering.py" \
+     --gt_dir "$OUT" --render_dir "$OUT" --sequence "CRCD ($UP)" \
+     --output_csv "$OUT/render_eval.csv" --summary_csv "$OUT/render_eval.txt" \
+     || echo "[$NAME] WARN eval_rendering failed"
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/depth_l1.py" \
+     --render_depth_dir "$output_dir/eval/rendered_depth_raw" \
+     --input_depth_dir "$scene_dir/depths" \
+     --render_scale "$DEPTH_SCALE" --input_scale "$DEPTH_SCALE" --sc_factor 1.0 \
+     --out "$OUT/depth_l1.txt" || echo "[$NAME] WARN depth_l1 failed"
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/viz/generate_video.py" \
+     --rgb_input_dir "$OUT" --rgb_output_dir "$OUT" \
+     --depth_input_dir "$scene_dir/depths" \
+     --depth_output_dir "$output_dir/eval/rendered_depth_raw" \
+     --trajectory_est "$OUT/est_c2w_data.txt" --trajectory_gt "$local_snip/groundtruth.txt" \
+     --png_depth_scale "$DEPTH_SCALE" --output "$OUT/video.mp4" \
+     || echo "[$NAME] WARN generate_video failed"
+
+  # ---- parse metrics.json + PASS ----
+  PYTHONPATH= "$DDS_PY" - "$OUT" "$UP" <<'PY'
+import sys, os, re, json, csv
+out, name = sys.argv[1], sys.argv[2]
+def _txt(fn):
+    p = os.path.join(out, fn)
+    return open(p, encoding='utf-8', errors='ignore').read() if os.path.isfile(p) else ''
+def grab(s, pat):
+    m = re.search(pat, s); return float(m.group(1)) if m else None
+# --- sim3_metrics.txt: "Sim3 ATE  rmse/mean/median/max : R / M / Md / Mx mm" ---
+sim = _txt('sim3_metrics.txt')
+ate_mean = None
+m = re.search(r'Sim3 ATE.*?:\s*[0-9.]+\s*/\s*([0-9.]+)\s*/', sim)
+if m: ate_mean = float(m.group(1))
+# --- render_eval.txt is a CSV (header + 1 data row); pull psnr_mean/ssim_mean/lpips_mean ---
+psnr = ssim = lpips = None
+rp = os.path.join(out, 'render_eval.txt')
+if os.path.isfile(rp):
+    try:
+        rows = list(csv.DictReader(open(rp)))
+        if rows:
+            r = rows[-1]
+            psnr = float(r['psnr_mean']) if r.get('psnr_mean') else None
+            ssim = float(r['ssim_mean']) if r.get('ssim_mean') else None
+            lpips = float(r['lpips_mean']) if r.get('lpips_mean') else None
+    except Exception as e:
+        print(f"[metrics] WARN render_eval parse: {e}")
+d = dict(scene=name,
+         sim3_ate_mean_mm=ate_mean,
+         sim3_ate_max_mm=grab(sim, r'Sim3 ATE.*?:\s*[0-9.]+\s*/\s*[0-9.]+\s*/\s*[0-9.]+\s*/\s*([0-9.]+)\s*mm'),
+         path_ratio=grab(sim, r'est/GT path ratio\s*:\s*([0-9.]+)'),
+         pearson_dom=grab(sim, r'\|Pearson\| dom axis\s*:\s*([0-9.]+)'),
+         psnr=psnr, ssim=ssim, lpips=lpips,
+         depth_l1_mm=grab(_txt('depth_l1.txt'), r'mean=([0-9.]+)'))
+json.dump(d, open(os.path.join(out, 'metrics.json'), 'w'), indent=2)
+print(f"[{name}] " + " ".join(f"{k}={v}" for k, v in d.items() if k != 'scene'))
+PY
+  echo "PASS" > "$OUT/status.txt"
+  echo "[$NAME] DONE -> $OUT"
+}
+
 case "$PHASE" in
   env)   build_env ;;
   repro|all)
@@ -236,8 +500,15 @@ case "$PHASE" in
     aggregate
     echo "DONE repro -> $DRIVE (COMBINED.txt + per-scene metrics.json/slam.log)" ;;
   crcd)
-    echo "CRCD (Phase B) NOT WIRED yet: needs CRCDGradSLAMDataset + semantic_ids/colors emission"\
-         " + npz->est & render-rename adapters (ARM4 A4-1.3/1.4). Stub - exiting."; exit 0 ;;
+    [ -x "$ENV_PY" ] || { echo "FATAL: SGS env not built ($ENV_PY missing) - run 'env' first"; exit 30; }
+    [ -d "$SGS/.git" ] || { echo "FATAL: SGS clone missing at $SGS - run 'env' first"; exit 30; }
+    mkdir -p "$CRCD_DRIVE"
+    SNIPS=${SCENE_ARG:-c1_001}                  # default single snippet; pass 'bench5' for all 5
+    [ "$SNIPS" = bench5 ] && SNIPS="$BENCH5"
+    echo "=== CRCD phase: snippets='$SNIPS'  mode=$([ "$RAW_LEFT" = 1 ] && echo rawleft-DEPRECATED || echo rectified)"\
+         " depth_scale=$DEPTH_SCALE -> $CRCD_DRIVE ==="
+    for s in $SNIPS; do run_crcd_one "$s" || echo "[$s] FAILED (see $CRCD_DRIVE/$(echo "$s" | tr a-z A-Z)/status.txt)"; done
+    echo "DONE crcd -> $CRCD_DRIVE (per-snippet metrics.json/status.txt/video.mp4)" ;;
   eval)  aggregate ;;
   *) echo "usage: run_sgsslam.sh env|repro|crcd|eval|all [scene]"; exit 2 ;;
 esac
