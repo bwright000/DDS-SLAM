@@ -658,7 +658,8 @@ class DDSSLAM():
             ref = self._flow_buf[0] if (len(self._flow_buf) == self._flow_buf.maxlen) else None
             if ref is not None:
                 ref_id, ref_bgr = ref
-                assert ref_id < frame_id, f"flow_track NON-CAUSAL: ref {ref_id} >= cur {frame_id}"
+                if ref_id >= frame_id:   # CAUSALITY: hard-enforced via raise (NOT assert -> not stripped by python -O)
+                    raise RuntimeError(f"flow_track NON-CAUSAL: ref {ref_id} >= cur {frame_id}")
                 from Addons.motion.flow_track import flow_residual, residual_to_weight
                 _ft = self.config['flow_track']
                 _resid = flow_residual(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device,
