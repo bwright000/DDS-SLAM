@@ -97,7 +97,9 @@ def main():
     assert N >= 4, f'need aligned dino+seg (dino {len(D)} seg {len(S)})'
     print(f"dino {len(D)} | seg {len(S)} | pairing {N} | tool={tool} bg={bg}")
     # label histogram of the first mask (so the mapping can be verified — like the seg-B fix)
-    _s0 = cv2.imread(S[0], cv2.IMREAD_GRAYSCALE)
+    _s0 = cv2.imread(S[0], cv2.IMREAD_UNCHANGED)   # CRCD masks are uint16 {0,1,2,3} -> GRAYSCALE downcasts them to 0
+    if _s0 is not None and _s0.ndim == 3:
+        _s0 = _s0[..., 0]
     print(f"  seg label histogram ({os.path.basename(S[0])}): {dict(zip(*[a.tolist() for a in np.unique(_s0, return_counts=True)]))}")
 
     feats, labs, frames = [], [], []
@@ -106,10 +108,12 @@ def main():
         if dino.ndim != 3:
             continue
         gh, gw, C = dino.shape
-        seg = cv2.imread(S[i], cv2.IMREAD_GRAYSCALE)
+        seg = cv2.imread(S[i], cv2.IMREAD_UNCHANGED)   # uint16 {0,1,2,3}: UNCHANGED preserves the labels
         if seg is None:
             continue
-        seg_g = cv2.resize(seg, (gw, gh), interpolation=cv2.INTER_NEAREST)   # patch-grid majority(approx via nearest)
+        if seg.ndim == 3:
+            seg = seg[..., 0]
+        seg_g = cv2.resize(seg.astype(np.uint16), (gw, gh), interpolation=cv2.INTER_NEAREST)   # patch-grid majority(approx via nearest)
         lab = np.full((gh, gw), 1, np.int64)            # default 1 = tissue
         lab[np.isin(seg_g, list(bg))] = 0               # 0 = bg
         if tis:

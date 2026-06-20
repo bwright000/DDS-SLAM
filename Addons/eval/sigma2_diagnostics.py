@@ -54,7 +54,7 @@ def main():
     # real label histogram of the first mask so the mapping can be set correctly (then re-run with the
     # right --tool_labels/--bg_labels/--tissue_labels). Without this we silently mis-stratify.
     if S:
-        _s0 = cv2.imread(S[0], cv2.IMREAD_GRAYSCALE)
+        _s0 = cv2.imread(S[0], cv2.IMREAD_UNCHANGED)
         if _s0 is not None:
             _u, _c = np.unique(_s0, return_counts=True)
             _hist = {int(k): int(v) for k, v in zip(_u, _c)}
@@ -88,7 +88,7 @@ def main():
         ss, gg, mm, pp = (a[::args.px_stride, ::args.px_stride].ravel() for a in (sg, grad, mot, spec))
         sig_all.append(ss); grad_all.append(gg); mot_all.append(mm); spec_all.append(pp)
         if S:
-            seg = cv2.imread(S[i], cv2.IMREAD_GRAYSCALE)
+            seg = cv2.imread(S[i], cv2.IMREAD_UNCHANGED)
             if seg is not None:
                 seg = cv2.resize(seg, (W, H), interpolation=cv2.INTER_NEAREST)
                 m_tool = np.isin(seg, list(tool)) if tool else np.zeros_like(seg, bool)
