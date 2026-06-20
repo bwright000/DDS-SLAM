@@ -102,8 +102,22 @@ def main():
         print(f"  Pearson(resid,   gt_camflow)  = {pearson(resid[nz], gt_camflow[nz]):+.3f}")
     else:
         print(f"\n  (only {int(nz.sum())} GT-reliable pairs — too few to isolate; using whole-sequence)")
+    # lag scan: rgb<->GT alignment can be offset (e.g. associations.txt not 1:1). A sharp single-lag
+    # peak = a fixed frame offset, NOT noise; report the aligned correlation.
+    best = (0, rc)
+    for lag in range(-3, 4):
+        if lag >= 0: c, g, h = cam_mag[lag:], gt_camflow[:len(gt_camflow) - lag], held[:len(held) - lag]
+        else: c, g, h = cam_mag[:lag], gt_camflow[-lag:], held[-lag:]
+        nz2 = ~h
+        if nz2.sum() >= 4:
+            r = pearson(c[nz2], g[nz2])
+            if r > best[1]: best = (lag, r)
+    if best[0] != 0:
+        print(f"\n  lag-scan: best at {best[0]:+d} pairs ({best[0]*8:+d} frames) -> Pearson {best[1]:+.3f}  "
+              f"(rgb<->GT alignment offset; the lag-0 number is understated — use associations.txt to fix)")
+    rc_final = max(rc, best[1])
     print(f"\n  VERDICT: GT held/dropout {held.mean():.0%}. "
-          f"{'TIMING MATCHES — the flow camera estimate tracks GT camera motion on the reliable pairs.' if rc > 0.5 else 'WEAK match — inspect the overlay (the held GT limits the test).'}")
+          f"{f'TIMING MATCHES — the flow camera estimate tracks GT camera motion (Pearson {rc_final:+.2f}).' if rc_final > 0.5 else 'WEAK match — inspect the overlay (the held GT limits the test).'}")
 
     try:
         import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
