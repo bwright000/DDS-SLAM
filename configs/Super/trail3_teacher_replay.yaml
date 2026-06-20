@@ -1,0 +1,15 @@
+# ARM-2 Stage-2 TEACHER-REPLAY arm: the online forgetting fix. Inherits the working teacher (weight 10000,
+# deform_field_teacher_only -> field isolated from render-collapse), but DEMOTES the frame-k-only teacher
+# (cur_frame_iters:0 -- it was the recency-bias source) and instead trains the field on a CAUSAL REPLAY of
+# PAST frames each step (deform_replay_iters), so it accumulates the time-varying motion instead of forgetting
+# it. Single-variable vs trail3_teacher_on (which is frame-k-only). DISCRIMINATOR = the judge's shuffled-time
+# control: if replay works, real-time must BEAT shuffled-time (field becomes time-specific).
+inherit_from: configs/Super/trail3_teacher_on.yaml
+data:
+  output: output/trail3_teacher_replay
+  exp_name: demo
+mapping:
+  cur_frame_iters: 0          # demote the frame-k-only teacher (current_frame_mapping off)
+training:
+  deform_replay_iters: 100    # field-training iters/frame, each on a random sample of PAST frames
+  deform_replay_frames: 5     # past frames sampled per replay iter (~10k rays)

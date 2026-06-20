@@ -67,6 +67,12 @@ class DDSSLAM():
         self.keyframeDatabase = self.create_kf_database(config)
         self.model = JointEncoding(config, self.bounding_box).to(self.device)
 
+        # ARM-2 Stage-2: causal teacher REPLAY buffer (one entry per processed frame: surface pts Xk + time
+        # + baked Δx*/trust). Online by construction -- only frames already seen. Fixes the frame-k-only
+        # teacher's recency-bias/time-agnostic collapse. field_optimizer set in create_optimizer.
+        self.deform_replay = []
+        self.field_optimizer = None
+
         _dbg_dir = os.path.join(config['data']['output'], config['data']['exp_name'], 'debug')
         self.debug_logger = DebugLogger(_dbg_dir)
 
@@ -790,7 +796,68 @@ class DDSSLAM():
             if not self.config['grid']['oneGrid']:
                 params_cur_mapping.append({'params': self.model.embed_fn_color.parameters(), 'eps': 1e-15, 'lr': self.config['mapping']['lr_embed_color']})
             self.cur_map_optimizer = optim.Adam(params_cur_mapping, betas=(0.9, 0.99))
-        
+
+        # ARM-2 Stage-2: dedicated time_net optimizer for the teacher REPLAY -- independent of
+        # cur_frame_iters, so the field is trained by replay even when current_frame_mapping is demoted
+        # (cur_frame_iters:0). None when the teacher is off. With deform_field_teacher_only:true the field
+        # is in NO other optimizer -> trained ONLY by the replay teacher (isolated from render-collapse).
+        self.field_optimizer = None
+        if self.config['training'].get('deformation_sup_weight', 0) > 0:
+            _tnwd = self.config['training'].get('timenet_weight_decay', 1e-6)
+            _tnm = self.config['training'].get('timenet_lr_mult', 1.0)
+            _timep = [p for n, p in self.model.decoder.named_parameters() if 'time_net' in n]
+            if _timep:
+                self.field_optimizer = optim.Adam(_timep, lr=self.config['mapping']['lr_decoder'] * _tnm, weight_decay=_tnwd)
+
+    def _buffer_deform(self, batch, cur_frame_id):
+        '''Append the current frame's surface targets to the causal replay buffer (only frames seen so far).
+        Pose-frozen => Xk is fixed at insertion (consistent with the identity-pose bake).'''
+        if 'deform_dx' not in batch:
+            return
+        H, W = self.dataset.H, self.dataset.W
+        n = self.config['mapping']['sample']
+        indice = self.select_samples(H, W, n)
+        ih, iw = indice % H, indice // H
+        c2w = self.est_c2w_data[cur_frame_id].to(self.device)
+        rays_d_cam = batch['direction'].squeeze(0)[ih, iw, :].to(self.device)
+        target_d = batch['depth'].squeeze(0)[ih, iw].to(self.device).unsqueeze(-1)
+        rays_o = c2w[:3, -1].repeat(n, 1)
+        rays_d = torch.sum(rays_d_cam[..., None, :] * c2w[:3, :3], -1)
+        Xk = rays_o + rays_d * target_d
+        dx = sample_dino_grid(batch['deform_dx'].squeeze(0), ih, iw, H, W).to(self.device)
+        w = sample_dino_grid(batch['deform_trust'].squeeze(0), ih, iw, H, W).to(self.device)
+        _t = (cur_frame_id / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else float(cur_frame_id)
+        self.deform_replay.append({'Xk': Xk.detach().cpu(), 'dx': dx.detach().cpu(),
+                                   'w': w.detach().cpu(), 't': torch.full((n, 1), float(_t))})
+
+    def _sample_replay(self, nf):
+        k = min(nf, len(self.deform_replay))
+        picks = random.sample(range(len(self.deform_replay)), k)
+        cat = lambda key: torch.cat([self.deform_replay[i][key] for i in picks]).to(self.device)
+        return cat('Xk'), cat('t'), cat('dx'), cat('w')
+
+    def _deform_replay_step(self, batch, cur_frame_id):
+        '''ARM-2 Stage-2 (online forgetting fix): buffer the current frame, then train the field on a REPLAY
+        of PAST frames -- causal, so it accumulates the time-varying motion instead of forgetting it
+        frame-by-frame. Gated on deform_replay_iters>0; trains time_net via field_optimizer only.'''
+        _ds_w = self.config['training'].get('deformation_sup_weight', 0)
+        n_it = self.config['training'].get('deform_replay_iters', 0)
+        if _ds_w <= 0 or n_it <= 0 or not self.config['dynamic'] or 'deform_dx' not in batch or self.field_optimizer is None:
+            return
+        self._buffer_deform(batch, cur_frame_id)
+        nf = self.config['training'].get('deform_replay_frames', 5)
+        _first = _last = 0.0
+        for it in range(n_it):
+            self.field_optimizer.zero_grad()
+            Xk, t, dx, w = self._sample_replay(nf)
+            def_sup = self.model.deform_teacher_loss(Xk, t, dx, w)
+            (_ds_w * def_sup).backward()
+            self.field_optimizer.step()
+            if it == 0: _first = def_sup.item()
+            _last = def_sup.item()
+        if cur_frame_id <= 3 or cur_frame_id % 30 == 0:
+            print(f'[replay] frame {cur_frame_id}: buffer={len(self.deform_replay)}  def_sup {_first:.6f} -> {_last:.6f}  (replay {nf}f x {n_it}it)')
+
     def run(self):
         self.create_optimizer()
         data_loader = DataLoader(self.dataset, num_workers=self.config['data']['num_workers'])
@@ -827,6 +894,7 @@ class DDSSLAM():
                 if i%self.config['mapping']['map_every']==0:
                     self.global_BA(batch, i)
                     self.current_frame_mapping(batch, i)
+                    self._deform_replay_step(batch, i)   # ARM-2 Stage-2: causal teacher replay (no-op unless deform_replay_iters>0)
 
                 if i % self.config['render_freq'] == 0:
                     self.rendering(batch, i)
