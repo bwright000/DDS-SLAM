@@ -49,6 +49,21 @@ def main():
     bg = set(int(x) for x in args.bg_labels.split(',') if x != '')
     tis = set(int(x) for x in args.tissue_labels.split(',') if x != '')
     print(f"[{args.name}] frames {N} | seg {'yes' if S else 'no'} | tool={tool or '-'} bg={bg or '-'}")
+    # SEG-B FIX (2026-06-20): the CRCD analysis printed ONLY 'bg' because --tool_labels/--bg_labels
+    # didn't match the ACTUAL mask values (semantic_instance IDs != semantic_class {0,1,2,3}). Print the
+    # real label histogram of the first mask so the mapping can be set correctly (then re-run with the
+    # right --tool_labels/--bg_labels/--tissue_labels). Without this we silently mis-stratify.
+    if S:
+        _s0 = cv2.imread(S[0], cv2.IMREAD_GRAYSCALE)
+        if _s0 is not None:
+            _u, _c = np.unique(_s0, return_counts=True)
+            _hist = {int(k): int(v) for k, v in zip(_u, _c)}
+            print(f"  seg label histogram ({os.path.basename(S[0])}): {_hist}")
+            _unmapped = [k for k in _hist if k not in tool and k not in bg and k not in tis]
+            if not (set(tool) & set(_hist)) and tool:
+                print(f"  🚨 tool_labels {sorted(tool)} NOT present in the mask -> tool stratum will be EMPTY. Map from the histogram above.")
+            if _unmapped and not tis:
+                print(f"  (labels {_unmapped} fall to the tissue default = non-tool, non-bg)")
 
     sig_all, grad_all, mot_all, spec_all = [], [], [], []
     cls_sig = {'tool': [], 'tissue': [], 'bg': []}; sp_sig = []
