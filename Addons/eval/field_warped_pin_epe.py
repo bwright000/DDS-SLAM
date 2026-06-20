@@ -65,6 +65,8 @@ def main():
     ap.add_argument('--ray', default='OpenGL', choices=['OpenGL', 'OpenCV'])
     ap.add_argument('--fig_dir', default='', help='where to write the diagnostic PNG; default = the est_c2w run dir (ships to Drive alongside the payload, per the standing visuals rule)')
     ap.add_argument('--tag', default='', help='figure label/filename stem; default = the run-dir name')
+    ap.add_argument('--deform_dir', default='', help='if set, also report whether the trained field reproduces its OWN baked Δx* at the pins: cos(D,Δx*) + the baked-Δx* reduction (sanity ~+86%). Isolates field GENERALISATION failure (field != its good targets) from target quality.')
+    ap.add_argument('--deform_glob', default='*_deform.npz')
     args = ap.parse_args()
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -103,6 +105,15 @@ def main():
 
     g0 = pins[0]; d0 = np.load(deps[0]).astype(np.float64).squeeze()/pds
     X0, z0 = backproj(g0[:, :2], d0, poses[0])
+    H, W = d0.shape
+    defs = sorted(glob.glob(os.path.join(args.deform_dir, args.deform_glob))) if args.deform_dir else []
+    bkd_field, bkd_cos = [], []                       # baked-Δx*-at-pins diagnostic (--deform_dir)
+    def samp_grid(mp, u, v):                          # bilinear-sample a (gh,gw,C) grid at pixel u(col),v(row)
+        gh, gw = mp.shape[:2]
+        gx = np.clip(u*gw/W, 0, gw-1-1e-3); gy = np.clip(v*gh/H, 0, gh-1-1e-3)
+        x0 = np.floor(gx).astype(int); y0 = np.floor(gy).astype(int); x1 = x0+1; y1 = y0+1
+        wx = (gx-x0)[..., None]; wy = (gy-y0)[..., None]
+        return mp[y0,x0]*(1-wx)*(1-wy) + mp[y0,x1]*wx*(1-wy) + mp[y1,x0]*(1-wx)*wy + mp[y1,x1]*wx*wy
 
     rigid, field, dxm, cosd = [], [], [], []; shuf_field = []; fids = []
     rng_t = [k/nf if tnorm else k for k in sorted(pins) if k != 0]
@@ -123,6 +134,10 @@ def main():
         rigid += list(r); field += list(np.linalg.norm(Xk[val]+D-X0[val], axis=1))
         shuf_field += list(np.linalg.norm(Xk[val]+Ds-X0[val], axis=1)); dxm += list(np.linalg.norm(D, axis=1))
         fids += [k] * int(val.sum())
+        if defs and k < len(defs):                    # does the field reproduce its OWN baked target here?
+            bx = samp_grid(np.load(defs[k])['dx'].astype(np.float64), gk[val, 0], gk[val, 1])
+            bkd_field += list(np.linalg.norm(Xk[val]+bx-X0[val], axis=1))
+            bkd_cos += list((D*bx).sum(1) / (np.linalg.norm(D,axis=1)*np.linalg.norm(bx,axis=1) + 1e-12))
     rigid, field, shuf_field, dxm, cosd, fids = map(np.array, (rigid, field, shuf_field, dxm, cosd, fids))
     # anchor check: D at t=0 on the frame-0 pins must be ~0
     anc = float(np.linalg.norm(field_D(torch.tensor(X0[g0[:,2]==1], dtype=torch.float32, device=dev), 0.0).cpu().numpy(), axis=1).max())
@@ -134,6 +149,11 @@ def main():
     print(f"  |Δx| field activity: mean={dxm.mean():.5f} max={dxm.max():.5f}  (0 => dead field)")
     cm = float(np.nanmean(cosd)) if len(cosd) else float('nan')
     print(f"  cos(D, X0-Xk) dir  : {cm:+.3f}  (>0 toward canonical; <=0 wrong-way/HOLLOW even if reduction looks ok)")
+    if defs and len(bkd_field):
+        bkd_field = np.array(bkd_field); bkd_cos = np.array(bkd_cos)
+        print(f"  -- baked-target check (--deform_dir): is it the FIELD or the TARGETS? --")
+        print(f"  baked Δx* reduction: {100*(rigid.mean()-bkd_field.mean())/max(rigid.mean(),1e-9):+.1f}%   (the TARGETS applied at the pins; ~+86% = targets good)")
+        print(f"  cos(D, baked Δx*)  : {np.nanmean(bkd_cos):+.3f}   (does the field reproduce its OWN target at held-out pins? high+ = generalises; <=0 = field learned the OPPOSITE of its good targets => training/overfit, not targets)")
     print(f"  anchor check D@t=0 : {anc:.2e}  (must be ~0)")
     print("\nVERDICT: reduction >> shuffled AND |Δx|>0 AND cos>0  -> field models deformation (ALIVE).")
     print("         reduction ~= shuffled, or ~0, or |Δx|~0, or cos<=0  -> field INERT/HOLLOW (motion-teacher needed).")

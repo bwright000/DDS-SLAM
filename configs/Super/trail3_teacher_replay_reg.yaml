@@ -1,0 +1,13 @@
+# ARM-2 Stage-2 REPLAY + REGULARIZED. The replay arm fixed forgetting (field became time-specific) but
+# OVERFIT: cos flipped to -0.64, |Δx| overshot to 0.076 (2x the target max), pins -59%. Root cause: weight
+# 10000 was tuned to BEAT the render-collapse, but with the field isolated + replay there is no collapse to
+# fight -> 10000 x 100it/frame is pure overfitting. Targets are validated-good (+86%); we just need the field
+# to GENERALISE them, not memorise them. Fix = much lower weight + fewer replay iters + a hard magnitude cap.
+inherit_from: configs/Super/trail3_teacher_replay.yaml
+data:
+  output: output/trail3_teacher_replay_reg
+  exp_name: demo
+deform_hardbound: 0.05          # tanh-cap |Δx| ~ the target max -> no 0.076 overshoot past canonical
+training:
+  deformation_sup_weight: 100   # was 10000 (that value was to overcome render-collapse, now absent)
+  deform_replay_iters: 30       # was 100 -> fewer updates/frame -> less overfitting
