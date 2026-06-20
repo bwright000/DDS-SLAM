@@ -490,7 +490,7 @@ class JointEncoding(nn.Module):
 
         return ret
     
-    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None):
+    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None):
         '''
         Params:
             rays_o: ray origins (Bs, 3)
@@ -518,7 +518,20 @@ class JointEncoding(nn.Module):
         # (~569) consume. softplus(.float())+1e-6 then floor mirrors raw2outputs. Placed BEFORE the
         # eval early-return so render_only also surfaces sigma2 for the viz. Gated on (target_dino present
         # AND head built) -> off/geo add no key/op -> byte-identical base (Inc-0).
-        if target_dino is not None and hasattr(self.decoder, 'dino_unc_net'):
+        if target_dino is not None and hasattr(self.decoder, 'dino_group_net'):
+            # --- ARM-1 #4: FEATURE-GROUP ATTRIBUTION ENGINE. Slot-attention over the scattered [N,384]
+            # DINO batch produces BOTH a region-coherent sigma^2 (magnitude) AND a [N,K] learned
+            # what-kind attribution from one pooled context. Writes the SAME rend_dict['sigma2'] key the
+            # NLL / Inc-2 down-weight / render viz consume (so the stabilised-magnitude half ships with
+            # ZERO downstream edits) PLUS a NEW rend_dict['whatkind'] key gated strictly on the module's
+            # existence. softplus(.float())+1e-6 floor mirrors the per-pixel path EXACTLY. This branch is
+            # mutually exclusive with the per-pixel dino_unc_net head (group=='slot' builds dino_group_net
+            # LAST in dino mode); group=='' never builds it -> the per-pixel path below runs unchanged.
+            _sig_raw, _whatkind, _attn = self.decoder.dino_group_net(target_dino)
+            rend_dict['whatkind'] = _whatkind                            # [N,K] NEW key, module-gated
+            _sig = torch.nn.functional.softplus(_sig_raw.float()) + 1e-6
+            rend_dict['sigma2'] = torch.clamp_min(_sig, 1e-6)
+        elif target_dino is not None and hasattr(self.decoder, 'dino_unc_net'):
             # SNI-spirit fusion (uncertainty.fuse): '' = DINO only; 'rgbd' = [DINO ; rgb ; depth];
             # 'geo' = [DINO ; geo_feat] (the geometry jitter-killer); 'geo_rgbd' = [DINO ; geo_feat ; rgb ;
             # depth]. All extra modalities DETACHED so sigma^2 READS them but doesn't drive geometry/render
@@ -630,6 +643,28 @@ class JointEncoding(nn.Module):
                     _nll = 0.5 * (_err / _s2 + torch.log(_s2))                  # [N,1]
                 nll_loss = _nll[valid_depth_mask].mean()
 
+            # --- ARM-1 #4: what-kind seg-supervised attribution loss (LEARNED-NOT-TOLD). The slot head
+            # is supervised by GT seg as a soft PRIOR during MAPPING only (mirrors the NLL guard); it
+            # reads DINO ONLY at inference. The prior aligns the 3 slots to the dataset's {bg,tissue,tool}
+            # naming, not "what a tool is". Stashed in ret['whatkind_loss'] and ADDED only behind
+            # whatkind_weight (default 0) in get_loss_from_ret -> base/per-pixel-dino paths inert.
+            # Gated on (whatkind present AND target_seg supplied AND weight>0) so off-path adds no op.
+            whatkind_loss = None
+            _wkw = self.config.get('uncertainty', {}).get('whatkind_weight', 0)
+            if (_wkw > 0) and (not tracking) and ('whatkind' in rend_dict) and (target_seg is not None):
+                _ls = float(self.config.get('uncertainty', {}).get('whatkind_label_smooth', 0.0))
+                _wk_logits = rend_dict['whatkind']                          # [N,K]
+                _seg = target_seg.reshape(-1).long()                        # [N] canonical {0bg,1tissue,2tool}
+                _vm = valid_depth_mask
+                # whatkind_shuffle: the negative-control arm. Permute the class ids before CE so the
+                # supervision is informative-but-meaningless -> isolates "informative labels" from
+                # "extra capacity/smoothing". Default false = true labels (no permutation).
+                if self.config.get('uncertainty', {}).get('whatkind_shuffle', False):
+                    _perm = torch.randperm(int(_wk_logits.shape[-1]), device=_wk_logits.device)
+                    _seg = _perm[_seg]
+                whatkind_loss = torch.nn.functional.cross_entropy(
+                    _wk_logits[_vm], _seg[_vm], label_smoothing=_ls)
+
         else:
             rgb_loss = depth_loss = edge_loss = edge_semantic_loss = sdf_loss = fs_loss = psnr = None
             sdf_stats = None
@@ -654,5 +689,13 @@ class JointEncoding(nn.Module):
             ret['sigma2'] = rend_dict['sigma2']
             if (not render_only) and (not tracking):   # NLL is a MAPPING-only training signal, never on pose
                 ret['nll'] = nll_loss
+
+        # --- ARM-1 #4: surface the what-kind attribution logits (for the render viz, render_only=True
+        # path included) + the seg-supervised CE loss (MAPPING-only). Both keys are gated on the slot
+        # module having written rend_dict['whatkind'] -> base/per-pixel-dino paths never create them.
+        if 'whatkind' in rend_dict:
+            ret['whatkind'] = rend_dict['whatkind']
+            if (not render_only) and (not tracking) and (whatkind_loss is not None):
+                ret['whatkind_loss'] = whatkind_loss
 
         return ret

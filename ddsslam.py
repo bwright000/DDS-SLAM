@@ -239,6 +239,14 @@ class DDSSLAM():
         if _nll_w > 0 and ret.get('nll') is not None:
             loss += _nll_w * ret['nll']
 
+        # ARM-1 #4: what-kind seg-supervised attribution CE loss (region-coherent slot head).
+        # Mirrors the NLL optional-loss-behind-a-weight pattern. whatkind_weight default 0
+        # (+ ret['whatkind_loss'] absent unless the slot module is on AND target_seg supplied)
+        # => zero contribution => regression-safe / bit-identical to base.
+        _wk_w = self.config.get('uncertainty', {}).get('whatkind_weight', 0)
+        if _wk_w > 0 and ret.get('whatkind_loss') is not None:
+            loss += _wk_w * ret['whatkind_loss']
+
         if smooth and self.config['training']['smooth_weight']>0:
             loss += self.config['training']['smooth_weight'] * self.smoothness(self.config['training']['smooth_pts'],
                                                                                   self.config['training']['smooth_vox'],
@@ -277,6 +285,9 @@ class DDSSLAM():
             target_d = batch['depth'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             # Inc-1 v2: per-ray DINO feature [N,C] (None unless mode:'dino' -> forward stays base/geo).
             target_dino = sample_dino_grid(batch['dino_grid'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device) if 'dino_grid' in batch else None
+            # ARM-1 #4: per-ray seg class id [N] at the SAME indices as target_dino (None unless
+            # whatkind_weight>0 -> the what-kind CE prior; absent => base/per-pixel-dino unchanged).
+            target_seg = batch['seg'].squeeze(0)[indice_h, indice_w].to(self.device) if 'seg' in batch else None
 
             rays_o = c2w[None, :3, -1].repeat(self.config['mapping']['sample'], 1)
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w[:3, :3], -1)
@@ -285,7 +296,7 @@ class DDSSLAM():
                 timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1] (else freq-encoder parity-collapse); flag default off = upstream behaviour
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
             # Forward
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, notFirstMap=False)
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, target_seg=target_seg, notFirstMap=False)
             loss = self.get_loss_from_ret(ret)
             loss.backward()
             self.map_optimizer.step()
@@ -362,6 +373,8 @@ class DDSSLAM():
             target_d = batch['depth'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
             # Inc-1 v2: per-ray DINO feature [N,C] (None unless mode:'dino').
             target_dino = sample_dino_grid(batch['dino_grid'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device) if 'dino_grid' in batch else None
+            # ARM-1 #4: per-ray seg class id [N] at the SAME indices as target_dino (None unless whatkind_weight>0).
+            target_seg = batch['seg'].squeeze(0)[indice_h, indice_w].to(self.device) if 'seg' in batch else None
             # ARM-2 Stage-1: per-ray baked deformation target Δx* [N,3] + trust [N,1] (None unless deformation_sup_weight>0).
             if 'deform_dx' in batch:
                 deform_dx = sample_dino_grid(batch['deform_dx'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device)
@@ -386,7 +399,7 @@ class DDSSLAM():
                 loss = _ds_w * def_sup
                 ret = None                                                     # render forward skipped (teacher-only)
             else:
-                ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino)
+                ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, target_seg=target_seg)
                 loss = self.get_loss_from_ret(ret)
                 if _teach:                                                     # joint: render loss + teacher
                     Xk = rays_o[..., :3] + rays_d * target_d
@@ -885,6 +898,7 @@ class DDSSLAM():
         rgb = []
         depth_chunks = []
         sigma_chunks = []   # ARM-2 Inc-1: per-pixel sigma^2 (only when the head is on)
+        whatkind_chunks = []   # ARM-1 #4: per-pixel what-kind logits (only when the slot module is on)
         ray_batch_size = 240
 
         for i in range(0, rays_d.shape[0], ray_batch_size):
@@ -905,6 +919,8 @@ class DDSSLAM():
                 depth_chunks.append(ret['depth'].detach().clone().cpu())
             if 'sigma2' in ret:
                 sigma_chunks.append(ret['sigma2'].detach().clone().cpu())
+            if 'whatkind' in ret:
+                whatkind_chunks.append(ret['whatkind'].detach().clone().cpu())
 
         color = torch.cat(rgb, dim=0)
         color = color.reshape(H, W, 3)
@@ -956,6 +972,21 @@ class DDSSLAM():
             unc_scale = float(self.config.get('uncertainty', {}).get('save_scale', 10000.0))
             sig_uint16 = np.clip(sig * unc_scale, 0, 65535).astype(np.uint16)
             cv2.imwrite(os.path.join(unc_dir, '{:04d}.png'.format(frame_id)), sig_uint16)
+
+        # ARM-1 #4: save the LEARNED what-kind attribution map as a coloured PNG (argmax over the K
+        # slots -> {0 bg, 1 tissue, 2 tool}). Present ONLY when the slot module is on (whatkind_chunks
+        # empty otherwise), so base / per-pixel-dino runs are byte-unchanged. Colours are BGR (cv2):
+        # bg=black, tissue=green [0,255,0], tool=red [0,0,255]. generate_video.py can panel this beside
+        # the sigma^2 map. Self-contained, mirrors the uncert save.
+        if whatkind_chunks:
+            wk_dir = os.path.join(self.config['data']['output'], 'whatkind')
+            os.makedirs(wk_dir, exist_ok=True)
+            wk_logits = torch.cat(whatkind_chunks, dim=0)            # [H*W, K]
+            wk = wk_logits.argmax(dim=-1).reshape(H, W).numpy().astype(np.int64)
+            wk_rgb = np.zeros((H, W, 3), dtype=np.uint8)            # BGR; bg stays black
+            wk_rgb[wk == 1] = (0, 255, 0)                           # tissue -> green
+            wk_rgb[wk == 2] = (0, 0, 255)                           # tool   -> red
+            cv2.imwrite(os.path.join(wk_dir, '{:04d}.png'.format(frame_id)), wk_rgb)
 
 
 if __name__ == '__main__':

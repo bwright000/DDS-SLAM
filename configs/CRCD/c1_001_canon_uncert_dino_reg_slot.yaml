@@ -1,0 +1,19 @@
+# ARM-1 #4 SLOT (v1b) arm (CRCD C_1/001). = c1_001_canon_uncert_dino_reg (per-PIXEL DINO sigma^2
+# head on the de-artifacted vits14_reg features) EXCEPT the FeatureGroupNet slot-attention module
+# (K=3 = tissue/tool/bg) REPLACES the per-pixel head at the fuse site, producing BOTH a region-coherent
+# sigma^2 AND a [N,3] LEARNED what-kind attribution from one pooled context. whatkind_weight>0 turns on
+# the GT-seg-supervised CE prior (the v1b full method); set 0 for the v1a sigma^2-only arm
+# (c1_001_canon_uncert_dino_reg_slot_v1a.yaml). Parity: group=='' (the parent) never builds the module
+# -> this config is the ONLY thing that flips it on, single-variable vs dino_reg.
+inherit_from: configs/CRCD/c1_001_canon_uncert_dino_reg.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_dino_reg_slot
+  exp_name: demo
+uncertainty:
+  group: slot                 # build the FeatureGroupNet (slot-attention) at the dino fuse site
+  group_dim: 64               # slot feature dim D
+  group_slots: 3              # K = TriGauge axes {bg, tissue, tool}
+  group_iters: 3              # T slot-attention refinement iterations
+  whatkind_weight: 0.1        # seg-supervised what-kind CE prior weight (>0 => v1b full method)
+  whatkind_label_smooth: 0.1
+  whatkind_shuffle: false     # the shuffled-label negative-control arm (set true for the falsifier)

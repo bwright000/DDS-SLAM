@@ -129,6 +129,37 @@ class BaseDataset(Dataset):
         ret["deform_trust"] = torch.from_numpy(npz['trust'].astype(np.float32))[..., None]  # [gh,gw,1]
         return ret
 
+    def _attach_seg(self, ret, index, H, W, edge):
+        """ARM-1 #4 (uncertainty.whatkind_weight>0): attach a per-frame CANONICAL seg-class map [H,W]
+        for the what-kind CE prior. Modelled on _attach_deform: gated on the flag, None => no key =>
+        base bit-identical. Reads the RAW mask (cv2.IMREAD_UNCHANGED -> the uint class ids, NOT the
+        BGR-truncated copy __getitem__ uses for the Canny edge field), canonicalises per-dataset, and
+        applies the SAME resize(NEAREST)->downsample->crop pipeline as edge_semantic/depth so the
+        per-ray gather at [indice_h, indice_w] aligns 1:1. Canonical labels: {0=bg, 1=tissue, 2=tool}.
+
+          CRCD masks: uint16 {0=bg, 1=Liver, 2=Gallbladder, 3=Tool} -> {0:0, 1:1, 2:1, 3:2}
+                      (Liver+Gallbladder -> tissue, per the seg-policy memory).
+        Shared by StereoMISDataset + SuperDataset (each passes its own seg_label_paths)."""
+        if getattr(self, 'seg_label_paths', None) is None:
+            return ret
+        raw = cv2.imread(self.seg_label_paths[index], cv2.IMREAD_UNCHANGED)
+        if raw is None:
+            return ret
+        if raw.ndim == 3:                       # collapse any accidental multi-channel to the first plane
+            raw = raw[..., 0]
+        raw = cv2.resize(raw, (W, H), interpolation=cv2.INTER_NEAREST)
+        # canonicalise CRCD class ids {0 bg, 1 liver, 2 gallbladder, 3 tool} -> {0 bg, 1 tissue, 2 tool}
+        seg = np.zeros_like(raw, dtype=np.int64)
+        seg[(raw == 1) | (raw == 2)] = 1        # tissue
+        seg[raw == 3] = 2                        # tool
+        if self.downsample_factor > 1:
+            seg = cv2.resize(seg.astype(np.int32), (W // self.downsample_factor, H // self.downsample_factor),
+                             interpolation=cv2.INTER_NEAREST).astype(np.int64)
+        if edge > 0:
+            seg = seg[edge:-edge, edge:-edge]
+        ret["seg"] = torch.from_numpy(seg.astype(np.int64))
+        return ret
+
 class StereoMISDataset(BaseDataset):
     def __init__(self, cfg, basedir, trainskip=1, 
                  downsample_factor=1, translation=0.0, 
@@ -169,6 +200,20 @@ class StereoMISDataset(BaseDataset):
             self.deform_paths = sorted(glob.glob(f'{self.basedir}/{_dsub}/*_deform.npz'))[-4000:]
             assert len(self.deform_paths) == len(self.img_files), \
                 f"deform targets {len(self.deform_paths)} != frames {len(self.img_files)} in {self.basedir}/{_dsub}"
+
+        # ARM-1 #4: per-frame RAW seg masks for the what-kind CE prior (whatkind_weight>0). Reuses the
+        # existing semantic_paths (same masks the edge field is built from) but read via
+        # cv2.IMREAD_UNCHANGED in _attach_seg to recover the class ids. Align one mask per frame using
+        # the SAME ratio rule as __getitem__ (1:1 CRCD vs half-rate StereoMIS) so seg_label_paths[index]
+        # pairs correctly. None => no 'seg' key => base/per-pixel-dino bit-identical.
+        self.seg_label_paths = None
+        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0:
+            if len(self.semantic_paths) >= len(self.img_files):
+                self.seg_label_paths = [self.semantic_paths[min(i, len(self.semantic_paths) - 1)]
+                                        for i in range(len(self.img_files))]
+            else:
+                self.seg_label_paths = [self.semantic_paths[min(i // 2, len(self.semantic_paths) - 1)]
+                                        for i in range(len(self.img_files))]
 
         self.load_poses(self.basedir)
 
@@ -251,6 +296,7 @@ class StereoMISDataset(BaseDataset):
         }
         ret = self._attach_dino(ret, index, edge)
         ret = self._attach_deform(ret, index)
+        ret = self._attach_seg(ret, index, H, W, edge)
 
         return ret
 
@@ -357,6 +403,14 @@ class SuperDataset(BaseDataset):
             print(f'[teacher] deform targets ATTACHED: {len(self.deform_paths)} from {self.basedir}/{_dsub} '
                   f'(deformation_sup_weight={self.config["training"]["deformation_sup_weight"]})')
 
+        # ARM-1 #4: per-frame RAW seg masks for the what-kind CE prior (whatkind_weight>0). SemSup is
+        # 1:1 (one mask per frame). Read via cv2.IMREAD_UNCHANGED in _attach_seg. None => no 'seg' key
+        # => base/per-pixel-dino bit-identical.
+        self.seg_label_paths = None
+        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0:
+            self.seg_label_paths = [self.semantic_paths[min(i, len(self.semantic_paths) - 1)]
+                                    for i in range(len(self.img_files))]
+
         self.load_poses(os.path.join(self.basedir, 'pose'))
         
         self.rays_d = None
@@ -446,6 +500,7 @@ class SuperDataset(BaseDataset):
         }
         ret = self._attach_dino(ret, index, edge)
         ret = self._attach_deform(ret, index)
+        ret = self._attach_seg(ret, index, H, W, edge)
 
         return ret
 

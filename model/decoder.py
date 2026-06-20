@@ -347,6 +347,75 @@ class UncertaintyDINONet(nn.Module):
         return self.output_layer(x)
 
 
+class FeatureGroupNet(nn.Module):
+    """ARM-1 #4 — slot-attention FEATURE-GROUP ATTRIBUTION ENGINE (Locatello et al. NeurIPS 2020).
+
+    Operates WITHIN the scattered per-ray DINO batch [N, in_dim] in feature space (Option A — no
+    plumbing change; the gathered target_dino is what scene_rep already holds). K=3 slots compete via
+    softmax-OVER-THE-SLOTS (the what-kind competition: tissue/tool/bg) and are refined over T GRU
+    iterations. From ONE pooled context it returns TWO outputs:
+      (a) sigma2_raw [N,1]  — region-coherent magnitude (read from cat[feat, context.detach()]; the
+          detach mirrors the established stop-grad fusion discipline so sigma^2 READS the group
+          summary but does not drive geometry); floored softplus at the scene_rep call site as today.
+      (b) whatkind  [N,K]   — the LEARNED what-kind attribution logits (read from context).
+    Permutation-invariant over the input set -> the random ray scatter is irrelevant (slot binding is
+    feature-driven, not spatial). Cost O(N*K*T) ~ 18k slot-update ops << the N^2 of cross-attn.
+
+    PARITY: this module is constructed ONLY inside decoder's `enable and mode=='dino' and group=='slot'`
+    guard and LAST (after every base module AND after dino_unc_net), so the flags-off / group=='' build
+    draws no RNG, adds no params, adds no state_dict keys (Inc-0 gate green).
+    """
+    def __init__(self, in_dim, slot_dim=64, n_slots=3, n_iter=3, mlp_hidden=128, eps=1e-8):
+        super().__init__()
+        self.in_dim = int(in_dim)
+        self.D = int(slot_dim)
+        self.K = int(n_slots)
+        self.T = int(n_iter)
+        self.eps = float(eps)
+        self.scale = self.D ** -0.5
+        # learned slot init [1, K, D]
+        self.slots_init = nn.Parameter(torch.randn(1, self.K, self.D))
+        nn.init.xavier_uniform_(self.slots_init)
+        # input -> key/value (in feature space), slots -> query
+        self.Wk = nn.Linear(self.in_dim, self.D)
+        self.Wv = nn.Linear(self.in_dim, self.D)
+        self.Wq = nn.Linear(self.D, self.D)
+        self.norm_in   = nn.LayerNorm(self.in_dim)
+        self.norm_slot = nn.LayerNorm(self.D)
+        self.gru = nn.GRUCell(self.D, self.D)
+        self.mlp = nn.Sequential(
+            nn.Linear(self.D, mlp_hidden),
+            nn.ReLU(inplace=True),
+            nn.Linear(mlp_hidden, self.D),
+        )
+        # two read-out heads off the shared pooled context
+        self.head_sigma = nn.Linear(self.in_dim + self.D, 1)   # (a) magnitude: cat[feat, context.detach()]
+        self.head_kind  = nn.Linear(self.D, self.K)            # (b) attribution: context
+
+    def forward(self, feat):
+        # feat [N, in_dim] -> sigma2_raw [N,1] (RAW pre-softplus), whatkind [N,K], attn [N,K]
+        x = self.norm_in(feat)
+        k = self.Wk(x)                                          # [N, D]
+        v = self.Wv(x)                                          # [N, D]
+        slots = self.slots_init.expand(1, self.K, self.D).reshape(self.K, self.D).to(feat)  # [K, D]
+        attn = None
+        for _ in range(self.T):
+            q = self.Wq(self.norm_slot(slots))                 # [K, D]
+            logits = (k @ q.t()) * self.scale                  # [N, K]
+            attn = torch.softmax(logits, dim=-1)               # [N, K] SOFTMAX OVER SLOTS = the competition
+            weights = attn / (attn.sum(dim=0, keepdim=True) + self.eps)   # [N, K] column-normalised
+            updates = weights.t() @ v                          # [K, D] weighted mean over N
+            slots = self.gru(updates, slots)                   # [K, D]
+            slots = slots + self.mlp(self.norm_slot(slots))    # [K, D] residual slot MLP
+        # final attention with the refined slots
+        q = self.Wq(self.norm_slot(slots))
+        attn = torch.softmax((k @ q.t()) * self.scale, dim=-1) # [N, K]
+        context = attn @ slots                                 # [N, D] region-coherent per-ray feature
+        sigma2_raw = self.head_sigma(torch.cat([feat, context.detach()], dim=-1))  # [N, 1]
+        whatkind = self.head_kind(context)                     # [N, K]
+        return sigma2_raw, whatkind, attn
+
+
 class ColorSDFNet(nn.Module):
     '''
     Color grid + SDF grid
@@ -507,6 +576,21 @@ class ColorSDFNet_v2(nn.Module):
                 hidden_dim=config.get('uncertainty', {}).get('hidden_dim', 64),
                 num_layers=config.get('uncertainty', {}).get('num_layers', 2),
                 dropout=config.get('uncertainty', {}).get('dino_dropout', 0.0))
+
+            # --- ARM-1 #4: FEATURE-GROUP ATTRIBUTION ENGINE (slot-attention, K=3 = tissue/tool/bg).
+            # Built LAST (after dino_unc_net, which is itself after every base module) so the ON
+            # backbone draws the SAME RNG as the per-pixel dino arm up to this point -> a clean
+            # single-variable A/B (only the group module differs). Lives on the DECODER so its params
+            # land in map_optimizer via _dec_groups() (they contain no 'time_net' -> the 'main' group).
+            # Gated on the NEW sub-flag uncertainty.group=='slot': group=='' (default) => NOT built =>
+            # no RNG draw, no params, no state_dict keys => the per-pixel dino arm is byte-identical and
+            # the flags-off base path (enable=False -> this whole branch skipped) is byte-identical.
+            if config.get('uncertainty', {}).get('group', '') == 'slot':
+                self.dino_group_net = FeatureGroupNet(
+                    in_dim=int(config['uncertainty']['dino_dim']),
+                    slot_dim=config.get('uncertainty', {}).get('group_dim', 64),
+                    n_slots=config.get('uncertainty', {}).get('group_slots', 3),
+                    n_iter=config.get('uncertainty', {}).get('group_iters', 3))
 
     def forward(self, embed, embed_pos):
 

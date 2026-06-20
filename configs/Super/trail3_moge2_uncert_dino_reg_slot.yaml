@@ -1,0 +1,17 @@
+# ARM-1 #4 SLOT (v1b) arm (SemSup trail_3). = trail3_moge2_uncert_dino_reg EXCEPT the FeatureGroupNet
+# slot-attention module (K=3 = tissue/tool/bg) REPLACES the per-pixel DINO sigma^2 head at the fuse
+# site, producing a region-coherent sigma^2 AND a [N,3] LEARNED what-kind attribution. whatkind_weight>0
+# turns on the seg-supervised CE prior. NOTE: SemSup pose GT is fictional (Sim3 ATE meaningless) -> judge
+# on render PSNR/SSIM/LPIPS + the what-kind viz, not tracking. Parity: group=='' parent never builds it.
+inherit_from: configs/Super/trail3_moge2_uncert_dino_reg.yaml
+data:
+  output: output/trail3_moge2_uncert_dino_reg_slot
+  exp_name: demo
+uncertainty:
+  group: slot                 # build the FeatureGroupNet (slot-attention) at the dino fuse site
+  group_dim: 64               # slot feature dim D
+  group_slots: 3              # K = TriGauge axes {bg, tissue, tool}
+  group_iters: 3              # T slot-attention refinement iterations
+  whatkind_weight: 0.1        # seg-supervised what-kind CE prior weight (>0 => v1b full method)
+  whatkind_label_smooth: 0.1
+  whatkind_shuffle: false     # the shuffled-label negative-control arm

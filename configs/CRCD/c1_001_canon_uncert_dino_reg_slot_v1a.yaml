@@ -1,0 +1,12 @@
+# ARM-1 #4 SLOT v1a arm (CRCD C_1/001) — the sigma^2-STABILISATION-ONLY arm. = ..._slot EXCEPT
+# whatkind_weight:0 -> the what-kind CE prior is NEVER computed, so the slot module is a pure
+# anisotropic sigma^2 stabiliser (region-coherent magnitude) with NO seg supervision. This is the
+# v1a metric gate (speckle down, frac_oracle held, motion-corr held) and the standalone fallback if
+# v1b's what-kind ~ the shuffled control. The slot module IS still built (group:slot); only the loss
+# term is off. (The unsupervised what-kind head still runs -> it is the pure-DINO-grouping triad arm.)
+inherit_from: configs/CRCD/c1_001_canon_uncert_dino_reg_slot.yaml
+data:
+  output: output/CRCD/C1_001_canon_uncert_dino_reg_slot_v1a
+  exp_name: demo
+uncertainty:
+  whatkind_weight: 0          # no CE prior -> sigma^2-stabilisation only (pure-DINO grouping)
