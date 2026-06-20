@@ -212,13 +212,13 @@ class DINO2SEG(nn.Module):
             p.requires_grad = False
         idxs = set()
         for nme, _ in self.backbone.named_parameters():
-            m = re.search(r'blocks\.(\d+)\.', nme)
+            m = re.search(r'(?:blocks|layer)\.(\d+)\.', nme)
             if m:
                 idxs.add(int(m.group(1)))
         nblk = (max(idxs) + 1) if idxs else 0
         keep = set(range(max(0, nblk - train_blocks), nblk)) if train_blocks > 0 else set()
         for nme, p in self.backbone.named_parameters():
-            m = re.search(r'blocks\.(\d+)\.', nme)
+            m = re.search(r'(?:blocks|layer)\.(\d+)\.', nme)
             if train_blocks > 0 and ((m and int(m.group(1)) in keep) or nme.startswith('norm')):
                 p.requires_grad = True
             if tune_norms and ('norm' in nme or nme.endswith('.bias')):

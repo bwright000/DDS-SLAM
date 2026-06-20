@@ -104,23 +104,18 @@ def main():
     print(f"  found {len(rgb_files)} left frames")
 
     # 3. Rectify + rename
+    n_right = 0
     for i, fname in enumerate(tqdm(rgb_files, desc="rectifying")):
-        # Original frame name like "frame_011159.png"
-        l_in = os.path.join(rgb_dir, fname)
+        # LEFT is rectified + written ALWAYS (mono/SGS use the left only; the rectified left needs
+        # only map_left). The RIGHT is OPTIONAL - rectify+write it only if present (stereo consumers).
+        l_rect = cv2.remap(cv2.imread(os.path.join(rgb_dir, fname)),
+                           maps["map_left_x"], maps["map_left_y"], cv2.INTER_LINEAR)
+        cv2.imwrite(os.path.join(args.output_dir, "video_frames", f"{i:06d}l.png"), l_rect)
         r_in = os.path.join(rgbright_dir, fname)
-        if not os.path.isfile(r_in):
-            print(f"  WARN: missing right frame for {fname}")
-            continue
-
-        l_img = cv2.imread(l_in)
-        r_img = cv2.imread(r_in)
-        l_rect = cv2.remap(l_img, maps["map_left_x"], maps["map_left_y"], cv2.INTER_LINEAR)
-        r_rect = cv2.remap(r_img, maps["map_right_x"], maps["map_right_y"], cv2.INTER_LINEAR)
-
-        out_l = os.path.join(args.output_dir, "video_frames", f"{i:06d}l.png")
-        out_r = os.path.join(args.output_dir, "video_frames", f"{i:06d}r.png")
-        cv2.imwrite(out_l, l_rect)
-        cv2.imwrite(out_r, r_rect)
+        if os.path.isfile(r_in):
+            r_rect = cv2.remap(cv2.imread(r_in), maps["map_right_x"], maps["map_right_y"], cv2.INTER_LINEAR)
+            cv2.imwrite(os.path.join(args.output_dir, "video_frames", f"{i:06d}r.png"), r_rect)
+            n_right += 1
 
         # Tool mask — pixel == tool_pixel_value → 255 (used as instrument
         # exclusion in tracking, same as masks/ convention in StereoMIS)
@@ -149,8 +144,9 @@ def main():
     )
 
     print(f"\nDone. Output at: {args.output_dir}")
-    print(f"  video_frames/: {len(rgb_files)*2} files ({len(rgb_files)} pairs)")
-    print(f"  masks/: see masks/ dir")
+    print(f"  video_frames/: {len(rgb_files)} left (rectified) + {n_right} right "
+          f"{'(no rgbright -> left-only, fine for SGS/mono)' if n_right == 0 else ''}")
+    print(f"  masks/ + semantic_class/: rectified left masks")
     print(f"  groundtruth.txt + rectified_calib.txt")
 
 
