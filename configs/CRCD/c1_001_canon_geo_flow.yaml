@@ -1,0 +1,16 @@
+# C_1/001 COMBINE: geo uncertainty (per-pixel trust -> tracking jitter, the -23% win) + flow_track
+# (scene-vs-camera -> moving pixels down-weighted out of the tracker; the mapper still eats every pixel).
+# NO deformation field. Tracking weight = clip(1/sigma^2) * flow_weight. Two signals, two jobs:
+# geo = INDIVIDUAL (per-pixel) uncertainty, flow = SCENE uncertainty.
+inherit_from: configs/CRCD/c1_001_canon_uncert.yaml
+data:
+  output: output/CRCD/C1_001_canon_geo_flow
+flow_track:
+  enable: true
+  ref_stride: 8        # flow frame t-8 -> t (causal)
+  alpha: 0.5           # w = clip(1/(1+alpha*max(0,resid-deadband)))
+  deadband: 3.0        # w=1 below 3px -> clean/camera = NOP; only clear deformation down-weighted
+  w_min: 0.1
+  w_max: 1.0
+  ransac_thresh: 1.0
+  raft_small: false
