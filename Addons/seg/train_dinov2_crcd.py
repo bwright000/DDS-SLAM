@@ -124,6 +124,46 @@ def load_dinov3(weights):
     return bb, 16, 4, 768
 
 
+class _HFDinoWrap(nn.Module):
+    """Wrap a HuggingFace `transformers` DINOv3 model so DINO2SEG can use it via forward_features().
+    The HF model returns last_hidden_state = [B, 1 + n_register + N, C] (cls, register, then patch
+    tokens); we strip the leading 1+n_register and hand back the patch tokens. Frozen-backbone use:
+    keep the HF model in eval() (no drop-path/dropout) even when the parent DINO2SEG is in train()."""
+    def __init__(self, model, n_register):
+        super().__init__()
+        self.model = model
+        self.n_register = int(n_register)
+
+    def train(self, mode=True):
+        super().train(mode)
+        self.model.eval()                       # frozen backbone: deterministic features
+        return self
+
+    def forward_features(self, x):
+        out = self.model(pixel_values=x.float())
+        lh = out.last_hidden_state if hasattr(out, 'last_hidden_state') else out[0]
+        return {'x_norm_patchtokens': lh[:, 1 + self.n_register:, :]}
+
+
+def load_dinov3_hf(weights):
+    """Load a HF-`transformers` DINOv3 ViT-B/16 from a local dir (config.json + model.safetensors)
+    via AutoModel. weights may be the dir or the .safetensors path inside it. Returns
+    (backbone, patch_size, n_register, embed). Needs a transformers with DINOv3 support
+    (pip install -U transformers)."""
+    d = weights if os.path.isdir(weights) else os.path.dirname(weights)
+    try:
+        from transformers import AutoConfig, AutoModel
+    except ImportError as e:
+        raise RuntimeError(f"need transformers for the HF DINOv3 safetensors: {e}. pip install -U transformers")
+    cfg = AutoConfig.from_pretrained(d)
+    model = AutoModel.from_pretrained(d)
+    embed = int(getattr(cfg, 'hidden_size', 768))
+    nreg = int(getattr(cfg, 'num_register_tokens', getattr(cfg, 'num_register_tokens', 4)) or 0)
+    patch = int(getattr(cfg, 'patch_size', 16))
+    print(f"[backbone init] DINOv3(HF transformers) from {d}: hidden={embed} patch={patch} n_register={nreg}")
+    return _HFDinoWrap(model, nreg), patch, nreg, embed
+
+
 def build_backbone(name, dinov2_main, weights):
     name = name.lower()
     if name == 'dinov2':
@@ -133,6 +173,9 @@ def build_backbone(name, dinov2_main, weights):
             raise RuntimeError("--backbone surgenet needs --backbone_weights <SurgeNetXL DINOv2_ViTb14 .pth>")
         bb = make_vit_base(dinov2_main); load_dinov2_weights(bb, weights); return bb, 14, 0, 768
     if name == 'dinov3':
+        # HF transformers export (a local dir or model.safetensors) -> AutoModel; else the .pth hub path
+        if weights and (weights.endswith('.safetensors') or weights.endswith('.json') or os.path.isdir(weights)):
+            return load_dinov3_hf(weights)
         return load_dinov3(weights)
     raise ValueError(f"unknown --backbone {name} (choose dinov2|surgenet|dinov3)")
 
