@@ -1,0 +1,12 @@
+# DEV-FAST co-adapt (~3x quicker). global_BA's 200 map-iters/frame is the per-frame bottleneck (ddsslam.py:522);
+# this trims it for a quick DIRECTION read: does the field STAY ALIVE (pin-EPE>0, cos>0) when un-isolated, or
+# does the render gradient re-collapse it despite the teacher? The FINAL render number needs the full
+# trail3_teacher_coadapt (mapping.iters:200). Iterate on this; report on that.
+inherit_from: configs/Super/trail3_teacher_coadapt.yaml
+data:
+  output: output/trail3_teacher_coadapt_fast
+  exp_name: demo
+mapping:
+  iters: 60                  # was 200 -> ~3x faster/frame (lower render, fine for the alive/collapse check)
+training:
+  deform_replay_iters: 40    # was 100 -> trim the replay too

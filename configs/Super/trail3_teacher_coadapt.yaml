@@ -1,0 +1,16 @@
+# ARM-2 COMBINE / RENDER CO-ADAPTATION. The field is ALIVE (teacher_replay: pin-EPE +67%, cos +0.85) but
+# render regressed 28->22 because deform_field_teacher_only ISOLATES the field from the map (we needed that
+# to stop the render-collapse). Now the teacher REPLAY anchors the field (it can no longer collapse to 0),
+# so let the render gradient ALSO refine it: put the field BACK in global_BA's optimizer. Hypothesis:
+# render climbs back toward 28 while pin-EPE stays positive (field stays alive).
+#
+# CRITICAL (code-verified, ddsslam.py:559): global_BA feeds the field RAW integer time unless
+# global_ba_time_fix:true, but the teacher uses NORMALIZED time. Un-isolating WITHOUT this flag trains the
+# field on two conflicting time axes (render-grad raw vs teacher normalized) -> it re-breaks. So both flags.
+inherit_from: configs/Super/trail3_teacher_replay.yaml
+data:
+  output: output/trail3_teacher_coadapt
+  exp_name: demo
+training:
+  deform_field_teacher_only: false   # field re-enters global_BA -> render gradient refines it
+  global_ba_time_fix: true           # global_BA uses NORMALIZED time -> ONE time axis for render-grad AND teacher
