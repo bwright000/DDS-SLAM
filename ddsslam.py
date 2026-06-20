@@ -83,12 +83,16 @@ class DDSSLAM():
             from collections import deque
             from Addons.motion.flow_track import load_raft
             _ft = self.config['flow_track']
+            self._dino = None
             with torch.random.fork_rng(devices=(list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [])):
                 self._raft, self._raft_tf = load_raft(self.device, bool(_ft.get('raft_small', False)))
+                if _ft.get('agreement', False):   # per-region agreement gate also needs DINO (also fork_rng -> parity-safe)
+                    from Addons.motion.flow_track import load_dino
+                    self._dino = load_dino(self.device)
             self._flow_buf = deque(maxlen=int(_ft.get('ref_stride', 8)))
             print(f"[flow_track] ON: RAFT-{'small' if _ft.get('raft_small') else 'large'} "
-                  f"ref_stride={_ft.get('ref_stride', 8)} alpha={_ft.get('alpha', 0.5)} "
-                  f"w=[{_ft.get('w_min', 0.1)},{_ft.get('w_max', 1.0)}]")
+                  f"ref_stride={_ft.get('ref_stride', 8)} gate={_ft.get('gate', False)} "
+                  f"agreement={_ft.get('agreement', False)} alpha={_ft.get('alpha', 0.5)}")
 
         _dbg_dir = os.path.join(config['data']['output'], config['data']['exp_name'], 'debug')
         self.debug_logger = DebugLogger(_dbg_dir)
@@ -668,17 +672,32 @@ class DDSSLAM():
                 if ref_id >= frame_id:   # CAUSALITY: raise (NOT assert -> not stripped by python -O)
                     raise RuntimeError(f"flow_track NON-CAUSAL: ref {ref_id} >= cur {frame_id}")
                 if _ft.get('gate', False):
-                    from Addons.motion.flow_track import camera_motion
-                    cam_mag = camera_motion(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device)
-                    if cam_mag <= float(_ft.get('cam_thresh', 2.0)):
-                        # CAMERA STILL -> fix pose = previous frame, skip tracking (mapper still runs)
+                    if _ft.get('agreement', False):
+                        # PER-REGION AGREEMENT (the probe in the loop): pool flow into DINO regions, do the
+                        # per-region motion vectors AGREE with one rigid motion? TRACK iff the consensus is
+                        # moving AND the features agree (camera/rigid); else FIX (still OR scene-deforming).
+                        from Addons.motion.flow_track import agreement_gate, dino_grid
+                        _dg = dino_grid(cur_bgr, self._dino, self.device)
+                        cam_mag, disagree = agreement_gate(
+                            ref_bgr, cur_bgr, _dg, self._raft, self._raft_tf, self.device,
+                            n_groups=int(_ft.get('n_groups', 12)), ransac_thresh=float(_ft.get('ransac_thresh', 1.0)),
+                            deadband=float(_ft.get('deadband', 3.0)))
+                        do_track = (cam_mag > float(_ft.get('cam_thresh', 2.0))) and (disagree <= float(_ft.get('disagree_thresh', 0.2)))
+                        _reason = f"cam_mag {cam_mag:.2f} disagree {disagree:.2f}"
+                    else:
+                        from Addons.motion.flow_track import camera_motion
+                        cam_mag = camera_motion(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device)
+                        do_track = cam_mag > float(_ft.get('cam_thresh', 2.0))
+                        _reason = f"cam_mag {cam_mag:.2f}"
+                    if not do_track:
+                        # FIX pose = previous frame, skip tracking (mapper still runs)
                         self.est_c2w_data[frame_id] = self.est_c2w_data[frame_id - 1].detach().clone()
                         if frame_id % self.config['mapping']['keyframe_every'] != 0:
                             _kf = (frame_id // self.config['mapping']['keyframe_every']) * self.config['mapping']['keyframe_every']
                             self.est_c2w_data_rel[frame_id] = self.est_c2w_data[frame_id] @ self.est_c2w_data[_kf].float().inverse()
-                        print(f"[flow_gate] f{frame_id}: cam_mag {cam_mag:.2f} <= {_ft.get('cam_thresh', 2.0)} -> FIX pose, skip tracking")
+                        print(f"[flow_gate] f{frame_id}: {_reason} -> FIX pose, skip tracking")
                         return
-                    # else: camera moving -> fall through to normal tracking
+                    # else: camera moving + features agree -> fall through to normal tracking
                 else:
                     from Addons.motion.flow_track import flow_residual, residual_to_weight
                     _resid = flow_residual(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device,

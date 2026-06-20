@@ -1,0 +1,18 @@
+# C_1/001 flow AGREEMENT gate (the probe in the loop): pool flow into DINO regions; TRACK iff the
+# consensus is MOVING (|median flow| > cam_thresh) AND the per-region motion vectors AGREE with one
+# rigid motion (disagree_frac <= disagree_thresh = camera/rigid); else FIX pose + SKIP tracking (still
+# OR scene-deforming -> the mapper still runs). No per-pixel weight, no geo, no field.
+inherit_from: configs/CRCD/c1_001_canon_base.yaml
+data:
+  output: output/CRCD/C1_001_canon_flow_agree
+flow_track:
+  enable: true
+  gate: true
+  agreement: true       # per-region agreement (DINO regions) vs the magnitude-only gate
+  ref_stride: 8         # flow frame t-8 -> t (causal)
+  cam_thresh: 2.0       # |median flow| > 2 = moving (still ~0.1-1, pan ~12-35)
+  disagree_thresh: 0.2  # > 20% of regions disagree with the rigid consensus -> scene -> FIX
+  deadband: 3.0         # a region "disagrees" if its median Sampson residual > 3px
+  n_groups: 12          # DINO k-means regions
+  ransac_thresh: 1.0
+  raft_small: false

@@ -67,6 +67,64 @@ def camera_motion(ref_bgr, cur_bgr, model, tf, device):
     return float(np.linalg.norm(gvec))
 
 
+def load_dino(device, backbone='dinov2_vits14_reg'):
+    """DINOv2 (reg) backbone for the per-region grouping (on-the-fly, torch.hub auto-download)."""
+    import torch
+    return torch.hub.load('facebookresearch/dinov2', backbone).to(device).eval()
+
+
+def dino_grid(rgb_bgr, dino_model, device):
+    """[gh,gw,C] DINO patch grid from an RGB(BGR) frame (patch-14)."""
+    import torch, cv2
+    im = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    H, W = im.shape[:2]; gh, gw = (H // 14) * 14, (W // 14) * 14
+    im = cv2.resize(im, (gw, gh))
+    mean = np.array([0.485, 0.456, 0.406], np.float32); std = np.array([0.229, 0.224, 0.225], np.float32)
+    t = torch.from_numpy((im - mean) / std).permute(2, 0, 1)[None].float().to(device)
+    with torch.inference_mode():
+        tok = dino_model.forward_features(t)['x_norm_patchtokens'][0].cpu().numpy()
+    return tok.reshape(gh // 14, gw // 14, -1).astype(np.float32)
+
+
+def agreement_gate(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
+                   n_groups=12, ransac_thresh=1.0, deadband=3.0, min_px=50, seed=0):
+    """The probe's per-region camera/scene test, as a frame-level signal. Pool flow into DINO regions
+    and ask: do the per-region motion vectors AGREE with ONE rigid (camera) motion?
+    Returns (cam_mag, disagree_frac):
+      cam_mag       = |median flow| (consensus motion magnitude -> is anything moving)
+      disagree_frac = fraction of DINO regions whose motion DISAGREES with the consensus rigid motion
+                      (median Sampson residual > deadband). LOW = features agree (camera/rigid),
+                      HIGH = features disagree (scene deforming).
+    Gate: TRACK iff cam_mag > cam_thresh AND disagree_frac <= disagree_thresh."""
+    import cv2
+    from sklearn.cluster import KMeans
+    flow = _raft_flow(raft_model, raft_tf, ref_bgr, cur_bgr, device)
+    H, W = flow.shape[:2]
+    cam_mag = float(np.linalg.norm(np.median(flow.reshape(-1, 2), axis=0)))
+    # per-pixel Sampson residual vs the ONE consensus rigid motion (parallax-aware)
+    uu, vv = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    p1 = np.stack([uu, vv], -1).reshape(-1, 2); p2 = p1 + flow.reshape(-1, 2)
+    idx = np.linspace(0, len(p1) - 1, min(4000, len(p1))).astype(np.int64)
+    F, _ = cv2.findFundamentalMat(p1[idx], p2[idx], cv2.FM_RANSAC, ransac_thresh, 0.999)
+    if F is None or F.shape != (3, 3):
+        return cam_mag, 0.0                       # no fit -> treat as agreeing (rigid)
+    resid = _sampson(F.astype(np.float64), p1, p2).reshape(H, W)
+    # pool to DINO regions; count regions that disagree with the consensus
+    gh, gw, C = dino_g.shape
+    X = dino_g.reshape(-1, C); X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
+    lab = KMeans(n_groups, n_init=4, random_state=seed).fit_predict(X).reshape(gh, gw).astype(np.uint8)
+    lab = cv2.resize(lab, (W, H), interpolation=cv2.INTER_NEAREST)
+    dis, tot = 0, 0
+    for k in range(n_groups):
+        m = lab == k
+        if m.sum() < min_px:
+            continue
+        tot += 1
+        if float(np.median(resid[m])) > deadband:
+            dis += 1
+    return cam_mag, (dis / max(tot, 1))
+
+
 def residual_to_weight(resid, alpha=0.5, w_min=0.1, w_max=1.0, deadband=0.0):
     """resid[...] -> down-weight. DEADBAND: w=1 for resid<=deadband, so clean/camera frames (low,
     NOISY residual) are a TRUE NOP (uniform weight -> no pose perturbation) and the down-weight
