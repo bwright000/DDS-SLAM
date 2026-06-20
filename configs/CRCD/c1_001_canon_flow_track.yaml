@@ -8,7 +8,8 @@ data:
 flow_track:
   enable: true
   ref_stride: 8        # flow from frame t-ref_stride -> t (CAUSAL; matches the validated probe stride 8)
-  alpha: 0.5           # w = clip(1/(1+alpha*resid)); larger -> more aggressive down-weight of deformers
+  alpha: 0.5           # w = clip(1/(1+alpha*max(0,resid-deadband))); larger = more aggressive down-weight
+  deadband: 3.0        # w=1 for resid<=3px -> clean/camera frames a TRUE NOP (camera p90~2.3, deform~5-13)
   w_min: 0.1           # floor (never fully zero a ray)
   w_max: 1.0           # cap (down-weight only; never up-weight beyond 1)
   ransac_thresh: 1.0   # fundamental-matrix RANSAC pixel tolerance

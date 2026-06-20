@@ -668,7 +668,8 @@ class DDSSLAM():
                 _resid = flow_residual(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device,
                                        float(_ft.get('ransac_thresh', 1.0)))
                 _w = residual_to_weight(_resid[iH:-iH, iW:-iW], float(_ft.get('alpha', 0.5)),
-                                        float(_ft.get('w_min', 0.1)), float(_ft.get('w_max', 1.0)))
+                                        float(_ft.get('w_min', 0.1)), float(_ft.get('w_max', 1.0)),
+                                        deadband=float(_ft.get('deadband', 0.0)))
                 track_w_map = torch.from_numpy(_w)   # CPU [H-2iH, W-2iW]
             self._flow_buf.append((frame_id, cur_bgr))
 

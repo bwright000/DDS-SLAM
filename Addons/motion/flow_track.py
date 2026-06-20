@@ -58,7 +58,11 @@ def flow_residual(ref_bgr, cur_bgr, model, tf, device, ransac_thresh=1.0, max_fi
     return _sampson(F.astype(np.float64), p1, p2).reshape(H, W)
 
 
-def residual_to_weight(resid, alpha=0.5, w_min=0.1, w_max=1.0):
-    """resid[...] -> down-weight: static(~0)->1, deforming->small. w = clip(1/(1+alpha*resid))."""
-    w = 1.0 / (1.0 + alpha * np.maximum(resid, 0.0))
+def residual_to_weight(resid, alpha=0.5, w_min=0.1, w_max=1.0, deadband=0.0):
+    """resid[...] -> down-weight. DEADBAND: w=1 for resid<=deadband, so clean/camera frames (low,
+    NOISY residual) are a TRUE NOP (uniform weight -> no pose perturbation) and the down-weight
+    CONCENTRATES on clear deformation: w = clip(1/(1+alpha*max(0, resid-deadband))).
+    deadband=0 reproduces the original broad behaviour."""
+    excess = np.maximum(resid - deadband, 0.0)
+    w = 1.0 / (1.0 + alpha * excess)
     return np.clip(w, w_min, w_max).astype(np.float32)
