@@ -50,18 +50,32 @@ PY
   python -c "import lpips" 2>/dev/null || pip install -q lpips || true
 }
 
+# robust copy of a Drive dir's CONTENTS into a local dir, retrying on FUSE drops (-n = resume partial copies).
+_rcp(){ local src=$1 dst=$2; mkdir -p "$dst"
+  for t in 1 2 3 4 5; do cp -rn "$src"/. "$dst"/ 2>/dev/null && return 0; say "  Drive copy retry $t/5: $(basename "$src") (FUSE drop?)"; sleep 5; done; return 1; }
+
+# fail FAST (before the 15-min env build) if Drive is unmounted/dropped, and show what's actually there.
+preflight_drive(){
+  [ -d /content/drive/MyDrive ] || { say "FATAL: Drive not mounted. Colab cell: from google.colab import drive; drive.mount('/content/drive')"; exit 1; }
+  ls "$DATASET/rgb" >/dev/null 2>&1 || { say "FATAL: can't read $DATASET (Drive dropped?). Remount: drive.mount('/content/drive', force_remount=True)"; exit 1; }
+  say "Drive OK | rgb $(ls "$DATASET/rgb"/*left.png 2>/dev/null|wc -l) | moge2 $(ls "$DATASET/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l) | dino $(ls "$DATASET/dino"/*_dino.npy 2>/dev/null|wc -l) | deform $(ls "$DATASET/deform"/*_deform.npz 2>/dev/null|wc -l)"
+}
+
 stage_semsup(){
-  if [ ! -d "$DD/rgb" ]; then
-    [ -d "$DATASET/rgb" ] || { say "FATAL: SemSup source $DATASET/rgb missing on Drive"; exit 1; }
-    mkdir -p "$REPO/data/Super"; cp -r "$DATASET" "$DD"; say "staged SemSup -> $DD ($(ls "$DD/rgb"/*left.png 2>/dev/null|wc -l) frames)"
-  fi
+  # stage ONLY what ddsslam reads -- NOT the whole dir (the seg/DeepLabV3+ npy corpus + seg_gt + checkpoints
+  # are hundreds of files we never load; copying them over FUSE is slow + drop-prone = what failed last time).
+  [ "$(ls "$DD/rgb"/*left.png 2>/dev/null|wc -l)" -ge 151 ] || _rcp "$DATASET/rgb" "$DD/rgb" || { say "FATAL: rgb stage failed (Drive)"; exit 1; }
+  [ "$(ls "$DD/seg/png_masks"/*.png 2>/dev/null|wc -l)" -ge 151 ] || _rcp "$DATASET/seg/png_masks" "$DD/seg/png_masks"
+  [ -d "$DD/pose" ] || _rcp "$DATASET/pose" "$DD/pose"
+  [ -f "$DD/groundtruth.txt" ] || cp "$DATASET/groundtruth.txt" "$DD/" 2>/dev/null || true
   local MOG="$DD/depth/moge2"
-  [ -d "$MOG" ] && [ "$(ls "$MOG"/*left_depth.npy 2>/dev/null|wc -l)" -ge 151 ] && { say "moge2 depth present"; return 0; }
-  mkdir -p "$MOG"
-  for c in "$DATASET/depth/MoGe2_trail3_20260608" "$DATASET/depth/moge2" /content/drive/MyDrive/Datasets/SemSup/MoGe2_trail3_20260608; do
-    [ -d "$c" ] && { cp "$c"/*left_depth.npy "$MOG"/ 2>/dev/null && break; }; done
-  local n=$(ls "$MOG"/*left_depth.npy 2>/dev/null|wc -l); say "moge2 depth: $n npy"
-  [ "$n" -ge 151 ] || { say "FATAL: moge2 depth not found on Drive (need MoGe2_trail3_20260608)"; exit 1; }
+  if [ "$(ls "$MOG"/*left_depth.npy 2>/dev/null|wc -l)" -lt 151 ]; then
+    for c in "$DATASET/depth/moge2" "$DATASET/depth/MoGe2_trail3_20260608" /content/drive/MyDrive/Datasets/SemSup/MoGe2_trail3_20260608; do
+      [ "$(ls "$c"/*left_depth.npy 2>/dev/null|wc -l)" -ge 151 ] && { _rcp "$c" "$MOG"; break; }; done
+  fi
+  local nd=$(ls "$DD/rgb"/*left.png 2>/dev/null|wc -l) nm=$(ls "$MOG"/*left_depth.npy 2>/dev/null|wc -l) ns=$(ls "$DD/seg/png_masks"/*.png 2>/dev/null|wc -l)
+  say "staged | rgb $nd | seg $ns | moge2 depth $nm"
+  [ "$nm" -ge 151 ] || { say "FATAL: moge2 depth not found. Looked in $DATASET/depth/{moge2,MoGe2_trail3_20260608}. Run 'ls $DATASET/depth/' and tell me the dir."; exit 1; }
 }
 
 ensure_dino(){
@@ -139,7 +153,8 @@ judge_one(){  # NAME CFG -> field-warped pin EPE (the arbiter) + 6-panel figure 
 }
 
 # ---- pipeline ----
-stage_semsup
+preflight_drive        # fail fast (before env build) if Drive is unmounted/dropped
+stage_semsup           # selective + retrying copy (only what ddsslam reads)
 ensure_dino            # torch2; restore-or-bake + persist
 ensure_deform          # numpy; restore-or-bake + VALIDATE + persist (the autosave that was missing)
 activate_dds_env       # ddsslam + judge need torch2 + tcnn(sm_75)
