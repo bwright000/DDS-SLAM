@@ -95,6 +95,27 @@ class DDSSLAM():
                   f"ref_stride={_ft.get('ref_stride', 8)} gate={_ft.get('gate', False)} "
                   f"agreement={_ft.get('agreement', False)} freeze_ba={_ft.get('freeze_ba', False)}")
 
+        # E0 MAPPING-ROUTING (flow-as-sensor, the INVERSE of tracking): the same per-region camera-vs-scene
+        # signal, used to ROUTE the deformation field in the MAPPER -- the field warps moving (tissue) regions
+        # and is OFF on static/camera regions (-> they stay sharp). Independent of flow_track (the tracking
+        # gate); loads its OWN RAFT/DINO inside fork_rng (parity-safe) unless flow_track already loaded them.
+        # Default-off -> base byte-identical.
+        self.map_route_on = bool(self.config.get('map_route', {}).get('enable', False))
+        self._map_route_buf = None
+        self._route_map = None
+        if self.map_route_on:
+            from collections import deque
+            from Addons.motion.flow_track import load_raft, load_dino
+            _mr = self.config['map_route']
+            with torch.random.fork_rng(devices=(list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [])):
+                if getattr(self, '_raft', None) is None:
+                    self._raft, self._raft_tf = load_raft(self.device, bool(_mr.get('raft_small', False)))
+                if getattr(self, '_dino', None) is None:
+                    self._dino = load_dino(self.device)
+            self._map_route_buf = deque(maxlen=int(_mr.get('ref_stride', 8)))
+            print(f"[map_route] ON: field routed to moving regions in current_frame_mapping+render "
+                  f"ref_stride={_mr.get('ref_stride', 8)} deadband={_mr.get('deadband', 3.0)} n_groups={_mr.get('n_groups', 12)}")
+
         _dbg_dir = os.path.join(config['data']['output'], config['data']['exp_name'], 'debug')
         self.debug_logger = DebugLogger(_dbg_dir)
 
@@ -403,6 +424,10 @@ class DDSSLAM():
             target_dino = sample_dino_grid(batch['dino_grid'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device) if 'dino_grid' in batch else None
             # ARM-1 #4: per-ray seg class id [N] at the SAME indices as target_dino (None unless whatkind_weight>0).
             target_seg = batch['seg'].squeeze(0)[indice_h, indice_w].to(self.device) if 'seg' in batch else None
+            # E0 mapping-routing: per-ray field-route weight at these pixels (1=moving->field ON, 0=static->OFF).
+            # Gates the field's Δx in this map forward so the map co-adapts to a TISSUE-ONLY warp (bg stays
+            # sharp). None unless map_route.enable AND the causal buffer filled -> unrouted (base behaviour).
+            route_w = self._route_map[indice_h, indice_w].view(-1, 1) if getattr(self, '_route_map', None) is not None else None
             # ARM-2 Stage-1: per-ray baked deformation target Δx* [N,3] + trust [N,1] (None unless deformation_sup_weight>0).
             if 'deform_dx' in batch:
                 deform_dx = sample_dino_grid(batch['deform_dx'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device)
@@ -430,7 +455,7 @@ class DDSSLAM():
                 loss = _ds_w * def_sup
                 ret = None                                                     # render forward skipped (teacher-only)
             else:
-                ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, target_seg=target_seg)
+                ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, target_seg=target_seg, route_w=route_w)
                 loss = self.get_loss_from_ret(ret)
                 if _teach:                                                     # joint: render loss + teacher
                     Xk = rays_o[..., :3] + rays_d * target_d
@@ -637,6 +662,30 @@ class DDSSLAM():
         '''batch['rgb'] [1,H,W,3] float RGB [0,1] -> [H,W,3] uint8 BGR (for RAFT/cv2).'''
         a = (rgb.squeeze(0).detach().cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
         return cv2.cvtColor(a, cv2.COLOR_RGB2BGR)
+
+    def _compute_route_map(self, batch, frame_id):
+        '''E0: compute (CAUSALLY) the per-pixel field-routing map for `frame_id` -> self._route_map
+        ([H,W] float in {0,1}: 1 = scene-moving -> field ON there, 0 = static/camera -> field OFF -> sharp).
+        Uses a PAST reference (ref index < frame_id). None until the causal buffer fills (-> field un-routed,
+        neutral). Runs ONCE per frame; the mapper / render / teacher-buffer all read the SAME self._route_map.'''
+        from Addons.motion.flow_track import region_route, dino_grid
+        _mr = self.config['map_route']
+        cur_bgr = self._rgb_to_bgr_u8(batch['rgb'])
+        ref = self._map_route_buf[0] if (len(self._map_route_buf) == self._map_route_buf.maxlen) else None
+        self._map_route_buf.append((frame_id, cur_bgr))   # ref captured above; append for FUTURE frames
+        if ref is None:
+            self._route_map = None
+            return
+        ref_id, ref_bgr = ref
+        if ref_id >= frame_id:   # CAUSALITY: raise (NOT assert -> not stripped by python -O)
+            raise RuntimeError(f"map_route NON-CAUSAL: ref {ref_id} >= cur {frame_id}")
+        dino_g = dino_grid(cur_bgr, self._dino, self.device)
+        route = region_route(ref_bgr, cur_bgr, dino_g, self._raft, self._raft_tf, self.device,
+                             n_groups=int(_mr.get('n_groups', 12)), deadband=float(_mr.get('deadband', 3.0)),
+                             ransac_thresh=float(_mr.get('ransac_thresh', 1.0)))
+        self._route_map = torch.from_numpy(route).float().to(self.device)   # [H,W] in {0,1}
+        if frame_id <= 3 or frame_id % 30 == 0:
+            print(f'[map_route] frame {frame_id}: moving-frac={float(route.mean()):.3f} (causal ref {ref_id})')
 
     def tracking_render(self, batch, frame_id):
         '''
@@ -922,6 +971,10 @@ class DDSSLAM():
         Xk = rays_o + rays_d * target_d
         dx = sample_dino_grid(batch['deform_dx'].squeeze(0), ih, iw, H, W).to(self.device)
         w = sample_dino_grid(batch['deform_trust'].squeeze(0), ih, iw, H, W).to(self.device)
+        # E0 tissue-only teacher buffering: restrict the field's supervision to moving (tissue) rays so its
+        # TRAINING matches its routed APPLICATION (static/tool rays -> trust 0 -> excluded). No-op if unrouted.
+        if getattr(self, '_route_map', None) is not None:
+            w = w * self._route_map[ih, iw].view(-1, 1)
         _t = (cur_frame_id / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else float(cur_frame_id)
         self.deform_replay.append({'Xk': Xk.detach().cpu(), 'dx': dx.detach().cpu(),
                                    'w': w.detach().cpu(), 't': torch.full((n, 1), float(_t))})
@@ -987,6 +1040,8 @@ class DDSSLAM():
                 if self.config['tracking']['iter_point'] > 0:
                     self.tracking_pc(batch, i)
                 self.tracking_render(batch, i)
+                if getattr(self, 'map_route_on', False):
+                    self._compute_route_map(batch, i)   # E0: causal field-routing map for this frame (mapper/render/teacher all read self._route_map)
                 if i%self.config['mapping']['map_every']==0:
                     self.global_BA(batch, i)
                     self.current_frame_mapping(batch, i)
@@ -1058,6 +1113,10 @@ class DDSSLAM():
 
         rays_o = c2w_est[..., :3, -1].repeat(H * W, 1)
         rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1).view(-1, 3)
+        # E0 mapping-routing: full-image field-route (row-major [H*W], matches rays_d.view(-1,3)); sliced per
+        # chunk below. The render MUST share the mapper's routing or the background (co-adapted to a tissue-only
+        # warp) would be re-warped here. None unless map_route.enable + buffer filled -> unrouted (base).
+        route_flat = self._route_map.reshape(-1) if getattr(self, '_route_map', None) is not None else None
 
         rgb = []
         depth_chunks = []
@@ -1071,13 +1130,14 @@ class DDSSLAM():
             rays_d1 = rays_d[i:i + ray_batch_size]
             target_d1 = target_d[i:i + ray_batch_size]
             target_dino1 = target_dino_full[i:i + ray_batch_size] if target_dino_full is not None else None
+            route_w1 = route_flat[i:i + ray_batch_size].view(-1, 1) if route_flat is not None else None
             if self.config['dynamic']:
                 cur_id = (frame_id*torch.ones(rays_o1.shape[0]))
                 timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1]; flag default off = upstream behaviour
                 rays_o1 = torch.cat([rays_o1,timestamps.unsqueeze(-1)],dim=1)
             # ret = self.model.render_rays(rays_o1, rays_d1, target_d1)
             ret = self.model.forward(rays_o1, rays_d1, target_s, target_d1,
-                                     target_edge_semantic=target_edge_semantic, target_dino=target_dino1, notFirstMap=False,render_only=True)
+                                     target_edge_semantic=target_edge_semantic, target_dino=target_dino1, notFirstMap=False,render_only=True, route_w=route_w1)
             rgb.append(ret['rgb'].detach().clone().cpu())
             if 'depth' in ret:
                 depth_chunks.append(ret['depth'].detach().clone().cpu())
