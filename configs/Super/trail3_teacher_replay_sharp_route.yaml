@@ -13,8 +13,11 @@ inherit_from: configs/Super/trail3_teacher_replay_sharp.yaml
 data:
   output: output/trail3_teacher_replay_sharp_route
   exp_name: demo
-deform_hardbound: 0.02   # E0 v0.4: cap the field's outlier over-warp (max|Δx|=0.084 = ~84% of the ±0.1 render
-                         # sampling band -> depth spikes). tanh soft-cap clips the tail ~76%, costs the mean ~5%.
+# NOTE: deform_hardbound (over-warp cap) DEFERRED out of this arm. At 0.02 the tanh clips legit deformations
+# in the 0.02-0.08 range by 24-50% (targets reach 0.084) -> a real pin-EPE risk (the field underfits the large
+# deformations). Keep this arm SOFT-ONLY (clean test of the soft-routing insight, no field-life risk). Probe
+# the hardbound separately (safer value, watch pin-EPE) IF the over-warp persists; B2 (route global_BA) is the
+# depth-spike ROOT regardless.
 map_route:
   enable: true
   soft_scale: 2.0      # E0 v0.4 (user insight): SOFT routing -- apply the field PROPORTIONALLY to the camera-
