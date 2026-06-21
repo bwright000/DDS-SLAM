@@ -364,7 +364,7 @@ crcd_write_cfg(){
   sed -e "s/^scene_name = .*/scene_name = \"$NAME\"/" \
       -e "s/use_wandb=True/use_wandb=False/" \
       -e "s/num_semantic_classes=101/num_semantic_classes=4/" \
-      -e "s#group_name=\"[^\"]*\"#group_name=\"CRCD\"#" \
+      -e "s#^group_name *= *\"[^\"]*\"#group_name = \"CRCD\"#" \
       -e "s#basedir=\"./data/Replica\"#basedir=\"$(dirname "$scene_dir")\"#" \
       -e "s#gradslam_data_cfg=\"[^\"]*\"#gradslam_data_cfg=\"./configs/data/crcd.yaml\"#" \
       -e "s/desired_image_height=[0-9]*/desired_image_height=$H/" \
@@ -420,17 +420,20 @@ run_crcd_one(){
   crcd_patch_raw_depth || { echo "FAILED depth-patch (eval_helpers anchors changed)" > "$OUT/status.txt"; return 1; }
 
   # ---- run SGS-SLAM ----
-  echo "[$NAME] running SGS-SLAM (full SLAM pass)"
-  ( cd "$SGS" && PYTHONPATH= "$ENV_PY" scripts/slam.py "$cfg" ) 2>&1 | tee "$OUT/slam.log"
-  [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "FAILED slam.py" > "$OUT/status.txt"; return 1; }
-
-  # SGS output_dir = experiments/<group_name>/<run_name>; run_name=<scene>_<seed=0>
-  local output_dir="$SGS/experiments/CRCD/${UP}_0"
-  [ -f "$output_dir/params.npz" ] || {
-    # fall back: find the newest params.npz under experiments/CRCD
-    output_dir=$(dirname "$(ls -t "$SGS"/experiments/CRCD/*/params.npz 2>/dev/null | head -1)")
-  }
-  [ -f "$output_dir/params.npz" ] || { echo "FAILED no params.npz" > "$OUT/status.txt"; return 1; }
+  # SGS output_dir = experiments/<group_name>/<run_name>; run_name=<scene>_<seed=0>. Locate by
+  # run_name under ANY group (the group_name sed historically missed spaces -> output under
+  # experiments/Replica). Reuse a completed SLAM (skip the expensive pass) unless FORCE=1.
+  local NPZGLOB="$SGS/experiments/*/${UP}_0/params.npz"
+  local existing; existing=$(ls -t $NPZGLOB 2>/dev/null | head -1)
+  if [ -n "$existing" ] && [ "${FORCE:-0}" != 1 ]; then
+    echo "[$NAME] reusing existing SGS output: $(dirname "$existing")  (FORCE=1 to redo SLAM)"
+  else
+    echo "[$NAME] running SGS-SLAM (full SLAM pass)"
+    ( cd "$SGS" && PYTHONPATH= "$ENV_PY" scripts/slam.py "$cfg" ) 2>&1 | tee "$OUT/slam.log"
+    [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "FAILED slam.py" > "$OUT/status.txt"; return 1; }
+  fi
+  local output_dir; output_dir=$(dirname "$(ls -t $NPZGLOB 2>/dev/null | head -1)")
+  [ -f "$output_dir/params.npz" ] || { echo "FAILED no params.npz (looked in experiments/*/${UP}_0)" > "$OUT/status.txt"; return 1; }
   echo "[$NAME] SGS output_dir=$output_dir"
   [ "$(ls "$output_dir/eval/rendered_depth_raw"/*.png 2>/dev/null | wc -l)" -gt 0 ] || \
      echo "[$NAME] WARN rendered_depth_raw empty -> depth_l1 will be nan (patch fired? eval save_frames on?)"
