@@ -20,6 +20,7 @@ DATE=$(date +%Y%m%d)
 REPO=/content/DDS-SLAM; cd "$REPO"
 SEEDS="${SEEDS:-0}"
 GRID_SCALE="${GRID_SCALE:-3}"
+SMOKE_CFG="${SMOKE_CFG:-configs/Super/trail3_teacher_on.yaml}"   # E0: set to the route cfg to smoke-test map_route end-to-end
 DATASET=/content/drive/MyDrive/Datasets/SemSup/v2_data/trial_3      # source-of-truth: dino/ + deform/ persist HERE
 DD=$REPO/data/Super/trail_3
 DRIVE=/content/drive/MyDrive/Outputs/teacher_ab_t4_${DATE}; mkdir -p "$DRIVE"
@@ -121,14 +122,16 @@ ensure_deform(){
 # path executed end-to-end without crashing (the integration check). SKIP_SMOKE=1 bypasses it.
 smoke_teacher(){
   [ "${SKIP_SMOKE:-0}" = 1 ] && { say "SMOKE skipped (SKIP_SMOKE=1)"; return 0; }
-  say "########## SMOKE: teacher_on runs clean, no crash/NaN (~10 min cap; T4 is ~70s/frame) ##########"
+  say "########## SMOKE: $SMOKE_CFG runs clean, no crash/NaN (~10 min cap; T4 is ~70s/frame) ##########"
   local SM=output/_teacher_smoke OVR=/content/_teacher_smoke.yaml SLOG="$DRIVE/teacher_smoke.log"
   cat > "$OVR" <<YML
-inherit_from: configs/Super/trail3_teacher_on.yaml
+inherit_from: ${SMOKE_CFG}
 seed: 0
 data:
   output: ${SM}
   exp_name: demo
+map_route:
+  ref_stride: 1               # E0: if SMOKE_CFG has map_route ON, fire routing from frame 1 (else inert)
 YML
   timeout 600 python -W ignore - "$OVR" > "$SLOG" 2>&1 <<'PY'
 import sys, runpy, torch
@@ -139,7 +142,9 @@ PY
   local NAN=$(grep -ciw "nan" "$SLOG" 2>/dev/null); NAN=${NAN:-0}
   local CFM=$(grep -c "Current frame mapping" "$SLOG" 2>/dev/null); CFM=${CFM:-0}   # teacher injection site reached
   local KF=$(grep -c "add keyframe" "$SLOG" 2>/dev/null); KF=${KF:-0}
-  say "  smoke: tracebacks=$TB nan=$NAN current_frame_mappings=$CFM keyframes=$KF"
+  local MR=$(grep -c "\[map_route\] frame" "$SLOG" 2>/dev/null); MR=${MR:-0}         # E0: routing fired (only if SMOKE_CFG has map_route ON)
+  say "  smoke: tracebacks=$TB nan=$NAN current_frame_mappings=$CFM keyframes=$KF map_route_fires=$MR"
+  case "$SMOKE_CFG" in *route*) [ "$MR" -eq 0 ] && [ "$CFM" -ge 2 ] && say "  >>> SMOKE WARN: map_route cfg but routing never fired (check region_route / RAFT+DINO load)";; esac
   rm -rf "$SM"
   if [ "$TB" -gt 0 ] || [ "$NAN" -gt 0 ]; then say "  >>> SMOKE FAIL (real crash/NaN) — last 40 lines:"; tail -40 "$SLOG"; return 1; fi
   if [ "$CFM" -ge 2 ] || [ "$KF" -ge 1 ]; then say "  >>> SMOKE PASS: teacher-loss path ran end-to-end, no crash/NaN. Proceeding."; return 0; fi

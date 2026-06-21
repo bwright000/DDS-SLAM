@@ -178,6 +178,16 @@ def colorize_classmap(seg, palette=CLASS_PALETTE):
     return out
 
 
+def colorize_route(route_img):
+    """E0 field-route PNG (single-channel {0,255}, 255 = MOVING region where the deformation field is
+    applied) -> magenta where moving, black elsewhere (black = left unblended by overlay_mask_on_rgb).
+    The 'Field Route' panel overlays this on the rendered RGB so you can SEE which content gets the field."""
+    r = route_img[..., 0] if route_img.ndim == 3 else route_img
+    out = np.zeros((r.shape[0], r.shape[1], 3), dtype=np.uint8)
+    out[r > 127] = (230, 60, 230)   # magenta = field routed here (moving/tissue); static stays sharp
+    return out
+
+
 def colormap_scalar(path, target_size=None, cmap=cv2.COLORMAP_INFERNO, robust=True):
     """Colormap a single-channel scalar map (e.g. the model's volume-rendered sigma^2
     uncertainty saved as uint16). robust=True -> median-anchored p2..p98 so a few hot
@@ -368,6 +378,10 @@ def main():
                         help='Directory of the LEARNED what-kind attribution PNGs (slot-attention; '
                              'ddsslam output/<exp>/whatkind; already coloured bg=black/tissue=green/'
                              'tool=red). Adds a "Learned Group" panel. Empty/missing -> omitted.')
+    parser.add_argument('--route_dir', type=str, default=None,
+                        help='Directory of the E0 field-route PNGs (single-channel {0,255}, 255=moving; '
+                             'ddsslam output/<exp>/route). Adds a "Field Route" panel overlaying the '
+                             'routed (moving) regions in magenta on the rendered RGB. Empty/missing -> omitted.')
     args = parser.parse_args()
 
     panel_size = (args.panel_height, args.panel_width)
@@ -450,6 +464,16 @@ def main():
             panel_data['Learned Group'] = paths
             print(f"Learned Group: {len(paths)} frames")
 
+    if args.route_dir:
+        paths = sorted(glob.glob(os.path.join(args.route_dir, '*.png')), key=_natkey)
+        paths = _slice(paths, args.input_frame_slice)
+        if paths and 'Rendered RGB' in panel_data:
+            panels.append('Field Route')                    # overlay (magenta moving regions) on rendered RGB
+            panel_data['Field Route'] = (panel_data['Rendered RGB'], paths)
+            print(f"Field Route: {len(paths)} frames (overlay on rendered RGB)")
+        elif paths:
+            print(f"Field Route: {len(paths)} frames found but no Rendered RGB to overlay -> panel omitted")
+
     if args.trajectory_est:
         if not args.skip_horn_traj:
             panels.append('Trajectory (Sim3-aligned)')
@@ -467,7 +491,7 @@ def main():
     # truncating the whole video down to the shortest panel's length.
     panel_lengths = {}
     for k, v in panel_data.items():
-        if k == 'Seg Overlay':
+        if k in ('Seg Overlay', 'Field Route'):   # tuple panels (rendered RGB + mask)
             panel_lengths[k] = min(len(v[0]), len(v[1]))
         else:
             panel_lengths[k] = len(v)
@@ -562,6 +586,14 @@ def main():
                     img = overlay_mask_on_rgb(rgb, seg, alpha=args.seg_alpha)
                 else:
                     img = rgb if rgb is not None else seg
+            elif panel_name == 'Field Route':
+                rgb_paths, route_paths = panel_data[panel_name]
+                ri = min(frame_idx, len(rgb_paths) - 1)
+                qi = min(frame_idx, len(route_paths) - 1)
+                rgb = load_image(rgb_paths[ri], panel_size)
+                route = colorize_route(load_image(route_paths[qi], None))   # magenta where moving (before resize)
+                route = cv2.resize(route, (panel_size[1], panel_size[0]), interpolation=cv2.INTER_NEAREST)
+                img = overlay_mask_on_rgb(rgb, route, alpha=0.5) if rgb is not None else route
             elif panel_name == 'Segmentation' and args.seg_classmap:
                 paths = panel_data[panel_name]
                 idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)

@@ -49,13 +49,14 @@ PY
 
 # --- 2. 6-panel video (uncert panel auto-included if the run wrote sigma^2) ---
 UNC=""; [ -d "$OUT/uncert" ] && UNC="--uncert_dir $OUT/uncert"
+ROUTE=""; [ -d "$OUT/route" ] && ROUTE="--route_dir $OUT/route"   # E0 field-route overlay panel (only if the run wrote it)
 NJPG=$(ls "$OUT"/[0-9]*.jpg 2>/dev/null | wc -l); echo "[run_cell] rendered frames on disk: $NJPG"
 if [ "$VT" = "crcd" ]; then
   python Addons/viz/generate_video.py \
     --rgb_input_dir "$DDIR/video_frames" --rgb_input_pattern '*l.png' \
     --rgb_output_dir "$OUT" --rgb_output_pattern '[0-9]*.jpg' \
     --depth_input_dir "$DDIR/depth" --depth_output_dir "$OUT/depth" --depth_norm robust \
-    --seg_dir "$DDIR/semantic_class" --seg_pattern '*.png' --skip_raw_seg --seg_classmap $UNC \
+    --seg_dir "$DDIR/semantic_class" --seg_pattern '*.png' --skip_raw_seg --seg_classmap $UNC $ROUTE \
     --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DDIR/groundtruth.txt" --trajectory_raw \
     --output "$DST/${NAME}_6panel.mp4" --fps 15 2>&1 | tail -3 || echo "WARN video"
 else
@@ -63,7 +64,7 @@ else
     --rgb_input_dir "$DDIR/rgb" --rgb_input_pattern '*left.png' \
     --rgb_output_dir "$OUT" --rgb_output_pattern '[0-9]*.jpg' \
     --depth_input_dir "$DDIR/depth/moge2" --depth_output_dir "$OUT/depth" --depth_norm robust \
-    --seg_dir "$DDIR/seg/png_masks" --seg_pattern '*left.png' --skip_raw_seg --skip_horn_traj $UNC \
+    --seg_dir "$DDIR/seg/png_masks" --seg_pattern '*left.png' --skip_raw_seg --skip_horn_traj $UNC $ROUTE \
     --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DDIR/groundtruth.txt" --trajectory_raw \
     --output "$DST/${NAME}_6panel.mp4" --fps 15 2>&1 | tail -3 || echo "WARN video"
 fi

@@ -1162,6 +1162,15 @@ class DDSSLAM():
 
         plt.imsave(color_path, color_np)
 
+        # E0: save the per-pixel field-route map for the video overlay (255=moving=field-ON, 0=static->sharp).
+        # Gated on map_route; warm-up frames (no causal ref yet) save an all-zero map so the panel stays
+        # frame-aligned with the renders. Cheap single-channel PNG; OFF -> nothing written.
+        if getattr(self, 'map_route_on', False):
+            _rt_dir = os.path.join(self.config['data']['output'], 'route'); os.makedirs(_rt_dir, exist_ok=True)
+            _rt = (self._route_map.detach().cpu().numpy() if getattr(self, '_route_map', None) is not None
+                   else np.zeros((H, W), np.float32))
+            cv2.imwrite(os.path.join(_rt_dir, '{:0>4d}.png'.format(frame_id)), (_rt * 255).astype(np.uint8))
+
         # Save the model's rendered DEPTH as uint16 PNG for visualization.
         # IMPORTANT: this uses cam.output_depth_scale (NOT png_depth_scale).
         # png_depth_scale is the INPUT-data convention -- e.g. SemSup NPYs are
