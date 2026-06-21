@@ -33,6 +33,7 @@ Usage:
 import argparse
 import glob
 import os
+import re
 import sys
 
 import cv2
@@ -40,13 +41,21 @@ import numpy as np
 from tqdm import tqdm
 
 
+def _natkey(p):
+    """Sort by the trailing integer in the filename so 9 < 104 (not the string order
+    '104' < '9'). Unpadded SGS render names (0.jpg, 9.jpg, 104.jpg) otherwise sort
+    lexicographically -> temporally scrambled / 'jumpy' video."""
+    nums = re.findall(r'\d+', os.path.basename(p))
+    return (int(nums[-1]) if nums else -1, os.path.basename(p))
+
+
 def load_sorted_images(directory, pattern="*.png"):
     """Load sorted image paths from a directory. Falls back to jpg then npy."""
-    paths = sorted(glob.glob(os.path.join(directory, pattern)))
+    paths = sorted(glob.glob(os.path.join(directory, pattern)), key=_natkey)
     if not paths:
-        paths = sorted(glob.glob(os.path.join(directory, "*.jpg")))
+        paths = sorted(glob.glob(os.path.join(directory, "*.jpg")), key=_natkey)
     if not paths:
-        paths = sorted(glob.glob(os.path.join(directory, "*.npy")))
+        paths = sorted(glob.glob(os.path.join(directory, "*.npy")), key=_natkey)
     return paths
 
 
@@ -373,7 +382,7 @@ def main():
     panel_data = {}
 
     if args.rgb_input_dir:
-        paths = sorted(glob.glob(os.path.join(args.rgb_input_dir, args.rgb_input_pattern)))
+        paths = sorted(glob.glob(os.path.join(args.rgb_input_dir, args.rgb_input_pattern)), key=_natkey)
         paths = _slice(paths, args.input_frame_slice)
         if paths:
             panels.append('Input RGB')
@@ -382,9 +391,10 @@ def main():
 
     if args.rgb_output_dir:
         paths = sorted([p for p in glob.glob(os.path.join(args.rgb_output_dir, args.rgb_output_pattern))
-                        if '_gt' not in os.path.basename(p)])
+                        if '_gt' not in os.path.basename(p)], key=_natkey)
         if not paths:
-            paths = sorted(glob.glob(os.path.join(args.rgb_output_dir, '*.jpg')))
+            paths = sorted([p for p in glob.glob(os.path.join(args.rgb_output_dir, '*.jpg'))
+                            if '_gt' not in os.path.basename(p)], key=_natkey)
         if paths:
             panels.append('Rendered RGB')
             panel_data['Rendered RGB'] = paths
@@ -399,10 +409,10 @@ def main():
             print(f"Input Depth: {len(paths)} frames")
 
     if args.depth_output_dir:
-        paths = sorted(p for p in glob.glob(os.path.join(args.depth_output_dir, '*.png'))
-                       if '_gt' not in os.path.basename(p))
+        paths = sorted((p for p in glob.glob(os.path.join(args.depth_output_dir, '*.png'))
+                        if '_gt' not in os.path.basename(p)), key=_natkey)
         if not paths:
-            paths = sorted(glob.glob(os.path.join(args.depth_output_dir, '*.npy')))
+            paths = sorted(glob.glob(os.path.join(args.depth_output_dir, '*.npy')), key=_natkey)
         if paths:
             panels.append('Output Depth')
             panel_data['Output Depth'] = paths

@@ -483,6 +483,7 @@ PY
      --rgb_input_dir "$OUT" --rgb_output_dir "$OUT" \
      --depth_input_dir "$scene_dir/depths" \
      --depth_output_dir "$output_dir/eval/rendered_depth_raw" \
+     --seg_dir "$scene_dir/semantic_ids" --seg_pattern '*.png' --seg_classmap \
      --trajectory_est "$OUT/est_c2w_data.txt" --trajectory_gt "$local_snip/groundtruth.txt" \
      --png_depth_scale "$DEPTH_SCALE" --output "$OUT/video.mp4" \
      || echo "[$NAME] WARN generate_video failed"
