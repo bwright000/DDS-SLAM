@@ -971,9 +971,12 @@ class DDSSLAM():
         Xk = rays_o + rays_d * target_d
         dx = sample_dino_grid(batch['deform_dx'].squeeze(0), ih, iw, H, W).to(self.device)
         w = sample_dino_grid(batch['deform_trust'].squeeze(0), ih, iw, H, W).to(self.device)
-        # E0 tissue-only teacher buffering: restrict the field's supervision to moving (tissue) rays so its
-        # TRAINING matches its routed APPLICATION (static/tool rays -> trust 0 -> excluded). No-op if unrouted.
-        if getattr(self, '_route_map', None) is not None:
+        # E0 tissue-only teacher buffering (OPT-IN, default OFF). E0 v0.1 turned this ON unconditionally and
+        # the field COLLAPSED (pin-EPE -0.2%, |Δx|~0): restricting the field's TRAINING to route-flagged rays
+        # zeroes its supervision wherever the (sparse) route missed -> starved -> dead. The field's LIFE must
+        # be DECOUPLED from the route. Default: train the field on its FULL targets (stays ALIVE like
+        # replay_sharp); the route gates ONLY the field's APPLICATION in the map/render, not its training.
+        if getattr(self, '_route_map', None) is not None and self.config.get('map_route', {}).get('tissue_only_teacher', False):
             w = w * self._route_map[ih, iw].view(-1, 1)
         _t = (cur_frame_id / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else float(cur_frame_id)
         self.deform_replay.append({'Xk': Xk.detach().cpu(), 'dx': dx.detach().cpu(),

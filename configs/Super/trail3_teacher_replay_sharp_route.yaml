@@ -16,6 +16,9 @@ data:
 map_route:
   enable: true
   ref_stride: 8        # causal reference: RAFT flow from 8 frames back -> current frame
-  deadband: 3.0        # per-DINO-region median Sampson > deadband -> moving (route the field there)
+  deadband: 1.0        # E0 v0.2: 3.0 UNDER-routed (video: deforming tissue not captured) -> lower to 1.0, just
+                       #          above the RANSAC inlier ceiling (ransac_thresh=1.0): static regions have median
+                       #          Sampson <1 (stay OFF), subtler deforming tissue has median >1 (now flagged ON).
   n_groups: 12         # DINO k-means regions for the per-region camera-vs-scene test
   ransac_thresh: 1.0
+  # tissue_only_teacher: false  # (default) train the field on FULL targets so it stays ALIVE; route gates only application
