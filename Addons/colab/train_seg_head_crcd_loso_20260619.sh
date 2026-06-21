@@ -79,7 +79,9 @@ if [ "$BACKBONE" = surgenet ]; then
   [ -f "$BACKBONE_WEIGHTS" ] || { echo "[surgenet] downloading SurgeNetXL DINOv2_ViTb14..."; \
      mkdir -p "$(dirname "$BACKBONE_WEIGHTS")"; curl -fL -o "$BACKBONE_WEIGHTS" "$SURGENET_URL" || { echo "FATAL: SurgeNetXL download failed"; exit 1; }; }
 elif [ "$BACKBONE" = dinov3 ]; then
-  [ -f "$BACKBONE_WEIGHTS" ] || { echo "FATAL: dinov3 needs gated weights at BACKBONE_WEIGHTS=<.pth> (accept terms on HF, download with token); see DINOV3_HUB/DINOV3_ENTRY"; exit 1; }
+  # load_dinov3_hf accepts a HF dir (config.json + model.safetensors) OR the .safetensors/.pth file
+  # inside it (it derives the dir) -> accept either here with -e, not just -f.
+  [ -e "$BACKBONE_WEIGHTS" ] || { echo "FATAL: dinov3 needs weights at BACKBONE_WEIGHTS=<HF dir | .safetensors | .pth> (got '$BACKBONE_WEIGHTS'); accept terms on HF, download with token"; exit 1; }
 fi
 
 # snippet NAME -> "EP SID" (C1_001 -> C_1 001)
