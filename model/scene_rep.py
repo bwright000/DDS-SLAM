@@ -216,6 +216,15 @@ class JointEncoding(nn.Module):
                 # disables it (revival experiment — lets t=0 deform too). Default: on.
                 if not self.config.get('deformation_anchor_off', False):
                     vox_motion = torch.where(frame_time.reshape(-1, frame_time.shape[-1]) == 0, torch.zeros_like(vox_motion), vox_motion)
+            # P2 FOOTGUN FIX (external review 2026-06-21): when the field is trained ONLY by the teacher
+            # (deform_field_teacher_only), the render gradient must NOT reach time_net -- otherwise it
+            # ACCUMULATES across the map iters (cur_map/map optimizers never zero time_net.grad; only the
+            # replay's field_optimizer.zero_grad clears it, a fragile invariant). Detaching gives the IDENTICAL
+            # map gradient (map is queried at the same pts+Δx) with NO field grad -> removes the footgun AND
+            # skips the field's wasted backward. The teacher trains the field via its OWN forward
+            # (deform_teacher_loss), so it is unaffected. No-op when the field IS render-trained (flag off).
+            if self.config.get('deform_field_teacher_only', False):
+                vox_motion = vox_motion.detach()
             # T1.3 ORACLE ROUTING: gate Δx by a per-ray attribution w in (0,1]
             # broadcast over samples. Restricts deformation to w>0 regions and
             # w-weights the field's gradient (chain rule). def_reg below then
