@@ -1,0 +1,9 @@
+# E0 overnight campaign arm: sb2_ba_hard = the research's recommended BRIDGE (surf-bind + B2) with HARD routing.
+# Research (wf wqq0e3hu1): soft_scale miscalibrates the field amplitude (scales Δx down at moderate-residual
+# deforming pixels -> under-corrects); the black-and-white was a route-ACCURACY problem (edges/over-route),
+# fixable by surf-bind + B2 + edge-mask, after which HARD on/off is the literature standard. A/B vs sb2_ba (soft).
+inherit_from: configs/Super/trail3_teacher_replay_sharp_route_sb2_ba.yaml
+data:
+  output: output/trail3_teacher_replay_sharp_route_sb2_ba_hard
+map_route:
+  soft_scale: 0.0   # HARD route (binary on/off) on top of surf-bind + B2 + the accurate route
