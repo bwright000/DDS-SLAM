@@ -182,9 +182,11 @@ def colorize_route(route_img):
     """E0 field-route PNG (single-channel {0,255}, 255 = MOVING region where the deformation field is
     applied) -> magenta where moving, black elsewhere (black = left unblended by overlay_mask_on_rgb).
     The 'Field Route' panel overlays this on the rendered RGB so you can SEE which content gets the field."""
-    r = route_img[..., 0] if route_img.ndim == 3 else route_img
+    r = (route_img[..., 0] if route_img.ndim == 3 else route_img).astype(np.float32) / 255.0
     out = np.zeros((r.shape[0], r.shape[1], 3), dtype=np.uint8)
-    out[r > 127] = (230, 60, 230)   # magenta = field routed here (moving/tissue); static stays sharp
+    out[..., 0] = (230 * r).astype(np.uint8)    # magenta scaled by the field WEIGHT -> SOFT route shows a
+    out[..., 1] = (60 * r).astype(np.uint8)     # gradient (not just on/off); ~0 weight stays black (=unblended,
+    out[..., 2] = (230 * r).astype(np.uint8)    # camera/sharp). Binary route still reads as solid magenta.
     return out
 
 

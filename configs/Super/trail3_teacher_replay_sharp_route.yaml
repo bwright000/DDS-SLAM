@@ -13,8 +13,14 @@ inherit_from: configs/Super/trail3_teacher_replay_sharp.yaml
 data:
   output: output/trail3_teacher_replay_sharp_route
   exp_name: demo
+deform_hardbound: 0.02   # E0 v0.4: cap the field's outlier over-warp (max|Δx|=0.084 = ~84% of the ±0.1 render
+                         # sampling band -> depth spikes). tanh soft-cap clips the tail ~76%, costs the mean ~5%.
 map_route:
   enable: true
+  soft_scale: 2.0      # E0 v0.4 (user insight): SOFT routing -- apply the field PROPORTIONALLY to the camera-
+                       #          subtracted residual (w ramps 0->1 over [deadband, deadband+soft_scale]) instead
+                       #          of a hard on/off. Kills the black-and-white boundary blobs + degrades gracefully
+                       #          when the route is slightly wrong. soft_scale=0 -> hard binary (old behaviour).
   mode: pixel          # E0 v0.3: FULL-RES per-pixel route via a HOMOGRAPHY consensus. Fixes BOTH (a) low-res bleed
                        #          (region mode = 14px-patch blobs that smear the field into bg) AND (b) camera ZOOM
                        #          read as deformation (the fundamental matrix is degenerate for forward/zoom; the

@@ -684,6 +684,7 @@ class DDSSLAM():
         route = region_route(ref_bgr, cur_bgr, dino_g, self._raft, self._raft_tf, self.device,
                              mode=_mode, n_groups=int(_mr.get('n_groups', 12)),
                              deadband=float(_mr.get('deadband', 1.0)), smooth=int(_mr.get('smooth', 5)),
+                             soft_scale=float(_mr.get('soft_scale', 0.0)),
                              ransac_thresh=float(_mr.get('ransac_thresh', 1.0)))
         self._route_map = torch.from_numpy(route).float().to(self.device)   # [H,W] in {0,1}
         if frame_id <= 3 or frame_id % 30 == 0:

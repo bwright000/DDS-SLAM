@@ -127,7 +127,7 @@ def agreement_gate(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
 
 def region_route(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
                  n_groups=12, ransac_thresh=1.0, deadband=3.0, min_px=50, seed=0,
-                 mode='region', smooth=5):
+                 mode='region', smooth=5, soft_scale=0.0):
     """E0 MAPPING router: per-pixel MOVING-mask [H,W] in {0,1}. 1 = scene-moving (route the deformation
     field HERE), 0 = static/camera (field OFF -> stays sharp). The WHAT-MOVES axis. Two modes:
       mode='region' (default): paint whole DINO k-means regions whose MEDIAN Sampson (vs a fitted
@@ -158,7 +158,15 @@ def region_route(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
         rmap = np.linalg.norm(proj - p2, axis=1).reshape(H, W).astype(np.float32)   # per-pixel reproj residual
         _mb = smooth if smooth in (3, 5) else 5                                     # cv2 medianBlur float32: k in {3,5}
         rs = cv2.medianBlur(rmap, _mb) if (smooth and smooth > 1) else rmap
-        route = (rs > deadband).astype(np.float32)
+        if soft_scale and soft_scale > 0:
+            # SOFT routing (user 06-21): apply the field PROPORTIONALLY to the camera-subtracted residual
+            # ("residual -> deformation weight") instead of a hard on/off. w ramps 0->1 over
+            # [deadband, deadband+soft_scale]: pixels ~consistent with the camera get ~0 (sharp), clearly
+            # deforming pixels get ~1, ambiguous get a graded weight -> NO black-and-white boundaries, and it
+            # degrades smoothly when the route is slightly wrong. Light Gaussian for spatial coherence.
+            route = np.clip((rs - deadband) / soft_scale, 0.0, 1.0).astype(np.float32)
+            return cv2.GaussianBlur(route, (0, 0), 1.5).astype(np.float32)
+        route = (rs > deadband).astype(np.float32)                                  # hard binary (default)
         if smooth and smooth > 1:
             _k = np.ones((smooth, smooth), np.uint8)
             route = cv2.morphologyEx(route, cv2.MORPH_OPEN, _k)                     # drop isolated speckle
