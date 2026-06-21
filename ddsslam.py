@@ -679,9 +679,11 @@ class DDSSLAM():
         ref_id, ref_bgr = ref
         if ref_id >= frame_id:   # CAUSALITY: raise (NOT assert -> not stripped by python -O)
             raise RuntimeError(f"map_route NON-CAUSAL: ref {ref_id} >= cur {frame_id}")
-        dino_g = dino_grid(cur_bgr, self._dino, self.device)
+        _mode = _mr.get('mode', 'region')
+        dino_g = dino_grid(cur_bgr, self._dino, self.device) if _mode == 'region' else None   # pixel mode is DINO-free
         route = region_route(ref_bgr, cur_bgr, dino_g, self._raft, self._raft_tf, self.device,
-                             n_groups=int(_mr.get('n_groups', 12)), deadband=float(_mr.get('deadband', 3.0)),
+                             mode=_mode, n_groups=int(_mr.get('n_groups', 12)),
+                             deadband=float(_mr.get('deadband', 1.0)), smooth=int(_mr.get('smooth', 5)),
                              ransac_thresh=float(_mr.get('ransac_thresh', 1.0)))
         self._route_map = torch.from_numpy(route).float().to(self.device)   # [H,W] in {0,1}
         if frame_id <= 3 or frame_id % 30 == 0:

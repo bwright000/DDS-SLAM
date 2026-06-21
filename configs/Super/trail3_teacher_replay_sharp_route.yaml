@@ -15,10 +15,14 @@ data:
   exp_name: demo
 map_route:
   enable: true
+  mode: pixel          # E0 v0.3: FULL-RES per-pixel route via a HOMOGRAPHY consensus. Fixes BOTH (a) low-res bleed
+                       #          (region mode = 14px-patch blobs that smear the field into bg) AND (b) camera ZOOM
+                       #          read as deformation (the fundamental matrix is degenerate for forward/zoom; the
+                       #          homography models rotation+zoom, so its per-pixel reprojection residual isolates
+                       #          LOCAL deformation). region mode (DINO k-means + Sampson) kept for A/B.
   ref_stride: 8        # causal reference: RAFT flow from 8 frames back -> current frame
-  deadband: 1.0        # E0 v0.2: 3.0 UNDER-routed (video: deforming tissue not captured) -> lower to 1.0, just
-                       #          above the RANSAC inlier ceiling (ransac_thresh=1.0): static regions have median
-                       #          Sampson <1 (stay OFF), subtler deforming tissue has median >1 (now flagged ON).
-  n_groups: 12         # DINO k-means regions for the per-region camera-vs-scene test
+  deadband: 1.0        # per-pixel reprojection-residual threshold (px); >1 (above RANSAC inlier ceiling) = moving
+  smooth: 5            # median-blur + morph kernel for the per-pixel route (denoise; edge-preserving)
+  n_groups: 12         # (region mode only) DINO k-means regions
   ransac_thresh: 1.0
   # tissue_only_teacher: false  # (default) train the field on FULL targets so it stays ALIVE; route gates only application

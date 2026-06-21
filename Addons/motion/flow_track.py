@@ -126,14 +126,21 @@ def agreement_gate(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
 
 
 def region_route(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
-                 n_groups=12, ransac_thresh=1.0, deadband=3.0, min_px=50, seed=0):
-    """E0 MAPPING router: per-pixel MOVING-mask [H,W] in {0,1}. 1 = scene-moving region (route the
-    deformation field HERE — let Δx warp it), 0 = static/camera region (field OFF -> stays sharp).
-    This is the INVERSE-of-tracking signal: the SAME per-DINO-region camera-vs-scene test the
-    tracking gate uses (median Sampson residual vs the ONE consensus rigid motion > deadband), but
-    returned DENSE (the per-region decision painted back to pixels) instead of collapsed to a scalar
-    fraction. Returns all-zeros if the F-fit fails -> field off everywhere (neutral). This is the
-    WHAT-MOVES axis only; the tissue-vs-tool WHAT-KIND split (tool exclusion) is a later rung."""
+                 n_groups=12, ransac_thresh=1.0, deadband=3.0, min_px=50, seed=0,
+                 mode='region', smooth=5):
+    """E0 MAPPING router: per-pixel MOVING-mask [H,W] in {0,1}. 1 = scene-moving (route the deformation
+    field HERE), 0 = static/camera (field OFF -> stays sharp). The WHAT-MOVES axis. Two modes:
+      mode='region' (default): paint whole DINO k-means regions whose MEDIAN Sampson (vs a fitted
+        FUNDAMENTAL matrix) > deadband. Scene-level + robust BUT (a) COARSE — 14px patches x ~12 regions,
+        NEAREST-upsampled -> blobs bleed the field into bg, can't follow partial deformation; and (b) the
+        fundamental matrix is DEGENERATE for forward/ZOOM camera motion -> it flags the camera zoom as
+        deformation.
+      mode='pixel': fit a global HOMOGRAPHY (models camera rotation+ZOOM exactly, where F is degenerate)
+        and threshold the per-pixel REPROJECTION residual ||p2 - H@p1|| at FULL resolution -> fixes BOTH the
+        low-res bleed AND the zoom false-positive. Denoised (median + morph open/close). dino_g unused (caller
+        may pass None). Caveat: H conflates large parallax/non-planarity with deformation (small for smooth
+        endoscopic tissue; the 3D depth+pose residual is the upgrade once the pose un-freezes in the combine).
+    Returns all-zeros if the fit fails -> field off everywhere (neutral)."""
     import cv2
     from sklearn.cluster import KMeans
     flow = _raft_flow(raft_model, raft_tf, ref_bgr, cur_bgr, device)
@@ -141,6 +148,22 @@ def region_route(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
     uu, vv = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
     p1 = np.stack([uu, vv], -1).reshape(-1, 2); p2 = p1 + flow.reshape(-1, 2)
     idx = np.linspace(0, len(p1) - 1, min(4000, len(p1))).astype(np.int64)
+    if mode == 'pixel':
+        Hmat, _ = cv2.findHomography(p1[idx], p2[idx], cv2.RANSAC, ransac_thresh)
+        if Hmat is None:
+            return np.zeros((H, W), np.float32)            # no fit -> field off (neutral)
+        p1h = np.concatenate([p1, np.ones((len(p1), 1), np.float32)], 1)
+        proj = (Hmat.astype(np.float32) @ p1h.T).T
+        proj = proj[:, :2] / (proj[:, 2:3] + 1e-9)
+        rmap = np.linalg.norm(proj - p2, axis=1).reshape(H, W).astype(np.float32)   # per-pixel reproj residual
+        _mb = smooth if smooth in (3, 5) else 5                                     # cv2 medianBlur float32: k in {3,5}
+        rs = cv2.medianBlur(rmap, _mb) if (smooth and smooth > 1) else rmap
+        route = (rs > deadband).astype(np.float32)
+        if smooth and smooth > 1:
+            _k = np.ones((smooth, smooth), np.uint8)
+            route = cv2.morphologyEx(route, cv2.MORPH_OPEN, _k)                     # drop isolated speckle
+            route = cv2.morphologyEx(route, cv2.MORPH_CLOSE, _k)                    # fill small holes
+        return route.astype(np.float32)
     F, _ = cv2.findFundamentalMat(p1[idx], p2[idx], cv2.FM_RANSAC, ransac_thresh, 0.999)
     route = np.zeros((H, W), np.float32)
     if F is None or F.shape != (3, 3):
