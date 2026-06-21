@@ -1,0 +1,18 @@
+# C_1/001 COMBINE: geo σ² (Inc-1/2, per-pixel JITTER down-weight) ON TOP OF the validated flow AGREEMENT
+# gate + freeze_ba. Two LEVELS, complementary, no conflict:
+#   flow gate (frame-level) decides WHICH frames to TRACK (camera) vs FIX (still/scene);
+#   geo σ² (per-pixel, Inc-2) down-weights the uncertain/jittery PIXELS on the TRACK frames.
+# agreement mode sets NO per-pixel flow weight (track_ray_w=None) -> on TRACK frames σ² is the SOLE
+# per-ray weight (scene_rep.py:570-585, no double-weighting); FIX frames skip tracking entirely (σ²
+# never reached). σ² still trains via the mapping NLL (gate only skips tracking). Config-only change.
+inherit_from: configs/CRCD/c1_001_canon_flow_agree_baf.yaml
+data:
+  output: output/CRCD/C1_001_canon_geo_flow_agree_baf
+uncertainty:
+  enable: true          # Inc-1 NLL (mapping) + Inc-2 1/σ² (tracking) — the geo jitter fix
+  hidden_dim: 32
+  num_layers: 2
+  nll_weight: 0.1
+  w_min: 0.1
+  w_max: 10.0
+  detach_pose_weight: true
