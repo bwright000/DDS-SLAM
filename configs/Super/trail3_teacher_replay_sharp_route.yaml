@@ -4,6 +4,11 @@
 # The field warps moving regions and is OFF on static/camera regions, so the un-routed global smear (~4 PSNR)
 # is removed while the field stays alive. ARCHITECTURE-ONLY (no config/schedule tuning; same heavy SemSup
 # schedule as the base arm). JUDGE: LIVE render (PSNR up toward 28) + pin-EPE alive (field_warped_pin_epe.py).
+# SCOPE (E0 = smallest test; verified wf wm9jjwbla): routes current_frame_mapping + render + teacher-buffer.
+# By design NOT YET routed: (1) global_BA (the dominant map trainer, iters=200) -> B1 (route its current-frame
+# injection) / B2 (per-keyframe route storage) are the next rungs; the LIVE render should still reflect routing
+# because current_frame_mapping (cur:100, dense+local) is the LAST map update before rendering. (2) tracking_render
+# -> intentional (tracking owns the separate flow_track gate). If E0's live render only partially recovers, escalate to B1/B2.
 inherit_from: configs/Super/trail3_teacher_replay_sharp.yaml
 data:
   output: output/trail3_teacher_replay_sharp_route
