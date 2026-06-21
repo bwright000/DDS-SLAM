@@ -557,13 +557,25 @@ class DDSSLAM():
             # Sample rays with real frame ids
             # rays [bs, 7]
             # frame_ids [bs]
-            rays, ids = self.keyframeDatabase.sample_global_rays(self.config['mapping']['sample'])
+            _route_ba = self.config.get('map_route', {}).get('route_ba', False) and getattr(self, '_route_map', None) is not None
+            if _route_ba:
+                rays, ids, kf_route = self.keyframeDatabase.sample_global_rays(self.config['mapping']['sample'], with_route=True)
+            else:
+                rays, ids = self.keyframeDatabase.sample_global_rays(self.config['mapping']['sample'])
 
             #TODO: Checkpoint...
             idx_cur = random.sample(range(0, self.dataset.H * self.dataset.W),max(self.config['mapping']['sample'] // len(self.keyframeDatabase.frame_ids), self.config['mapping']['min_pixels_cur']))
             current_rays_batch = current_rays[idx_cur, :]
             rays = torch.cat([rays, current_rays_batch], dim=0) # N, 7
             ids_all = torch.cat([ids//self.config['mapping']['keyframe_every'], -torch.ones((len(idx_cur)))]).to(torch.int64)
+            # B2: route global_BA's KEYFRAME rays (the dominant map trainer) so the map co-adapts to the
+            # routed warp = the global-render-confound fix. route_w_ba = [stored per-keyframe routes ;
+            # current-frame route from self._route_map]. None unless route_ba -> forward route_w=None = base.
+            route_w_ba = None
+            if _route_ba:
+                _idxc = torch.as_tensor(idx_cur, device=self.device)
+                route_w_ba = torch.cat([kf_route.view(-1).to(self.device),
+                                        self._route_map.reshape(-1)[_idxc]]).view(-1, 1)
 
 
             rays_d_cam = rays[..., :3].to(self.device)
@@ -593,7 +605,7 @@ class DDSSLAM():
                     timestamps = timestamps / self.dataset.num_frames
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
 
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino)
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, route_w=route_w_ba)
 
             loss = self.get_loss_from_ret(ret, smooth=True)
             
@@ -686,7 +698,13 @@ class DDSSLAM():
                              deadband=float(_mr.get('deadband', 1.0)), smooth=int(_mr.get('smooth', 5)),
                              soft_scale=float(_mr.get('soft_scale', 0.0)),
                              ransac_thresh=float(_mr.get('ransac_thresh', 1.0)))
-        self._route_map = torch.from_numpy(route).float().to(self.device)   # [H,W] in {0,1}
+        # EDGE-MASK (user clue: the route lights up the image BORDER). RAFT flow + the homography
+        # extrapolate badly at the frame edge -> spurious high residual there. Zero a border band so the
+        # field is never routed to the edges. edge_mask=0 -> off (default).
+        _em = int(_mr.get('edge_mask', 0))
+        if _em > 0:
+            route[:_em, :] = 0.0; route[-_em:, :] = 0.0; route[:, :_em] = 0.0; route[:, -_em:] = 0.0
+        self._route_map = torch.from_numpy(route).float().to(self.device)   # [H,W] field-route weight
         if frame_id <= 3 or frame_id % 30 == 0:
             print(f'[map_route] frame {frame_id}: moving-frac={float(route.mean()):.3f} (causal ref {ref_id})')
 
@@ -987,7 +1005,16 @@ class DDSSLAM():
 
     def _sample_replay(self, nf):
         k = min(nf, len(self.deform_replay))
-        picks = random.sample(range(len(self.deform_replay)), k)
+        n = len(self.deform_replay)
+        # RECENCY-WEIGHTED replay (deform_replay_recency:true): equal-weight replay under-supervises the
+        # LATE large-displacement frames (their share shrinks as the buffer grows) -> the field degrades
+        # over time ("starts ok, doesn't match later"). Up-weight recent frames (weight ∝ i+1). Default
+        # off = uniform random.sample (byte-identical base).
+        if self.config['training'].get('deform_replay_recency', False) and n > k:
+            w = np.arange(1, n + 1, dtype=np.float64); w /= w.sum()
+            picks = list(np.random.choice(n, k, replace=False, p=w))
+        else:
+            picks = random.sample(range(n), k)
         cat = lambda key: torch.cat([self.deform_replay[i][key] for i in picks]).to(self.device)
         return cat('Xk'), cat('t'), cat('dx'), cat('w')
 
@@ -1058,7 +1085,8 @@ class DDSSLAM():
 
                 # Add keyframe
                 if i % self.config['mapping']['keyframe_every'] == 0:
-                    self.keyframeDatabase.add_keyframe(batch, filter_depth=self.config['mapping']['filter_depth'])
+                    self.keyframeDatabase.add_keyframe(batch, filter_depth=self.config['mapping']['filter_depth'],
+                                                       route_map=(self._route_map if self.config.get('map_route', {}).get('route_ba', False) else None))
                     print('add keyframe:',i)
             
 

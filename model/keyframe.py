@@ -13,6 +13,9 @@ class KeyFrameDatabase(object):
         # is byte-identical to base. (An earlier per-ray-DINO tail bloated this to ~5GB -> removed.)
         self.ray_w = 8
         self.rays = torch.zeros((num_kf, num_rays_to_save, self.ray_w))
+        # B2: parallel per-keyframe field-route weight (rays stay width 8 for parity). 1 = field ON (neutral);
+        # add_keyframe overwrites it when a route_map is passed (map_route.route_ba).
+        self.route = torch.ones((num_kf, num_rays_to_save, 1))
         self.num_rays_to_save = num_rays_to_save
         self.frame_ids = None
         self.H = H
@@ -42,7 +45,7 @@ class KeyFrameDatabase(object):
         else:
             raise NotImplementedError()
         rays = rays[:, idxs]
-        return rays
+        return rays, idxs   # B2: also return idxs so add_keyframe gathers the route at the SAME pixels
     
     def attach_ids(self, frame_ids):
         '''
@@ -53,19 +56,20 @@ class KeyFrameDatabase(object):
         else:
             self.frame_ids = torch.cat([self.frame_ids, frame_ids], dim=0)
     
-    def add_keyframe(self, batch, filter_depth=False):
+    def add_keyframe(self, batch, filter_depth=False, route_map=None):
         '''
-        Add keyframe rays to the keyframe database
+        Add keyframe rays to the keyframe database. route_map: [H,W] field-route for this frame (B2);
+        None -> leave the neutral ONES (field ON / un-routed).
         '''
         # batch direction (Bs=1, H*W, 3). Pack [dir3, rgb3, depth1, edge1] = width 8 (DINO is NOT
         # stored here; v2 samples it on-demand per frame -- see ddsslam.sample_dino_grid).
         rays = torch.cat([batch['direction'], batch['rgb'], batch['depth'][..., None], batch['edge_semantic'][..., None]], dim=-1)
         rays = rays.reshape(1, -1, rays.shape[-1])
         if filter_depth:
-            rays = self.sample_single_keyframe_rays(rays, 'filter_depth')
+            rays, idxs = self.sample_single_keyframe_rays(rays, 'filter_depth')
         else:
-            rays = self.sample_single_keyframe_rays(rays)
-        
+            rays, idxs = self.sample_single_keyframe_rays(rays)
+
         if not isinstance(batch['frame_id'], torch.Tensor):
             batch['frame_id'] = torch.tensor([batch['frame_id']])
 
@@ -73,10 +77,15 @@ class KeyFrameDatabase(object):
 
         # Store the rays
         self.rays[len(self.frame_ids)-1] = rays
+        # B2: store the per-keyframe route at the SAME subsampled pixels (idxs) -> aligned with rays.
+        # None (warm-up / route_ba off) -> keep the ONES default (field ON = un-routed = neutral).
+        if route_map is not None:
+            self.route[len(self.frame_ids)-1] = route_map.reshape(-1)[idxs].view(-1, 1).float().cpu()
     
-    def sample_global_rays(self, bs):
+    def sample_global_rays(self, bs, with_route=False):
         '''
-        Sample rays from self.rays as well as frame_ids
+        Sample rays from self.rays as well as frame_ids. with_route (B2): also return the stored
+        per-keyframe field-route at the SAME sampled rays (to route global_BA's keyframe rays).
         '''
         num_kf = self.__len__()
         idxs = torch.tensor(random.sample(range(num_kf * self.num_rays_to_save), bs))
@@ -84,6 +93,8 @@ class KeyFrameDatabase(object):
 
         frame_ids = self.frame_ids[idxs//self.num_rays_to_save]
 
+        if with_route:
+            return sample_rays, frame_ids, self.route[:num_kf].reshape(-1, 1)[idxs]
         return sample_rays, frame_ids
     
     def sample_global_keyframe(self, window_size, n_fixed=1):
