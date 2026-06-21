@@ -1,0 +1,15 @@
+# ===== CONFIG CHANGE ONLY (no model code) =====
+# C_1/001 mapping A/B: cur_frame_iters 0 -> 100 (the authors' OWN surgical value, from Super/SemSup).
+# WHY: the canon's cur_frame_iters=0 is NOT a CRCD choice — it is the upstream StereoMIS default that
+# rode in when we created crcd.yaml by hand-copying stereomis.yaml (commit 096d253). The DDS-SLAM authors
+# deliberately used cur_frame_iters=100 for THEIR surgical data (Super.yaml). CRCD is also surgical data
+# routed through the same loader, so applying the authors' surgical schedule is principled + paper-faithful.
+# At cur_frame_iters=0 the just-tracked current frame is NEVER directly mapped (current_frame_mapping
+# early-returns); it only leaks into the map via global_BA's injected rays. This A/B gives it a dedicated
+# map pass. JUDGE ON POST-HOC RE-RENDER (not the live JPEG — raising this also inflates the live-JPEG
+# overfit illusion; see project_mapping_free_wins_audit_20260621). Single-variable: iters stays 20.
+inherit_from: configs/CRCD/c1_001_canon_base.yaml
+data:
+  output: output/CRCD/C1_001_canon_curmap100
+mapping:
+  cur_frame_iters: 100   # was 0 (upstream-StereoMIS copy artifact); 100 = authors' surgical Super value
