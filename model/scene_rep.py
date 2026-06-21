@@ -490,7 +490,7 @@ class JointEncoding(nn.Module):
 
         return ret
     
-    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None, track_ray_w=None):
+    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None, track_ray_w=None, route_w=None):
         '''
         Params:
             rays_o: ray origins (Bs, 3)
@@ -508,7 +508,13 @@ class JointEncoding(nn.Module):
         # T1.3 oracle routing: use the per-ray seg edge-prior as the attribution
         # weight w. Training-time gradient mechanism only (disabled on render_only
         # to avoid the full-image vs ray-batch shape mismatch at the eval call).
-        oracle_w = target_edge_semantic if (self.config.get('oracle_routing', False) and target_edge_semantic is not None and not render_only) else None
+        # E0 MAPPING-ROUTING (flow-as-sensor): an explicit per-ray route_w in (0,1] gates the
+        # field's Δx via the SAME oracle_w seam (run_network: vox_motion *= ow). Unlike the
+        # edge-prior it is applied in BOTH map-training AND render (route_w checked first, so
+        # the render_only guard does NOT suppress it) — the map and its live render must share
+        # the same routing or the background co-adapts to a warp the render then re-applies.
+        # The caller supplies a route_w matching the ray batch. route_w=None ⇒ unchanged base.
+        oracle_w = route_w if route_w is not None else (target_edge_semantic if (self.config.get('oracle_routing', False) and target_edge_semantic is not None and not render_only) else None)
         rend_dict = self.render_rays(rays_o, rays_d, target_d=target_d, oracle_w=oracle_w)
 
         # Inc-1 v2 (mode:'dino'): per-PIXEL DINO uncertainty. The per-point geo head is ABSENT in dino

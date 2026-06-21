@@ -125,6 +125,40 @@ def agreement_gate(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
     return cam_mag, (dis / max(tot, 1))
 
 
+def region_route(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
+                 n_groups=12, ransac_thresh=1.0, deadband=3.0, min_px=50, seed=0):
+    """E0 MAPPING router: per-pixel MOVING-mask [H,W] in {0,1}. 1 = scene-moving region (route the
+    deformation field HERE — let Δx warp it), 0 = static/camera region (field OFF -> stays sharp).
+    This is the INVERSE-of-tracking signal: the SAME per-DINO-region camera-vs-scene test the
+    tracking gate uses (median Sampson residual vs the ONE consensus rigid motion > deadband), but
+    returned DENSE (the per-region decision painted back to pixels) instead of collapsed to a scalar
+    fraction. Returns all-zeros if the F-fit fails -> field off everywhere (neutral). This is the
+    WHAT-MOVES axis only; the tissue-vs-tool WHAT-KIND split (tool exclusion) is a later rung."""
+    import cv2
+    from sklearn.cluster import KMeans
+    flow = _raft_flow(raft_model, raft_tf, ref_bgr, cur_bgr, device)
+    H, W = flow.shape[:2]
+    uu, vv = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    p1 = np.stack([uu, vv], -1).reshape(-1, 2); p2 = p1 + flow.reshape(-1, 2)
+    idx = np.linspace(0, len(p1) - 1, min(4000, len(p1))).astype(np.int64)
+    F, _ = cv2.findFundamentalMat(p1[idx], p2[idx], cv2.FM_RANSAC, ransac_thresh, 0.999)
+    route = np.zeros((H, W), np.float32)
+    if F is None or F.shape != (3, 3):
+        return route                              # no fit -> field off everywhere (neutral)
+    resid = _sampson(F.astype(np.float64), p1, p2).reshape(H, W)
+    gh, gw, C = dino_g.shape
+    X = dino_g.reshape(-1, C); X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
+    lab = KMeans(n_groups, n_init=4, random_state=seed).fit_predict(X).reshape(gh, gw).astype(np.uint8)
+    lab = cv2.resize(lab, (W, H), interpolation=cv2.INTER_NEAREST)
+    for k in range(n_groups):
+        m = lab == k
+        if m.sum() < min_px:
+            continue
+        if float(np.median(resid[m])) > deadband:
+            route[m] = 1.0                        # moving region -> route the field here
+    return route
+
+
 def residual_to_weight(resid, alpha=0.5, w_min=0.1, w_max=1.0, deadband=0.0):
     """resid[...] -> down-weight. DEADBAND: w=1 for resid<=deadband, so clean/camera frames (low,
     NOISY residual) are a TRUE NOP (uniform weight -> no pose perturbation) and the down-weight
