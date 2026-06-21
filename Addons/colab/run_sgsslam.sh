@@ -543,8 +543,8 @@ case "$PHASE" in
     [ -x "$ENV_PY" ] || { echo "FATAL: SGS env not built ($ENV_PY missing) - run 'env' first"; exit 30; }
     [ -d "$SGS/.git" ] || { echo "FATAL: SGS clone missing at $SGS - run 'env' first"; exit 30; }
     mkdir -p "$CRCD_DRIVE"
-    SNIPS=${SCENE_ARG:-c1_001}                  # default single snippet; pass 'bench5' for all 5
-    [ "$SNIPS" = bench5 ] && SNIPS="$BENCH5"
+    SNIPS=${SCENE_ARG:-bench5}                  # default = ALL 5 (matches replica all-scenes default); pass a name for one
+    { [ "$SNIPS" = bench5 ] || [ "$SNIPS" = all ]; } && SNIPS="$BENCH5"
     echo "=== CRCD phase: snippets='$SNIPS'  mode=$([ "$RAW_LEFT" = 1 ] && echo rawleft-DEPRECATED || echo rectified)"\
          " depth_scale=$DEPTH_SCALE -> $CRCD_DRIVE ==="
     for s in $SNIPS; do run_crcd_one "$s" || echo "[$s] FAILED (see $CRCD_DRIVE/$(echo "$s" | tr a-z A-Z)/status.txt)"; done
