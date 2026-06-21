@@ -262,6 +262,41 @@ crcd_ep_sid(){
   echo "${n:0:1}_${n:1:1} ${n:3}"
 }
 
+# generate MoGe-2 depth into the published depth/ dir IF it's absent (user 06-21). MoGe runs in the
+# SYSTEM torch2 python ($MOGE_PY) with the `moge` package (NOT the SGS conda env). Raw left frames,
+# up-to-scale, scale=DEPTH_SCALE, written as {i:06d}.png to match the existing c1/c2 depth/ corpus
+# (the rectified assembly remaps it; per-snippet Sim3 absorbs the up-to-scale factor).
+MOGE_PY=${MOGE_PY:-$DDS_PY}
+crcd_ensure_depth(){
+  local NAME=$1 EP SID; read -r EP SID <<< "$(crcd_ep_sid "$NAME")"
+  [ -n "$EP" ] || { echo "[$NAME] bad name"; return 1; }
+  local DD="$DRIVE_CRCD_MOGE/$EP/snippet_$SID/depth"
+  [ "$(ls "$DD"/*.png 2>/dev/null | wc -l)" -gt 0 ] && { echo "[$NAME] MoGe depth present ($(ls "$DD"/*.png 2>/dev/null | wc -l) png)"; return 0; }
+  echo "[$NAME] MoGe depth MISSING in $DD -> generating (MoGe-2 on raw left, scale=$DEPTH_SCALE)"
+  local SRC="$DRIVE_CRCD/$EP/snippet_$SID"
+  [ -d "$SRC/rgb" ] || { echo "[$NAME] no raw rgb on Drive ($SRC/rgb) -> cannot gen depth"; return 1; }
+  "$MOGE_PY" -c 'from moge.model.v2 import MoGeModel' 2>/dev/null || {
+    echo "[$NAME] FATAL MoGe not importable in '$MOGE_PY' (pip install git+https://github.com/microsoft/MoGe.git)"; return 1; }
+  local W="/content/crcd_depthgen/$NAME"; rm -rf "$W"; mkdir -p "$W/_in" "$W/_npy"
+  local f st; for f in "$SRC/rgb"/*.png; do st=$(basename "$f" .png); ln -sf "$f" "$W/_in/${st}-left.png"; done
+  PYTHONPATH= "$MOGE_PY" "$REPO/Addons/depth/generate_depth_moge.py" --rgb "$W/_in" --out "$W/_npy" \
+     --depth_scale "$DEPTH_SCALE" --temporal_window 1 --max_depth_m 5.0 --resolution_level 9 \
+     || { echo "[$NAME] MoGe gen FAILED"; return 1; }
+  mkdir -p "$DD"
+  PYTHONPATH= "$MOGE_PY" - "$W/_npy" "$DD" <<'PY'
+import numpy as np, cv2, glob, os, sys
+npy_dir, out = sys.argv[1], sys.argv[2]
+ns = sorted(glob.glob(os.path.join(npy_dir, '*-left_depth.npy')))
+for i, p in enumerate(ns):
+    cv2.imwrite(os.path.join(out, f'{i:06d}.png'),
+                np.clip(np.load(p).astype(np.float32), 0, 65535).astype(np.uint16))
+print(f'[depthgen] wrote {len(ns)} png -> {out}')
+PY
+  rm -rf "$W"
+  [ "$(ls "$DD"/*.png 2>/dev/null | wc -l)" -gt 0 ] || { echo "[$NAME] depth-gen produced no png"; return 1; }
+  echo "[$NAME] MoGe depth generated -> $DD ($(ls "$DD"/*.png 2>/dev/null | wc -l) png)"
+}
+
 # stage the raw snippet (rgb, semantic_instance, groundtruth.txt, intrinsics.yaml) + MoGe depth
 # from Drive to local. Returns 0 on success; the dirs land under $CRCD_LOCAL/<NAME>/.
 crcd_stage(){
@@ -346,6 +381,7 @@ run_crcd_one(){
   local scene_dir="$SGS/data/crcd/$UP"
   local local_snip="$CRCD_LOCAL/$NAME"
 
+  crcd_ensure_depth "$NAME" || { echo "FAILED depth-gen (no published depth + MoGe gen failed)" > "$OUT/status.txt"; return 1; }
   crcd_stage "$NAME" || { echo "FAILED stage" > "$OUT/status.txt"; return 1; }
 
   # ---- assemble into the SGS ReplicaDataset layout + emit crcd.yaml ----
