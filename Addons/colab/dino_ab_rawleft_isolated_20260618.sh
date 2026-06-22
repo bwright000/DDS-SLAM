@@ -75,9 +75,11 @@ fi
 bake(){ local RGB=$1 OUT=$2 BK=$3 GLOB=$4 N=$5
   [ "$(ls "$OUT"/*_dino.npy 2>/dev/null|wc -l)" -ge "$N" ] && return 0
   $DINO_PY Addons/dino/generate_dino_features.py --rgb_dir "$RGB" --rgb_glob "$GLOB" --out_dir "$OUT" --backbone "$BK" --fp32 2>&1 | tail -3; }
-if [[ " $DATASETS " == *crcd* ]]; then NC=$(ls "$CRCD/video_frames"/*l.png|wc -l)
+# DINO .npy bake = ONLY for the uncertainty dino cells. flow_track / map_route load DINO LIVE (load_dino,
+# torch.hub) so the combine cells (base/flow_*/route*) need NO bake -> guard on a 'dino' cell being requested.
+if [[ " $CELLS " == *dino* ]] && [[ " $DATASETS " == *crcd* ]]; then NC=$(ls "$CRCD/video_frames"/*l.png|wc -l)
   bake "$CRCD/video_frames" "$CRCD/dino" dinov2_vits14 '*l.png' "$NC"; bake "$CRCD/video_frames" "$CRCD/dino_reg" dinov2_vits14_reg '*l.png' "$NC"; fi
-if [[ " $DATASETS " == *super* ]]; then NS=$(ls "$SUP/rgb"/*left.png|wc -l)
+if [[ " $CELLS " == *dino* ]] && [[ " $DATASETS " == *super* ]]; then NS=$(ls "$SUP/rgb"/*left.png|wc -l)
   bake "$SUP/rgb" "$SUP/dino" dinov2_vits14 '*left.png' "$NS"; bake "$SUP/rgb" "$SUP/dino_reg" dinov2_vits14_reg '*left.png' "$NS"; fi
 
 # ---------- run_one: train (TF32 off + seed) -> render eval (+Sim3 for CRCD) -> ship ----------
@@ -125,7 +127,7 @@ PY
   say "  $NAME -> $(grep -h PSNR "$DST/render.txt" 2>/dev/null|head -1) $(grep -h 'mean=' "$DST/sim3.txt" 2>/dev/null|head -1)"
 }
 
-declare -A CR=( [base]=c1_001_canon_base [geo]=c1_001_canon_uncert [dino]=c1_001_canon_uncert_dino [dino_reg]=c1_001_canon_uncert_dino_reg [geo_rd]=c1_001_canon_uncert_rgbdepth [dino_reg_rd]=c1_001_canon_uncert_dino_reg_rgbdepth [dino_reg_f]=c1_001_canon_uncert_dino_reg_fused [geofuse]=c1_001_canon_uncert_dino_reg_rgbdepth_geofuse [georgbd]=c1_001_canon_uncert_dino_reg_rgbdepth_georgbd [slot]=c1_001_canon_uncert_dino_reg_slot [slot_v1a]=c1_001_canon_uncert_dino_reg_slot_v1a [flow_track]=c1_001_canon_flow_track [geo_flow]=c1_001_canon_geo_flow [flow_gate]=c1_001_canon_flow_gate [flow_agree]=c1_001_canon_flow_agree [flow_agree_baf]=c1_001_canon_flow_agree_baf [geo_flow_agree_baf]=c1_001_canon_geo_flow_agree_baf [curmap100]=c1_001_canon_curmap100 )
+declare -A CR=( [base]=c1_001_canon_base [geo]=c1_001_canon_uncert [dino]=c1_001_canon_uncert_dino [dino_reg]=c1_001_canon_uncert_dino_reg [geo_rd]=c1_001_canon_uncert_rgbdepth [dino_reg_rd]=c1_001_canon_uncert_dino_reg_rgbdepth [dino_reg_f]=c1_001_canon_uncert_dino_reg_fused [geofuse]=c1_001_canon_uncert_dino_reg_rgbdepth_geofuse [georgbd]=c1_001_canon_uncert_dino_reg_rgbdepth_georgbd [slot]=c1_001_canon_uncert_dino_reg_slot [slot_v1a]=c1_001_canon_uncert_dino_reg_slot_v1a [flow_track]=c1_001_canon_flow_track [geo_flow]=c1_001_canon_geo_flow [flow_gate]=c1_001_canon_flow_gate [flow_agree]=c1_001_canon_flow_agree [flow_agree_baf]=c1_001_canon_flow_agree_baf [geo_flow_agree_baf]=c1_001_canon_geo_flow_agree_baf [curmap100]=c1_001_canon_curmap100 [flow_route]=c1_001_canon_flow_agree_baf_route [flow_route_protect]=c1_001_canon_flow_agree_baf_route_protect )
 declare -A SU=( [base]=trail3_moge2_uncert_base [geo]=trail3_moge2_uncert [dino]=trail3_moge2_uncert_dino [dino_reg]=trail3_moge2_uncert_dino_reg [geo_rd]=trail3_moge2_uncert_rgbdepth [dino_reg_rd]=trail3_moge2_uncert_dino_reg_rgbdepth [dino_reg_f]=trail3_moge2_uncert_dino_reg_fused [geofuse]=trail3_moge2_uncert_dino_reg_rgbdepth_geofuse [slot]=trail3_moge2_uncert_dino_reg_slot )
 JOBS=(); for s in $SEEDS; do for c in $CELLS; do
   [[ " $DATASETS " == *crcd* ]] && JOBS+=("configs/CRCD/${CR[$c]}.yaml|${c}_crcd_s$s|$s|$REPO/data/CRCD/C1_001|crcd")

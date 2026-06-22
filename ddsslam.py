@@ -605,6 +605,20 @@ class DDSSLAM():
                     timestamps = timestamps / self.dataset.num_frames
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
 
+            # MAP-PROTECT (map_route.protect>0): exclude MOVING-region rays from the static-map update. The
+            # base field is dead -> the static map can't represent deforming tissue and only gets CORRUPTED
+            # fitting it. So route what "should go to the field" OUT of the static map (keep route<thresh =
+            # static); the deformation is left to the (wired, broken) field. Sample-exclusion (losses come back
+            # meaned, so no per-ray reweight). Default 0 = no filter = base byte-identical. Guard: never drop
+            # ALL rays (keeps the step well-posed on a fully-moving batch).
+            _pf = self.config.get('map_route', {}).get('protect', 0.0)
+            if _route_ba and _pf > 0 and route_w_ba is not None:
+                _keep = (route_w_ba.view(-1) < _pf)
+                if 0 < int(_keep.sum().item()) < _keep.numel():
+                    rays_o, rays_d = rays_o[_keep], rays_d[_keep]
+                    target_s, target_d, target_edge_semantic = target_s[_keep], target_d[_keep], target_edge_semantic[_keep]
+                    route_w_ba = route_w_ba[_keep]
+
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, route_w=route_w_ba)
 
             loss = self.get_loss_from_ret(ret, smooth=True)

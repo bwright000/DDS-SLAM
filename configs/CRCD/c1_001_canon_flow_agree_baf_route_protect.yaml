@@ -1,0 +1,13 @@
+# THE COMBINE + MAP-PROTECT (2026-06-22): the architectural mapping improvement on top of the combine.
+# = flow_agree_baf_route (tracking gate + flow map-route on the pristine base field) PLUS map_route.protect:
+# exclude MOVING-region rays (route>thresh) from global_BA's static-map update. Rationale: the base field is
+# dead -> the static map can't represent deforming tissue and is only CORRUPTED fitting it; route what "should
+# go to the field" OUT of the static map so it stays sharp on the rigid structure. This is "apply the mapping
+# improvement to the mapping" (the tracking-gate analog: down-weight the scene's contribution to the map, as the
+# gate down-weights it for the pose). Field stays broken (wired for the future combine). Parity: protect off = the
+# route arm = flow_agree_baf = base.
+inherit_from: configs/CRCD/c1_001_canon_flow_agree_baf_route.yaml
+data:
+  output: output/CRCD/C1_001_canon_flow_agree_baf_route_protect
+map_route:
+  protect: 0.5   # exclude global_BA rays whose soft route > 0.5 (clearly moving) from the static-map update
