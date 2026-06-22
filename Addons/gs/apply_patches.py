@@ -71,6 +71,14 @@ PATCHES = [
         else:
             depth = np.asarray(imageio.imread(depth_path), dtype=np.float64)''',
     ),
+    # 5. neutralise the final cosmetic plot_video (IndexError on an empty keyframes dir; runs AFTER
+    #    SLAM+eval+params.npz are saved, so it only adds a scary traceback to every run).
+    (
+        "scripts/main.py",
+        "#plotvideo-off",
+        "    plot_video(os.path.join(results_dir, 'eval', 'plots'), os.path.join('./experiments/', experiment.group_name, experiment.scene_name, 'keyframes'))",
+        "    pass  #plotvideo-off cosmetic keyframe-plot video (IndexError on empty dir); SLAM+eval already saved",
+    ),
 ]
 
 
