@@ -64,14 +64,21 @@ else
 fi
 export XFORMERS_DISABLED=${XFORMERS_DISABLED:-1}
 
-# vendored dinov2 main (needed for /14 backbones; dinov3 uses torch.hub)
+# vendored dinov2 main (needed for /14 backbones; dinov3 uses HF transformers, but the arg is still passed)
 if [ -z "${DINOV2_MAIN:-}" ]; then
   for c in /content/SemGauss-SLAM/segmentation/facebookresearch_dinov2_main \
-           /content/sni-slam/seg/facebookresearch_dinov2_main; do
+           /content/sni-slam/seg/facebookresearch_dinov2_main \
+           /content/facebookresearch_dinov2_main; do
     [ -f "$c/dinov2/models/vision_transformer.py" ] && DINOV2_MAIN="$c" && break
   done
 fi
-[ -n "${DINOV2_MAIN:-}" ] || { echo "FATAL: no vendored dinov2 main"; exit 30; }
+# fresh-VM fallback: clone the standalone dinov2 repo (provides dinov2/models/vision_transformer.py)
+if [ -z "${DINOV2_MAIN:-}" ] || [ ! -f "$DINOV2_MAIN/dinov2/models/vision_transformer.py" ]; then
+  echo "[env] no vendored dinov2 main -> cloning facebookresearch/dinov2"
+  git clone -q --depth 1 https://github.com/facebookresearch/dinov2 /content/facebookresearch_dinov2_main 2>/dev/null
+  DINOV2_MAIN=/content/facebookresearch_dinov2_main
+fi
+[ -f "$DINOV2_MAIN/dinov2/models/vision_transformer.py" ] || { echo "FATAL: no vendored dinov2 main (clone failed)"; exit 30; }
 
 # backbone weights
 if [ "$BACKBONE" = surgenet ]; then
@@ -79,6 +86,8 @@ if [ "$BACKBONE" = surgenet ]; then
   [ -f "$BACKBONE_WEIGHTS" ] || { echo "[surgenet] downloading SurgeNetXL DINOv2_ViTb14..."; \
      mkdir -p "$(dirname "$BACKBONE_WEIGHTS")"; curl -fL -o "$BACKBONE_WEIGHTS" "$SURGENET_URL" || { echo "FATAL: SurgeNetXL download failed"; exit 1; }; }
 elif [ "$BACKBONE" = dinov3 ]; then
+  # DINOv3 loads via HF transformers (AutoModel); SKIP_ENV=1 / a fresh VM may lack it -> ensure present
+  python -c "import transformers" 2>/dev/null || { echo "[env] installing transformers for DINOv3"; pip install -q -U transformers; }
   # load_dinov3_hf accepts a HF dir (config.json + model.safetensors) OR the .safetensors/.pth file
   # inside it (it derives the dir) -> accept either here with -e, not just -f.
   [ -e "$BACKBONE_WEIGHTS" ] || { echo "FATAL: dinov3 needs weights at BACKBONE_WEIGHTS=<HF dir | .safetensors | .pth> (got '$BACKBONE_WEIGHTS'); accept terms on HF, download with token"; exit 1; }
