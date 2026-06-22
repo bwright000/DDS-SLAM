@@ -30,6 +30,13 @@ install -D -m644 "$OV/scripts/eval_sim3_crcd.py"          scripts/eval_sim3_crcd
 echo ">>> apply in-place edits (patch, not vendor)"
 python3 "$SELF_DIR/apply_patches.py" "$ENDO_DIR"
 
+# Upstream typo: datasets/ ships `_init_.py` (single underscores) not `__init__.py`, so the local
+# `datasets` is only a namespace package -> on Colab the installed HuggingFace `datasets` package
+# shadows it (ModuleNotFoundError: datasets.gradslam_datasets). Give it a real __init__.py so the
+# local package wins at sys.path[0].
+echo ">>> fix datasets package init (upstream _init_.py typo; HF 'datasets' shadows it on Colab)"
+[ -f "$ENDO_DIR/datasets/__init__.py" ] || cp "$ENDO_DIR/datasets/_init_.py" "$ENDO_DIR/datasets/__init__.py"
+
 echo ">>> verify (syntax)"
 python3 -m py_compile \
   datasets/gradslam_datasets/crcd.py datasets/gradslam_datasets/__init__.py \
