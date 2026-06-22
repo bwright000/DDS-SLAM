@@ -1,0 +1,25 @@
+# THE COMBINE (2026-06-22): one flow-as-sensor signal driving BOTH arms on the PRISTINE BASE field.
+#   - TRACKING (camera half): flow_agree + freeze_ba gate (the WON tracking config, inherited) -> down-weight
+#     pose on scene/still frames. PRIMARY goal: improve tracking.
+#   - MAPPING (scene half): map_route ON -> the same flow region-split routes the deformation field + global_BA
+#     (route_ba) toward MOVING regions. The base field is render-only (BROKEN/dead by design, NO teacher) -> the
+#     route here FOCUSES the render-supervised field's gradient on moving regions and threads the route into the
+#     dominant map trainer. The field STAYS BROKEN (accepted); the test is whether routing it + the tracking gate
+#     helps the LIVE render. SECONDARY goal: hopefully improve mapping.
+# Teacher is ARCHIVED + OFF (ARM2_TEACHER_METHOD_ARCHIVE_20260622.md): NO deform_subdir / deformation_sup_weight
+# here -> the field is pristine base. All flags gated -> map_route off == flow_agree_baf == base parity.
+# Judge: Sim3 ATE (tracking, sim3_ate.py) + render PSNR/SSIM/LPIPS (mapping) + 6-panel video. A/B vs the saved
+# flow_agree_baf (isolates the map-route's effect) and base (control).
+inherit_from: configs/CRCD/c1_001_canon_flow_agree_baf.yaml
+data:
+  output: output/CRCD/C1_001_canon_flow_agree_baf_route
+map_route:
+  enable: true
+  mode: pixel          # full-res per-pixel route via homography consensus (isolates LOCAL deformation from camera zoom/pan)
+  soft_scale: 2.0      # SOFT routing (graceful weight, no black-and-white blobs); soft_scale=0 -> hard binary
+  ref_stride: 8        # causal: flow from t-8 -> t (matches the flow_track gate)
+  deadband: 1.0        # per-pixel reprojection-residual threshold (px) above the RANSAC inlier ceiling = moving
+  smooth: 5            # median-blur + morph denoise for the per-pixel route
+  n_groups: 12         # DINO k-means regions (region mode only; shared with the gate)
+  ransac_thresh: 1.0
+  route_ba: true       # B2: thread the route into global_BA (the dominant map trainer, iters=200) -> wire the flow to the MAP
