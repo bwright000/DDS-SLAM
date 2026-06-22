@@ -1,0 +1,12 @@
+# Render lever 2 (CONFIG, NOVEL): bump the STATIC decoder capacity — the SDF+color MLP. Only untested
+# capacity knob (prior audits swept the hash + TimeNet, never the static decoder). hidden_dim 32->64,
+# num_layers 2->3 (SDF net), num_layers_color 2->3 (color net). The FIELD (hidden_dim_time/num_layers_time)
+# is UNTOUCHED — it stays dead. +0.5-1.0 PSNR est (render-max plan wf wpwwycg1f). Base parity holds (base
+# uses 32x2 — this arm is the deliberate A/B factor). Orthogonal to curmap100 -> 2x2 crossed in Phase 1.
+inherit_from: configs/CRCD/c1_001_canon_base.yaml
+data:
+  output: output/CRCD/C1_001_canon_decoder64
+decoder:
+  hidden_dim: 64
+  num_layers: 3
+  num_layers_color: 3

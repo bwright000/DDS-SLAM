@@ -1,0 +1,15 @@
+# THE IMPROVED CRCD CONFIG (render-max, field-DEAD) — the two top CONFIG render levers crossed.
+# = curmap100 (cur_frame_iters 0->100, fixes the CRCD mapping-starvation copy-artifact: 80% of frames map
+#   zero times; +1.0-2.5 PSNR) + decoder64/3 (static SDF+color MLP 32x2 -> 64x3; +0.5-1.0 PSNR).
+# Both are CONFIG (fair-baseline tuning of the authors' static map, NOT a contribution). The deformation
+# field stays DEAD (untouched). This is the 48h RENDER headline = "DDS-SLAM properly configured"; our
+# CONTRIBUTION (flow_agree_baf tracking, -70% ATE) is measured SEPARATELY and stacked on top.
+# Judge: live PSNR/SSIM/LPIPS (+ depth-L1) on CRCD c1_001 raw-left + Sim3 ATE. n=1 decompose (2x2 vs base/
+# curmap100/decoder64), then lock the winner n=3.
+inherit_from: configs/CRCD/c1_001_canon_curmap100.yaml
+data:
+  output: output/CRCD/C1_001_canon_curmap100_decoder64
+decoder:
+  hidden_dim: 64
+  num_layers: 3
+  num_layers_color: 3
