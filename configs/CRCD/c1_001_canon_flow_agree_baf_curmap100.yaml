@@ -1,0 +1,10 @@
+# RENDER-WIN STACK (2026-06-22): DDS-SLAM PROPERLY CONFIGURED + our contribution.
+# = curmap100 (cur_frame_iters 0->100, fixes the CRCD mapping-starvation copy-artifact = the biggest render
+# lever) STACKED with the WON tracking gate (flow_agree + freeze_ba -> better poses -> less drift -> sharper
+# map). The candidate render-win model. Routing (protect/attend) added on top AFTER the Round-1 verdict.
+# Decomposition in Round 1: base -> curmap100 (config gain) -> +flow_agree_baf (tracking-coupling gain) -> +route.
+inherit_from: configs/CRCD/c1_001_canon_flow_agree_baf.yaml
+data:
+  output: output/CRCD/C1_001_canon_flow_agree_baf_curmap100
+mapping:
+  cur_frame_iters: 100
