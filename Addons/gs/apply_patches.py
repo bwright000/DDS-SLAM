@@ -79,6 +79,15 @@ PATCHES = [
         "    plot_video(os.path.join(results_dir, 'eval', 'plots'), os.path.join('./experiments/', experiment.group_name, experiment.scene_name, 'keyframes'))",
         "    pass  #plotvideo-off cosmetic keyframe-plot video (IndexError on empty dir); SLAM+eval already saved",
     ),
+    # 6. eval_save renders/saves NOTHING when train_or_test='all' (visall=False + every frame is 'train'
+    #    -> the `continue` skips render+metric+plot). Flip it so the eval pass renders every frame at the
+    #    estimated pose, saving color/depth + the 6-panel plots (our visual) and computing psnr/depth_l1.
+    (
+        "utils/eval_helpers.py",
+        "visall = True",
+        "        visall = False # NOTE: for debug",
+        "        visall = True  # PATCHED (GS migration): render+save ALL frames (train_or_test='all')",
+    ),
 ]
 
 
