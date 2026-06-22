@@ -1,0 +1,16 @@
+# CRCD GS-migration data spec.
+# !! REGENERATED PER SNIPPET by the staging step -- do NOT trust the camera_params below as-is:
+#     crcd_assemble_sgs.py --mode rectified ... --emit_yaml <this file>   (writes the RECTIFIED K + scale)
+#     then `sed -i "s/dataset_name: 'replica'/dataset_name: 'crcd'/" <this file>`
+# The committed values are a structural placeholder + fallback only; the runbook overwrites them with the
+# per-snippet rectified intrinsics (from rectified_calib.txt) so K is never hardcoded/guessed.
+dataset_name: 'crcd'
+camera_params:
+  image_height: 720          # ← overwritten with the rectified frame size by the staging
+  image_width: 1280
+  fx: 1096.69619             # ← PLACEHOLDER; rectified K comes from staging (rectified_calib.txt)
+  fy: 1096.69619
+  cx: 622.807617
+  cy: 383.12598
+  png_depth_scale: 10000     # MoGe-2 uint16 PNG: value/10000 = metres (~0.26-0.80 m). Verify via Sim3 path-ratio.
+  crop_edge: 0
