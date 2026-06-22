@@ -1,4 +1,5 @@
 import os
+import yaml
 
 # GS migration Phase-0 run config: UNMODIFIED EndoGSLAM on CRCD with MoGe-2 depth.
 # This is a verbatim copy of configs/c3vd/c3vd_base.py with ONLY the `data` block re-pointed at CRCD
@@ -23,6 +24,16 @@ mapping_iters = 25
 group_name = "CRCD_base"
 run_name = f"{scene_name}_s{seed}"     # per-seed dir: experiments/CRCD_base/C1_001_s0|_s1|_s2
 
+# Native rectified res from the staging-generated data yaml (matches SGS's "native res" convention so
+# the GS-migration number is comparable to SGS c1_001=3.31mm). DOWNSAMPLE=2 halves it if a long snippet
+# OOMs the T4 (SGS ran c1_001=360 frames native fine; OOM only hit >~450 frames @1280x720).
+_DS = int(os.environ.get("DOWNSAMPLE", 1))
+try:
+    _cam = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), "..", "data", "crcd.yaml"), encoding="utf-8"))["camera_params"]
+    _H, _W = int(_cam["image_height"]) // _DS, int(_cam["image_width"]) // _DS
+except Exception:
+    _H, _W = 720 // _DS, 1280 // _DS
+
 config = dict(
     workdir=f"./experiments/{group_name}",
     run_name=run_name,
@@ -45,8 +56,8 @@ config = dict(
         basedir="./data/CRCD",                      # stage CRCD-Published <seq>/ under here on Colab
         gradslam_data_cfg="./configs/data/crcd.yaml",  # CRCD intrinsics + file globs (Brick 1)
         sequence=scene_name,                        # e.g. C1_001 (CRCD-Published 360-frame snippet)
-        desired_image_height=720 // 2,              # half-res (360x640): controls Gaussian count; ATE is
-        desired_image_width=1280 // 2,              #   res-insensitive. Bump to full 720x1280 for PSNR parity.
+        desired_image_height=_H,                    # native rectified res / DOWNSAMPLE (default native, == SGS)
+        desired_image_width=_W,
         start=0,
         end=-1,
         stride=1,

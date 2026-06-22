@@ -48,8 +48,10 @@ def est_centres_from_params(params_path):
     return centres
 
 
-def gt_centres_from_tum(gt_path, n_expected=None):
-    """CRCD GT camera centres (frame-0-relative) from groundtruth.txt (TUM)."""
+def gt_centres_from_file(gt_path, n_expected=None):
+    """GT camera centres (frame-0-relative). Auto-detects the file format:
+       - assembled traj.txt: 16 floats/line = 4x4 c2w row-major (default GT for the rectified scene);
+       - CRCD groundtruth.txt: 8 cols TUM (timestamp tx ty tz qx qy qz qw)."""
     rows = []
     with open(gt_path) as f:
         for ln in f:
@@ -58,15 +60,15 @@ def gt_centres_from_tum(gt_path, n_expected=None):
             rows.append(list(map(float, ln.split())))
     c2w = []
     for v in rows:
-        tx, ty, tz = v[1:4]
-        R = quat_xyzw_to_R(v[4:8])
-        T = np.eye(4)
-        T[:3, :3] = R
-        T[:3, 3] = [tx, ty, tz]
-        c2w.append(T)
+        if len(v) == 16:                                  # 4x4 c2w (traj.txt)
+            c2w.append(np.array(v, dtype=np.float64).reshape(4, 4))
+        elif len(v) >= 8:                                 # TUM (groundtruth.txt)
+            T = np.eye(4); T[:3, :3] = quat_xyzw_to_R(v[4:8]); T[:3, 3] = v[1:4]
+            c2w.append(T)
+        else:
+            raise ValueError(f"GT line has {len(v)} cols, expected 16 (matrix) or 8 (TUM): {gt_path}")
     c2w = np.array(c2w)
-    inv0 = np.linalg.inv(c2w[0])
-    rel = inv0[None] @ c2w                    # frame-0-relative, matches the est convention
+    rel = np.linalg.inv(c2w[0])[None] @ c2w               # frame-0-relative, matches the est convention
     centres = rel[:, :3, 3]
     if n_expected is not None and len(centres) != n_expected:
         print(f"[warn] GT frames ({len(centres)}) != est frames ({n_expected}) — pairing the first min().")
@@ -98,13 +100,14 @@ def path_length(p):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--params", required=True, help="EndoGSLAM run params.npz")
-    ap.add_argument("--gt", required=True, help="CRCD groundtruth.txt (TUM, 360 rows)")
+    ap.add_argument("--gt", required=True,
+                    help="GT: assembled <scene>/traj.txt (4x4 c2w) or CRCD groundtruth.txt (TUM)")
     ap.add_argument("--mm_scale", type=float, default=1000.0,
                     help="multiplier to report ATE in mm if GT translation is in metres (default 1000)")
     args = ap.parse_args()
 
     est = est_centres_from_params(args.params)
-    gt = gt_centres_from_tum(args.gt, n_expected=len(est))
+    gt = gt_centres_from_file(args.gt, n_expected=len(est))
     n = min(len(est), len(gt))
     est, gt = est[:n], gt[:n]
 
