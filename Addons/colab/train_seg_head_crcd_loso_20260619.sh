@@ -107,6 +107,11 @@ SUF=""; { [ "$LINEAR_HEAD" = 1 ] || [ "$BACKBONE" = dinov3 ]; } && SUF="_SWEEPON
 
 # ---- LOSO folds: for each benchmark snippet, train on the other 17 (=19 non-held-out minus 2 inner-val) ----
 for S in $FOLDS; do            # loop the REQUESTED folds; the train pool (ALL20) stays the full benchmark
+  # resume: skip a fold already finished on Drive (ckpt saved + HELD-OUT TEST printed). FORCE=1 to redo.
+  if [ "${FORCE:-0}" != 1 ] && [ -f "$OUT_DRIVE/dinov2_crcd_${S}${SUF}.pth" ] \
+     && grep -q "HELD-OUT TEST" "$OUT_DRIVE/fold_${S}.log" 2>/dev/null; then
+    echo ""; echo "### FOLD test=$S already complete (ckpt + HELD-OUT TEST present) -> skip (FORCE=1 to redo) ###"; continue
+  fi
   TR=""; for n in $ALL20; do [ "$n" = "$S" ] && continue; case " $VAL_SNIPS " in *" $n "*) continue;; esac; TR="$TR $n"; done
   echo ""; echo "### FOLD test=$S  (train on the other 17; 19 non-held-out minus 2 inner-val) ###"
   case " $CLEAN4 " in *" $S "*) echo "    [fold] $S = TRUE cross-episode";; *) echo "    [fold] $S = IN-DOMAIN under LOSO (E_3 in train) - reported separately";; esac
