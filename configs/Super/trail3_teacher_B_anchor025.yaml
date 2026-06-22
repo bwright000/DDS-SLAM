@@ -1,0 +1,9 @@
+# B Phase-1 (DEPTH-ANCHOR) — stronger anchor. teacher + B2 (route_ba) + deform_target_scale 0.25.
+# Lands the field's warp at ~1/4 magnitude (deepest inside the metric band). A/B vs anchor050 (0.5) and
+# route_ba (1.0): the sweep finds the scale that maximises render recovery while pin-EPE stays > shuffled
+# (field meaningfully alive). If 0.25 wins render but pin-EPE collapses to ~shuffled, the field is too weak.
+inherit_from: configs/Super/trail3_teacher_replay_sharp_route_ba.yaml
+data:
+  output: output/trail3_teacher_B_anchor025
+training:
+  deform_target_scale: 0.25

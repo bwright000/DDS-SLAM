@@ -125,7 +125,15 @@ class BaseDataset(Dataset):
         if getattr(self, 'deform_paths', None) is None:
             return ret
         npz = np.load(self.deform_paths[index])
-        ret["deform_dx"] = torch.from_numpy(npz['dx'].astype(np.float32))               # [gh,gw,3]
+        # B (DEPTH-ANCHOR): scale the baked Δx* targets so the field's render-applied warp lands INSIDE the
+        # metric render band. The field learns vox_motion->Δx* faithfully, but |Δx*|max=0.084 = 84% of the
+        # ±0.1 band -> over-warps the metric SDF gates -> distortion (why teacher+B2 stalled at 25.9 in the
+        # campaign). deform_target_scale<1 shrinks the field's magnitude toward metric so B2 can co-adapt the
+        # map to a band-fitting warp. Single anchor point (consistent across current_frame_mapping + replay).
+        # Default 1.0 = base byte-identical.
+        _ts = float(self.config.get('training', {}).get('deform_target_scale', 1.0))
+        _dx = npz['dx'].astype(np.float32)
+        ret["deform_dx"] = torch.from_numpy(_dx if _ts == 1.0 else _dx * _ts)            # [gh,gw,3]
         ret["deform_trust"] = torch.from_numpy(npz['trust'].astype(np.float32))[..., None]  # [gh,gw,1]
         return ret
 

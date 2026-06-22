@@ -1,0 +1,12 @@
+# B Phase-1 (DEPTH-ANCHOR) — the gate that unlocks the contribution mapping win.
+# = teacher (revive field) + B2 (route_ba, co-adapt the map to the warp) + deform_target_scale 0.5.
+# WHY: the campaign's teacher+B2 (route_ba) stalled at render 25.9 because the field over-warps the metric
+# render band (|Δx*|max 0.084 = 84% of the ±0.1 band) -> B2 co-adapts the map to a MIS-SCALED warp -> smear
+# persists. Shrinking the target ×0.5 lands the field's warp inside the band so B2 co-adapts to a band-fitting
+# warp. JUDGE: live render toward dead-field 27.70 (the contribution mapping win) AND pin-EPE stays alive
+# (field_warped_pin_epe.py). A/B vs route_ba (scale 1.0 = 25.9 baseline) + anchor025 (0.25).
+inherit_from: configs/Super/trail3_teacher_replay_sharp_route_ba.yaml
+data:
+  output: output/trail3_teacher_B_anchor050
+training:
+  deform_target_scale: 0.5
