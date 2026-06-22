@@ -45,8 +45,9 @@ def render_run(cfg, run):
                      device='cuda:0', relative_pose=True, train_or_test='all')
     d = np.load(os.path.join(run, 'params.npz'))
     fp = {k: torch.tensor(d[k]).cuda().float() for k in d.files}
-    eval_save(ds, fp, os.path.join(run, 'eval'), cfg['tracking']['sil_thres'],
-              cfg['mapping']['num_iters'], cfg['mapping']['add_new_gaussians'], save_renders=True)
+    with torch.no_grad():   # torch 2.x: eval_save's plot imshows grad tensors -> render under no_grad
+        eval_save(ds, fp, os.path.join(run, 'eval'), cfg['tracking']['sil_thres'],
+                  cfg['mapping']['num_iters'], cfg['mapping']['add_new_gaussians'], save_renders=True)
 
 
 def est_c2w(run):
