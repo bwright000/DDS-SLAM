@@ -18,11 +18,19 @@ except KeyError:
 
 map_every = 1
 keyframe_every = 8
-tracking_iters = 15
-mapping_iters = 25
+
+# --- overnight config-sweep knobs (env-driven; ALL defaults = base => bit-identical baseline) ---
+_TAG  = os.environ.get("RUN_TAG", "base")            # arm name -> run-dir suffix
+_LRT  = float(os.environ.get("LR_TRANS_MULT", 1.0))  # cam_trans LR x mult  (#0 proven lever: lower => less jitter)
+_LRR  = float(os.environ.get("LR_ROT_MULT", 1.0))    # cam_rot   LR x mult
+_SIL  = float(os.environ.get("SIL_THRES", 0.99))     # tracking silhouette mask threshold
+_FWD  = bool(int(os.environ.get("FWD_PROP", 1)))     # const-velocity init (0=off; CRCD is static-heavy)
+_DENS = bool(int(os.environ.get("DENSIFY", 0)))      # GS-gradient densification (coverage; costs runtime/VRAM)
+tracking_iters = int(os.environ.get("TRK_ITERS", 15))
+mapping_iters  = int(os.environ.get("MAP_ITERS", 25))
 
 group_name = "CRCD_base"
-run_name = f"{scene_name}_s{seed}"     # per-seed dir: experiments/CRCD_base/C1_001_s0|_s1|_s2
+run_name = f"{scene_name}_{_TAG}_s{seed}"            # experiments/CRCD_base/C1_001_<tag>_s<seed>
 
 # Native rectified res from the staging-generated data yaml (matches SGS's "native res" convention so
 # the GS-migration number is comparable to SGS c1_001=3.31mm). DOWNSAMPLE=2 halves it if a long snippet
@@ -64,19 +72,19 @@ config = dict(
         num_frames=-1,                              # -1 => all 360 frames
         train_or_test="all",                        # 🚨 NOT 'train' — we need every frame for SLAM + 360-ATE
     ),
-    tracking=dict(                                  # ← UNMODIFIED from c3vd_base.py (the surgical base)
+    tracking=dict(                                  # base values; sweep knobs override via env (defaults = base)
         use_gt_poses=False,                         # true online SLAM: estimate pose, GT only for ATE
-        forward_prop=True,                          # constant-velocity init
-        num_iters=tracking_iters,
+        forward_prop=_FWD,                          # constant-velocity init (FWD_PROP=0 to disable)
+        num_iters=tracking_iters,                   # TRK_ITERS
         use_sil_for_loss=True,
-        sil_thres=0.99,
+        sil_thres=_SIL,                             # SIL_THRES
         use_l1=True,
         ignore_outlier_depth_loss=False,
         loss_weights=dict(im=0.5, depth=1.0),
         lrs=dict(
             means3D=0.0, rgb_colors=0.0, unnorm_rotations=0.0,
             logit_opacities=0.0, log_scales=0.0,
-            cam_unnorm_rots=0.002, cam_trans=0.005,
+            cam_unnorm_rots=0.002 * _LRR, cam_trans=0.005 * _LRT,   # LR_ROT_MULT / LR_TRANS_MULT
         ),
     ),
     mapping=dict(                                   # ← UNMODIFIED from c3vd_base.py
@@ -98,7 +106,7 @@ config = dict(
             removal_opacity_threshold=0.005, final_removal_opacity_threshold=0.005,
             reset_opacities=False, reset_opacities_every=int(1e10),
         ),
-        use_gaussian_splatting_densification=False,
+        use_gaussian_splatting_densification=_DENS,   # DENSIFY=1 to enable GS-gradient clone/split
         densify_dict=dict(
             start_after=500, remove_big_after=3000, stop_after=5000, densify_every=100,
             grad_thresh=0.0002, num_to_split_into=2,
