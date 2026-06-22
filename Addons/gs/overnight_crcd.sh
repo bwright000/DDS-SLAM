@@ -14,6 +14,28 @@ DRIVE=${DRIVE:-/content/drive/MyDrive/Outputs/GS_phase0}
 LOG="$ENDO/_overnight_logs"; mkdir -p "$LOG"
 cd "$ENDO"
 
+# Ensure crcd_base.py carries the env-driven sweep knobs (idempotent; live clones predate them).
+python - "$ENDO/configs/crcd/crcd_base.py" <<'PY'
+import sys
+p=sys.argv[1]; s=open(p,encoding='utf-8').read()
+if '_TAG' not in s:
+    reps=[("tracking_iters = 15\nmapping_iters = 25",
+"_TAG=os.environ.get('RUN_TAG','base'); _LRT=float(os.environ.get('LR_TRANS_MULT',1.0)); _LRR=float(os.environ.get('LR_ROT_MULT',1.0))\n"
+"_SIL=float(os.environ.get('SIL_THRES',0.99)); _FWD=bool(int(os.environ.get('FWD_PROP',1))); _DENS=bool(int(os.environ.get('DENSIFY',0)))\n"
+"tracking_iters=int(os.environ.get('TRK_ITERS',15)); mapping_iters=int(os.environ.get('MAP_ITERS',25))"),
+('run_name = f"{scene_name}_s{seed}"','run_name = f"{scene_name}_{_TAG}_s{seed}"'),
+('forward_prop=True,','forward_prop=_FWD,'),
+('sil_thres=0.99,','sil_thres=_SIL,'),
+('cam_unnorm_rots=0.002, cam_trans=0.005,','cam_unnorm_rots=0.002*_LRR, cam_trans=0.005*_LRT,'),
+('use_gaussian_splatting_densification=False,','use_gaussian_splatting_densification=_DENS,')]
+    for old,new in reps:
+        assert old in s, 'ANCHOR MISSING in crcd_base.py: '+old[:55]+' -> re-copy the overlay crcd_base.py'
+        s=s.replace(old,new,1)
+    open(p,'w',encoding='utf-8').write(s); print('[sweep] crcd_base.py knobs added')
+else:
+    print('[sweep] crcd_base.py already env-ready')
+PY
+
 run_arm(){  # tag  "ENV ASSIGNMENTS"  seed
   local tag="$1" envv="$2" seed="${3:-0}"
   local rn="C1_001_${tag}_s${seed}" out
