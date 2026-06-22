@@ -12,6 +12,7 @@ needs the visall=True patch), (2) computes the 5 metrics PSNR / SSIM / LPIPS / L
 import argparse
 import glob
 import os
+import shutil
 import subprocess
 import sys
 
@@ -118,6 +119,8 @@ def main():
     ap.add_argument('--run', required=True)
     ap.add_argument('--genvideo', default='/content/DDS-SLAM/Addons/viz/generate_video.py')
     ap.add_argument('--skip_render', action='store_true', help='renders already on disk -> metrics+video only')
+    ap.add_argument('--drive_root', default='/content/drive/MyDrive/Outputs/GS_phase0',
+                    help='auto-ship metrics+video here (per standing two-diagnostic-sets rule)')
     a = ap.parse_args()
     cfg = SourceFileLoader('cfg', a.config).load_module().config
     scene = os.path.join(cfg['data']['basedir'], os.path.basename(cfg['data']['sequence']))
@@ -164,6 +167,18 @@ def main():
            '--output', out, '--fps', '15', '--panel_height', '360', '--panel_width', '480']
     print(f"  6-panel video -> {out}")
     subprocess.run(cmd, check=False)
+
+    # Auto-ship the two diagnostic sets (metrics + 6-panel video) to Drive (standing rule).
+    if os.path.isdir('/content/drive/MyDrive'):
+        dst = os.path.join(a.drive_root, os.path.basename(a.run.rstrip('/')))
+        os.makedirs(dst, exist_ok=True)
+        for fn in ('metrics.txt', os.path.basename(out), 'est_c2w_data.txt', 'gt_xyz.txt'):
+            src = os.path.join(a.run, fn)
+            if os.path.exists(src):
+                shutil.copy2(src, dst)
+        print(f"  shipped (metrics + 6-panel video) -> {dst}")
+    else:
+        print("  [drive] /content/drive/MyDrive not found -> NOT shipped (mount Drive to auto-ship)")
 
 
 if __name__ == '__main__':
