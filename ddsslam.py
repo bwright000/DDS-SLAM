@@ -605,19 +605,31 @@ class DDSSLAM():
                     timestamps = timestamps / self.dataset.num_frames
                 rays_o = torch.cat([rays_o,timestamps.unsqueeze(-1)],dim=1)
 
-            # MAP-PROTECT (map_route.protect>0): exclude MOVING-region rays from the static-map update. The
-            # base field is dead -> the static map can't represent deforming tissue and only gets CORRUPTED
-            # fitting it. So route what "should go to the field" OUT of the static map (keep route<thresh =
-            # static); the deformation is left to the (wired, broken) field. Sample-exclusion (losses come back
-            # meaned, so no per-ray reweight). Default 0 = no filter = base byte-identical. Guard: never drop
-            # ALL rays (keeps the step well-posed on a fully-moving batch).
+            # MAP-ROUTE direction = the moving-region question (two OPPOSITE hypotheses, decided by metric):
+            #   protect>0  -> EXCLUDE moving rays (route>=thr) from the static-map update. The dead static map
+            #                 can't represent deforming tissue and only gets CORRUPTED fitting it -> route what
+            #                 "should go to the field" OUT of the static map; leave it to the (wired) field.
+            #   attend>0   -> OVER-sample moving rays (duplicate) -> "pay SPECIAL attention to the moving parts"
+            #                 (user's intuition; correct IF a model can fit them).
+            # Sample-level (losses come back meaned, no per-ray reweight). Default both 0 = base byte-identical.
+            # Guard: protect never drops ALL rays.
             _pf = self.config.get('map_route', {}).get('protect', 0.0)
-            if _route_ba and _pf > 0 and route_w_ba is not None:
-                _keep = (route_w_ba.view(-1) < _pf)
-                if 0 < int(_keep.sum().item()) < _keep.numel():
-                    rays_o, rays_d = rays_o[_keep], rays_d[_keep]
-                    target_s, target_d, target_edge_semantic = target_s[_keep], target_d[_keep], target_edge_semantic[_keep]
-                    route_w_ba = route_w_ba[_keep]
+            _af = self.config.get('map_route', {}).get('attend', 0.0)
+            if _route_ba and route_w_ba is not None and (_pf > 0 or _af > 0):
+                _r = route_w_ba.view(-1)
+                if _pf > 0:
+                    _keep = (_r < _pf)
+                    if 0 < int(_keep.sum().item()) < _keep.numel():
+                        rays_o, rays_d = rays_o[_keep], rays_d[_keep]
+                        target_s, target_d, target_edge_semantic = target_s[_keep], target_d[_keep], target_edge_semantic[_keep]
+                        route_w_ba = route_w_ba[_keep]
+                elif _af > 0:
+                    _mv = (_r >= _af)
+                    if bool(_mv.any()):
+                        rays_o = torch.cat([rays_o, rays_o[_mv]]); rays_d = torch.cat([rays_d, rays_d[_mv]])
+                        target_s = torch.cat([target_s, target_s[_mv]]); target_d = torch.cat([target_d, target_d[_mv]])
+                        target_edge_semantic = torch.cat([target_edge_semantic, target_edge_semantic[_mv]])
+                        route_w_ba = torch.cat([route_w_ba, route_w_ba[_mv]])
 
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, route_w=route_w_ba)
 

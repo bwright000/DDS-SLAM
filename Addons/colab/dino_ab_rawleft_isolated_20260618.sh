@@ -28,6 +28,19 @@ export LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
 DINO_PY=python3
 python -c "import torch, tinycudann, marching_cubes" 2>/dev/null || { say "env build (~15min)"; bash Addons/env/colab_setup.sh --skip-data --skip-tunnel; }
 python -c "import torch;assert torch.cuda.is_available()" || { say "FATAL: no CUDA"; exit 1; }
+# tinycudann arch: colab_setup builds sm_75 (T4). On A100 (sm_80) the cached kernels won't run -> probe the
+# LIVE GPU and force-rebuild tcnn for its arch (~10min). No-op on T4. (Ported from the a100 runbooks.)
+CC=$(python -c "import torch;print('%d%d'%torch.cuda.get_device_capability())" 2>/dev/null || echo 75)
+if ! python - <<'PY' 2>/dev/null
+import torch, tinycudann as tcnn
+e=tcnn.Encoding(3,{"otype":"HashGrid","n_levels":2,"n_features_per_level":2,"log2_hashmap_size":15,"base_resolution":16,"per_level_scale":1.5})
+_=e(torch.rand(8,3,device='cuda')); print("tcnn ok")
+PY
+then
+  say "tinycudann probe FAILED on sm_$CC -> rebuild for this arch (~10min)"
+  TCNN_CUDA_ARCHITECTURES=$CC pip install -q --force-reinstall --no-deps "git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch" || { say "FATAL: TCNN rebuild failed"; exit 1; }
+  python -c "import torch,tinycudann as tcnn; tcnn.Encoding(3,{'otype':'HashGrid','n_levels':2,'n_features_per_level':2,'log2_hashmap_size':15,'base_resolution':16,'per_level_scale':1.5})(torch.rand(8,3,device='cuda'))" || { say "FATAL: TCNN still broken on sm_$CC"; exit 1; }
+fi
 # MoGe-2 is a SEPARATE pip install (colab_setup.sh does not include it) — needed for the raw-left depth.
 [[ " $DATASETS " == *crcd* ]] && { python -c 'from moge.model.v2 import MoGeModel' 2>/dev/null || { say "installing MoGe-2 (~2min)"; pip install -q git+https://github.com/microsoft/MoGe.git huggingface_hub 2>&1 | tail -3; python -c 'from moge.model.v2 import MoGeModel' || { say "FATAL: MoGe-2 still not importable"; exit 1; }; }; }
 
@@ -127,7 +140,7 @@ PY
   say "  $NAME -> $(grep -h PSNR "$DST/render.txt" 2>/dev/null|head -1) $(grep -h 'mean=' "$DST/sim3.txt" 2>/dev/null|head -1)"
 }
 
-declare -A CR=( [base]=c1_001_canon_base [geo]=c1_001_canon_uncert [dino]=c1_001_canon_uncert_dino [dino_reg]=c1_001_canon_uncert_dino_reg [geo_rd]=c1_001_canon_uncert_rgbdepth [dino_reg_rd]=c1_001_canon_uncert_dino_reg_rgbdepth [dino_reg_f]=c1_001_canon_uncert_dino_reg_fused [geofuse]=c1_001_canon_uncert_dino_reg_rgbdepth_geofuse [georgbd]=c1_001_canon_uncert_dino_reg_rgbdepth_georgbd [slot]=c1_001_canon_uncert_dino_reg_slot [slot_v1a]=c1_001_canon_uncert_dino_reg_slot_v1a [flow_track]=c1_001_canon_flow_track [geo_flow]=c1_001_canon_geo_flow [flow_gate]=c1_001_canon_flow_gate [flow_agree]=c1_001_canon_flow_agree [flow_agree_baf]=c1_001_canon_flow_agree_baf [geo_flow_agree_baf]=c1_001_canon_geo_flow_agree_baf [curmap100]=c1_001_canon_curmap100 [flow_route]=c1_001_canon_flow_agree_baf_route [flow_route_protect]=c1_001_canon_flow_agree_baf_route_protect )
+declare -A CR=( [base]=c1_001_canon_base [geo]=c1_001_canon_uncert [dino]=c1_001_canon_uncert_dino [dino_reg]=c1_001_canon_uncert_dino_reg [geo_rd]=c1_001_canon_uncert_rgbdepth [dino_reg_rd]=c1_001_canon_uncert_dino_reg_rgbdepth [dino_reg_f]=c1_001_canon_uncert_dino_reg_fused [geofuse]=c1_001_canon_uncert_dino_reg_rgbdepth_geofuse [georgbd]=c1_001_canon_uncert_dino_reg_rgbdepth_georgbd [slot]=c1_001_canon_uncert_dino_reg_slot [slot_v1a]=c1_001_canon_uncert_dino_reg_slot_v1a [flow_track]=c1_001_canon_flow_track [geo_flow]=c1_001_canon_geo_flow [flow_gate]=c1_001_canon_flow_gate [flow_agree]=c1_001_canon_flow_agree [flow_agree_baf]=c1_001_canon_flow_agree_baf [geo_flow_agree_baf]=c1_001_canon_geo_flow_agree_baf [curmap100]=c1_001_canon_curmap100 [flow_route]=c1_001_canon_flow_agree_baf_route [flow_route_protect]=c1_001_canon_flow_agree_baf_route_protect [flow_route_attend]=c1_001_canon_flow_agree_baf_route_attend )
 declare -A SU=( [base]=trail3_moge2_uncert_base [geo]=trail3_moge2_uncert [dino]=trail3_moge2_uncert_dino [dino_reg]=trail3_moge2_uncert_dino_reg [geo_rd]=trail3_moge2_uncert_rgbdepth [dino_reg_rd]=trail3_moge2_uncert_dino_reg_rgbdepth [dino_reg_f]=trail3_moge2_uncert_dino_reg_fused [geofuse]=trail3_moge2_uncert_dino_reg_rgbdepth_geofuse [slot]=trail3_moge2_uncert_dino_reg_slot )
 JOBS=(); for s in $SEEDS; do for c in $CELLS; do
   [[ " $DATASETS " == *crcd* ]] && JOBS+=("configs/CRCD/${CR[$c]}.yaml|${c}_crcd_s$s|$s|$REPO/data/CRCD/C1_001|crcd")

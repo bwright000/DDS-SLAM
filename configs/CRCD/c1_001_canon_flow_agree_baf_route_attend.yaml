@@ -1,0 +1,12 @@
+# THE COMBINE + MAP-ATTEND (2026-06-22): the user's hypothesis on the moving-region question.
+# = flow_agree_baf_route (tracking gate + flow map-route on the pristine base field) PLUS map_route.attend:
+# OVER-sample MOVING-region rays (route>=thr) in global_BA's static-map update -> "the map is moving here, pay
+# SPECIAL attention to these parts". The DIRECT OPPOSITE of _protect (which excludes them). On the DEAD field
+# these are competing hypotheses -> the metric decides: attend wins if forcing the static map to chase the
+# deformation sharpens the render; protect wins if it just smears + steals capacity from the rigid structure.
+# Parity: attend off = the route arm = base.
+inherit_from: configs/CRCD/c1_001_canon_flow_agree_baf_route.yaml
+data:
+  output: output/CRCD/C1_001_canon_flow_agree_baf_route_attend
+map_route:
+  attend: 0.5   # over-sample (duplicate) global_BA rays whose soft route >= 0.5 (clearly moving)
