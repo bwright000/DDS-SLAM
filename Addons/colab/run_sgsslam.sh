@@ -482,6 +482,9 @@ PY
      --input_depth_dir "$scene_dir/depths" \
      --render_scale "$DEPTH_SCALE" --input_scale "$DEPTH_SCALE" --sc_factor 1.0 \
      --out "$OUT/depth_l1.txt" || echo "[$NAME] WARN depth_l1 failed"
+  local nseg; nseg=$(ls "$scene_dir/semantic_ids"/*.png 2>/dev/null | wc -l)
+  echo "[$NAME] video inputs: renders=$(ls "$OUT"/*.jpg 2>/dev/null | wc -l) gt=$(ls "$OUT"/*_gt.png 2>/dev/null | wc -l) seg=$nseg depth=$(ls "$scene_dir/depths"/*.png 2>/dev/null | wc -l)"
+  [ "$nseg" -gt 0 ] || echo "[$NAME] WARN semantic_ids EMPTY ($scene_dir/semantic_ids) -> seg panel will be MISSING from the video"
   PYTHONPATH= "$DDS_PY" "$REPO/Addons/viz/generate_video.py" \
      --rgb_input_dir "$OUT" --rgb_output_dir "$OUT" \
      --depth_input_dir "$scene_dir/depths" \

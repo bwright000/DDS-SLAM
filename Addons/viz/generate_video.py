@@ -516,13 +516,20 @@ def main():
             panel_lengths['Trajectory Raw'] = len(est_xyz)
 
     n_frames = max(panel_lengths.values()) if panel_lengths else 0
-    # Per-panel stride: panels shorter than master advance slower (floor-div mapping).
-    panel_stride = {k: max(1, n_frames // max(1, L)) for k, L in panel_lengths.items()}
-    for k, s in panel_stride.items():
-        if s > 1:
-            print(f"  panel '{k}': {panel_lengths[k]} frames -> stride {s} against master {n_frames}")
     if args.max_frames:
         n_frames = min(n_frames, args.max_frames)
+    # Map the video timeline [0,n_frames) onto each panel's [0,L) PROPORTIONALLY, so a short panel
+    # (e.g. eval-strided renders=73) spreads across the FULL video instead of (a) freezing on its
+    # last frame for the tail and (b) drifting out of sync with full-length panels (depth/seg=360).
+    # Both now show the ~same scene moment at every frame. (The old floor-div stride exhausted a
+    # short panel at (L-1)*floor(M/L) << M -> the frozen ~3s tail the user saw.)
+    def pmap(frame_idx, L):
+        if L <= 1 or n_frames <= 1:
+            return 0
+        return min(L - 1, frame_idx * L // n_frames)
+    for k, L in panel_lengths.items():
+        if L != n_frames:
+            print(f"  panel '{k}': {L} frames -> proportionally mapped onto {n_frames}")
     print(f"\nTotal frames: {n_frames}, Panels: {len(panels)}")
 
     # Grid layout
@@ -563,21 +570,21 @@ def main():
             x0 = col * panel_size[1]
 
             if panel_name == 'Trajectory (Sim3-aligned)':
-                pose_idx = min(frame_idx * trajectory_stride, len(est_xyz) - 1)
+                pose_idx = pmap(frame_idx, len(est_xyz))
                 azim = frame_idx * args.rotation_speed
                 img = render_trajectory_frame(est_xyz, gt_xyz, pose_idx,
                                               panel_size, azim_offset=azim,
                                               align=True)
             elif panel_name == 'Trajectory Raw':
-                pose_idx = min(frame_idx * trajectory_stride, len(est_xyz) - 1)
+                pose_idx = pmap(frame_idx, len(est_xyz))
                 azim = frame_idx * args.rotation_speed
                 img = render_trajectory_frame(est_xyz, gt_xyz, pose_idx,
                                               panel_size, azim_offset=azim,
                                               align=False)
             elif panel_name == 'Seg Overlay':
                 rgb_paths, seg_paths = panel_data[panel_name]
-                ri = min(frame_idx, len(rgb_paths) - 1)
-                si = min(frame_idx // panel_stride.get('Segmentation', 1), len(seg_paths) - 1)
+                ri = pmap(frame_idx, len(rgb_paths))
+                si = pmap(frame_idx, len(seg_paths))
                 rgb = load_image(rgb_paths[ri], panel_size)
                 if args.seg_classmap:
                     seg = colorize_classmap(load_image(seg_paths[si], None))   # palette BEFORE resize
@@ -590,29 +597,29 @@ def main():
                     img = rgb if rgb is not None else seg
             elif panel_name == 'Field Route':
                 rgb_paths, route_paths = panel_data[panel_name]
-                ri = min(frame_idx, len(rgb_paths) - 1)
-                qi = min(frame_idx, len(route_paths) - 1)
+                ri = pmap(frame_idx, len(rgb_paths))
+                qi = pmap(frame_idx, len(route_paths))
                 rgb = load_image(rgb_paths[ri], panel_size)
                 route = colorize_route(load_image(route_paths[qi], None))   # magenta where moving (before resize)
                 route = cv2.resize(route, (panel_size[1], panel_size[0]), interpolation=cv2.INTER_NEAREST)
                 img = overlay_mask_on_rgb(rgb, route, alpha=0.5) if rgb is not None else route
             elif panel_name == 'Segmentation' and args.seg_classmap:
                 paths = panel_data[panel_name]
-                idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
+                idx = pmap(frame_idx, len(paths))
                 img = colorize_classmap(load_image(paths[idx], None))
                 img = cv2.resize(img, (panel_size[1], panel_size[0]), interpolation=cv2.INTER_NEAREST)
             elif panel_name == 'Uncertainty':
                 paths = panel_data[panel_name]
-                idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
+                idx = pmap(frame_idx, len(paths))
                 img = colormap_scalar(paths[idx], panel_size)
             elif panel_name in ('Input Depth', 'Output Depth'):
                 paths = panel_data[panel_name]
-                idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
+                idx = pmap(frame_idx, len(paths))
                 img = colormap_depth(paths[idx], panel_size, args.png_depth_scale,
                                      robust=(args.depth_norm == 'robust'))
             else:
                 paths = panel_data[panel_name]
-                idx = min(frame_idx // panel_stride[panel_name], len(paths) - 1)
+                idx = pmap(frame_idx, len(paths))
                 img = load_image(paths[idx], panel_size)
 
             if img is not None:
