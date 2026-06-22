@@ -1,0 +1,11 @@
+# Config-on-tracking-model: the improved config (curmap100 + decoder64/3) applied to the WON tracking gate.
+# = flow_agree_baf (flow_agree + freeze_ba) + cur_frame_iters 0->100 + decoder 32x2 -> 64x3. Field dead/untouched.
+# A/B question: does the CONFIG render gain (base->improved) STACK with the tracking-coupling gain
+# (base->flow_agree_baf)? Pairs with c1_001_canon_curmap100_decoder64 (base+config) and the bare baselines.
+inherit_from: configs/CRCD/c1_001_canon_flow_agree_baf_curmap100.yaml
+data:
+  output: output/CRCD/C1_001_canon_flow_agree_baf_curmap100_decoder64
+decoder:
+  hidden_dim: 64
+  num_layers: 3
+  num_layers_color: 3
