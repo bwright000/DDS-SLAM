@@ -370,6 +370,9 @@ crcd_write_cfg(){
       -e "s/desired_image_height=[0-9]*/desired_image_height=$H/" \
       -e "s/desired_image_width=[0-9]*/desired_image_width=$W/" \
       "$SGS/configs/replica/slam.py" > "$cfg"
+  # optional frame cap: T4 3DGS OOMs on long CRCD snippets (~>450 frames @1280x720). Set
+  # NUM_FRAMES=<N> to run only the first N frames (est/GT/render eval all pair on the first N).
+  [ -n "${NUM_FRAMES:-}" ] && sed -i "s/num_frames=-1/num_frames=$NUM_FRAMES/" "$cfg"
 }
 
 # run ONE CRCD snippet end-to-end (assemble -> patch -> SGS -> npz->est -> rename -> DDS eval)
