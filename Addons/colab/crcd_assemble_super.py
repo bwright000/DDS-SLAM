@@ -113,7 +113,8 @@ def main():
         # depth: MoGe uint16 -> metres -> resize NEAREST (preserve depth values) -> float32 .npy
         dep = cv2.imread(D[i], cv2.IMREAD_UNCHANGED).astype(np.float32) / a.depth_scale
         dep = cv2.resize(dep, sz, interpolation=cv2.INTER_NEAREST)
-        np.save(os.path.join(dep_out, f'{i:06d}-left.npy'), dep.astype(np.float32))
+        # loader builds the depth path as file.split('-')[0]+ext = '000000.npy' (NO -left); match it.
+        np.save(os.path.join(dep_out, f'{i:06d}.npy'), dep.astype(np.float32))
 
     gt = os.path.join(a.staged, 'groundtruth.txt')
     if os.path.isfile(gt):
