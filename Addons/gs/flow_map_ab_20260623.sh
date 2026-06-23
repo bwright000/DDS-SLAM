@@ -37,7 +37,7 @@ run_one(){   # scene tag "EXTRA_ENV" seed [dynamic_idx.npy]
   banner "EVAL $rn   (LIVE)"
   if ! env RUN_TAG="$tag" SEED="$seed" $BASE $extra \
         python -u scripts/gs_eval.py --config "$CFG" --run "$out" \
-        --holdout_every "$HOLDOUT" ${dynidx:+--dynamic_idx "$dynidx"} 2>&1 | tee "$LOG/${rn}.eval.log"; then
+        --holdout_every "$HOLDOUT" --depth_deadband "${FM_DEPTH_DB:-2.0}" ${dynidx:+--dynamic_idx "$dynidx"} 2>&1 | tee "$LOG/${rn}.eval.log"; then
     echo "[$rn] !! EVAL FAILED (see live output above)"; touch "$out/.FAILED"; return 1; fi
   [ -d /content/drive/MyDrive ] && { d="$DRIVE/$rn"; mkdir -p "$d"; \
      cp "$out"/metrics*.* "$out"/*_6panel.mp4 "$out"/est_c2w_data.txt "$LOG/${rn}".*.log "$d/" 2>/dev/null; }
