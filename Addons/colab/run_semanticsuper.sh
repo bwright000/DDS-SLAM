@@ -136,14 +136,34 @@ ss_stage(){
     echo "[$T]   logits + rgb/*_l_pts.npy) to $DRIVE_SUPER/trial_$SID and re-run."; return 20; }
 }
 
+# ---- normalize a Monodepth2 ckpt for the upstream loader -------------------------------------
+# load_checkpoints (shared_functions.py:136-148) does torch.load(path) then state["encoder"]/
+# state["depth"] -> it needs a SINGLE .pth with those top-level keys (authors' wrapped format).
+# A standard Monodepth2 weights_N/ ships RAW encoder.pth + depth.pth state-dicts -> repackage into
+# the wrapped form. Echoes a usable .pth path; returns 1 if neither shape is found.
+ss_prep_ckpt(){
+  local ck="$1" out=/content/ss_mono2_combined.pth
+  if [ -f "$ck" ] && PYTHONPATH= "$SS_ENV_PY" -c "import torch,sys; s=torch.load(sys.argv[1],map_location='cpu'); sys.exit(0 if isinstance(s,dict) and 'encoder' in s else 1)" "$ck" 2>/dev/null; then
+    echo "$ck"; return 0; fi
+  local enc dep
+  enc=$(ls "$ck"/encoder.pth "$ck"/weights_*/encoder.pth 2>/dev/null | head -1)
+  dep=$(ls "$ck"/depth.pth   "$ck"/weights_*/depth.pth   2>/dev/null | head -1)
+  if [ -f "$enc" ] && [ -f "$dep" ]; then
+    PYTHONPATH= "$SS_ENV_PY" -c "import torch,sys; torch.save({'encoder':torch.load(sys.argv[1],map_location='cpu'),'depth':torch.load(sys.argv[2],map_location='cpu')}, sys.argv[3])" "$enc" "$dep" "$out" >/dev/null 2>&1 \
+      && { echo "$out"; return 0; }
+  fi
+  return 1
+}
+
 # ---- run ONE trail end-to-end -> reproj_err.txt + report-only Table I gate ------------------
 run_trail(){
   local T=$1 OUT="$DRIVE/$1"; mkdir -p "$OUT"
   [ -f "$OUT/.DONE" ] && [ "${FORCE:-0}" != 1 ] && { echo "[$T] already done -> skip"; return 0; }
   ss_stage "$T" || { echo "BLOCKED: staging/upstream-layout (see log)" > "$OUT/status.txt"; echo "[$T] BLOCKED stage"; return 20; }
   local DD="$DATA_ROOT/$T"
-  [ -e "$MONO2_CKPT" ] || { echo "BLOCKED: Monodepth2 ckpt missing at $MONO2_CKPT (set MONO2_CKPT=<dir>)" > "$OUT/status.txt"; echo "[$T] BLOCKED no MONO2_CKPT"; return 20; }
-  [ -d "$MONO2_CKPT" ] && { [ -f "$MONO2_CKPT/encoder.pth" ] && [ -f "$MONO2_CKPT/depth.pth" ]; } || echo "[$T] WARN $MONO2_CKPT may lack encoder.pth/depth.pth -> Monodepth2 load could fail (verify ckpt layout)"
+  [ -e "$MONO2_CKPT" ] || { echo "BLOCKED: Monodepth2 ckpt missing at $MONO2_CKPT" > "$OUT/status.txt"; echo "[$T] BLOCKED no MONO2_CKPT"; return 20; }
+  local CKPT; CKPT=$(ss_prep_ckpt "$MONO2_CKPT") || { echo "BLOCKED: cannot prep Monodepth2 ckpt from $MONO2_CKPT (need a wrapped .pth with 'encoder' key, OR a Monodepth2 weights dir with encoder.pth+depth.pth)" > "$OUT/status.txt"; echo "[$T] BLOCKED ckpt-format"; return 20; }
+  echo "[$T] Monodepth2 ckpt -> $CKPT  (NOTE: weights_N = a DDS re-train, not the authors' released ckpt -> faithful-except-depth)"
   local gt; gt=$(cd "$DD" && ls rgb/*_l_pts.npy 2>/dev/null | head -1)
   [ -n "$gt" ] || { echo "BLOCKED: no rgb/*_l_pts.npy GT in $DD" > "$OUT/status.txt"; echo "[$T] BLOCKED no GT pts"; return 20; }
   local NF; NF=$(ls "$DD/rgb"/*-left.png 2>/dev/null | wc -l)
@@ -154,8 +174,8 @@ run_trail(){
   ( cd "$SS_REPO" && PYTHONPATH= "$SS_ENV_PY" run_semantic_super.py \
       --model_name "$MN" --data_dir "$DD" --data superv2 --start_id 0 --end_id "$NF" \
       --tracking_gt_file "$gt" --num_layers 50 \
-      --pretrained_encoder_checkpoint_dir "$MONO2_CKPT" \
-      --depth_model monodepth2_stereo --pretrained_depth_checkpoint_dir "$MONO2_CKPT" --post_process \
+      --pretrained_encoder_checkpoint_dir "$CKPT" \
+      --depth_model monodepth2_stereo --pretrained_depth_checkpoint_dir "$CKPT" --post_process \
       --load_seg --seg_dir seg/DeepLabV3+ --seg_ext .npy --num_classes 3 \
       --mesh_step_size "$(mesh_step "$T")" --edge_ids $(edge_ids "$T") \
       --sf_soft_seg_point_plane --sf_bn_morph --mesh_rot --mesh_face --render_loss ) 2>&1 | tee "$OUT/run.log"
