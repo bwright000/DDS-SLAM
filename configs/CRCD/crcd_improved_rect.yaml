@@ -1,0 +1,13 @@
+# RECTIFIED-BENCHMARK improved config TEMPLATE (snippet-agnostic). = crcd_basecanon (authors' canon + surgical
+# lr 1e-4) + the improved render levers (curmap100 cur_frame_iters 0->100 + decoder64/3). The 5-snippet rectified
+# benchmark runbook INJECTS, per snippet: data.datadir + timesteps + mapping.{bound,marching_cubes_bound}
+# (derived from THAT snippet's rectified MoGe depth) + cam.{fx,fy,cx,cy,H,W} (from rectified_calib.txt) +
+# data.png_depth_scale. RECTIFIED pipeline: depth is REGENERATED on the rectified left frames (NOT reused from
+# the raw-left corpus) -> rectified RGB + rectified intrinsics + rectified depth are all consistent.
+inherit_from: configs/CRCD/crcd_basecanon.yaml
+mapping:
+  cur_frame_iters: 100
+decoder:
+  hidden_dim: 64
+  num_layers: 3
+  num_layers_color: 3
