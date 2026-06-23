@@ -23,9 +23,17 @@ Same residual, **opposite sign**: where the scene moved, **up-weight the mapping
 re-fits the deformed tissue fast — "the scene deformed, the map must catch up." Localized (only where the residual
 fires) so the rest of the map is protected.
 - **What it is, honestly:** forget-and-refit. The static map keeps up; it does NOT store the deformation. Right MVP.
-- **Mechanism (EndoGSLAM):** per-pixel `w_map = f(residual)` into the mapping branch of `get_loss`
-  ([main.py:278](../../EndoGSLAM/scripts/main.py#L278)), mirror of the tracking down-weight; optional
-  residual-biased densification.
+- **Mechanism (EndoGSLAM) — GEOMETRY path, not appearance (NeRF-agent #1, 2026-06-23):** the NeRF side
+  proved an RGB-loss up-weight is a **total no-op** for deformation — the appearance loss is a weak lever;
+  what moves the rendered surface is the **geometry** supervision. So `w_map = f(residual)` must up-weight
+  the **DEPTH term** (which drives the Gaussian positions `means3D` via the rasterized depth), not just the
+  colour term. GS is *more* favourable than NeRF here: EndoGSLAM mapping `loss_weights = {im:1.0, depth:1.0}`
+  ([main.py](../../EndoGSLAM/scripts/main.py)) — depth is already first-class (not the 0.1-vs-1000 NeRF
+  imbalance), so a per-pixel depth up-weight on the moved region genuinely re-fits the geometry there.
+  Apply `w_map` to the **depth** residual in the mapping branch of `get_loss`
+  ([main.py:278](../../EndoGSLAM/scripts/main.py#L278)) (+ colour, secondary); optional residual-biased
+  densification. **Drive `w_map` from the PER-PIXEL residual, never a region/patch median** (NeRF-agent #3:
+  region-median logged `moving=0` on a frame where 7.9% of px moved >3px → it silently ignores the tool).
 - **Metric (the arbiter):** **held-out render** PSNR/SSIM/LPIPS — NOT the just-fit frame (up-weighting trivially
   raises the training-frame PSNR = overfit, not reconstruction). The claim "map keeps up" only shows on frames it
   didn't fit. **Guard:** render on the *non-deforming* regions must NOT drop (else catch-up is bleeding into the
