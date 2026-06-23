@@ -263,7 +263,7 @@ crcd_ep_sid(){ local n; n=$(echo "$1"|tr 'a-z' 'A-Z'); [[ "$n" =~ ^[A-Z][0-9]_[0
 # loaded .npy as METRIC depth (skip disp_to_depth); render_img works without pins + dumps the clean
 # render to results/<model>/render/<t>.png for PSNR (the upstream only logs renders to TensorBoard).
 ss_patch_crcd(){
-  ( cd "$SS_REPO" && git checkout -- utils/data_loader.py super/nodes.py super/deform_mesh.py 2>/dev/null ) || true  # clean slate -> idempotent
+  ( cd "$SS_REPO" && git checkout -- utils/data_loader.py super/nodes.py super/deform_mesh.py utils/labels.py 2>/dev/null ) || true  # clean slate -> idempotent
   PYTHONPATH= "$SS_ENV_PY" - "$SS_REPO" <<'PY'
 import io, os, sys
 R = sys.argv[1]
@@ -307,14 +307,23 @@ edit('utils/data_loader.py', '[DDS-crcd-kernels]', "            kernels = [3, 3,
 edit('super/deform_mesh.py', '[DDS-crcd-kernels]', "                        kernels = [3, 3, 3]\n",
      replace="                        kernels = [3] * self.opt.num_classes  # [DDS-crcd-kernels]\n")
 
-# alias the GENERIC superv2 opt.data branches to also accept crcd (depth_preprocessing invalid
-# mask etc.) so crcd reuses superv2 logic. get_K's crcd branch is FIRST -> still returns crcd_K.
-sP = os.path.join(R, 'utils/data_loader.py'); s = io.open(sP, encoding='utf-8').read()
-if "[DDS-crcd-alias]" not in s:
-    s = s.replace("opt.data == 'superv2'", "opt.data in ('superv2', 'crcd')")
-    s = s.replace('opt.data == "superv2"', 'opt.data in ("superv2", "crcd")')
-    io.open(sP, 'w', encoding='utf-8').write(s + "\n# [DDS-crcd-alias]\n")
-    print("[patch-crcd] utils/data_loader.py: superv2->crcd alias")
+# id2color palette is sized for 3 Super classes (Beef/Chicken/Tool) -> id2color[3] crashes for CRCD's
+# 4 classes. Replace with an >=8-row palette (viz only; tracking/metrics unaffected).
+edit('utils/labels.py', '[DDS-crcd-id2color]',
+     "id2color        = torch.zeros((3,3))\n",
+     replace=("id2color        = torch.tensor([[0,0,0],[230,60,60],[40,200,60],[60,120,230],"
+              "[230,230,60],[230,60,230],[60,230,230],[150,150,150]], dtype=torch.float32)  # [DDS-crcd-id2color]\n"))
+
+# alias the GENERIC superv2 opt.data branches (in BOTH data_loader.py and nodes.py) to also accept
+# crcd so it reuses superv2 logic (invalid mask, disparity-viz scale, seg-viz else-branch). get_K's
+# crcd branch is FIRST -> still returns crcd_K; nodes.py seg-viz else already routes crcd -> id2color.
+for _f in ('utils/data_loader.py', 'super/nodes.py'):
+    _p = os.path.join(R, _f); _s = io.open(_p, encoding='utf-8').read()
+    if "[DDS-crcd-alias]" in _s: continue
+    _s = _s.replace("opt.data == 'superv2'", "opt.data in ('superv2', 'crcd')")
+    _s = _s.replace('opt.data == "superv2"', 'opt.data in ("superv2", "crcd")')
+    io.open(_p, 'w', encoding='utf-8').write(_s + "\n# [DDS-crcd-alias]\n")
+    print(f"[patch-crcd] {_f}: superv2->crcd alias")
 print("[patch-crcd] done")
 PY
 }
