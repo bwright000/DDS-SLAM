@@ -300,6 +300,14 @@ edit('super/nodes.py', '[DDS-crcd-render]',
           "            _rd = _os.path.join(self.output_dir, 'render'); _os.makedirs(_rd, exist_ok=True)\n"
           "            _cv2.imwrite(_os.path.join(_rd, '%06d.png' % self.time), render_img.permute(1,2,0).cpu().numpy()[:, :, ::-1])\n"
           "        except Exception: pass\n"))
+# alias the GENERIC superv2 opt.data branches to also accept crcd (depth_preprocessing invalid
+# mask etc.) so crcd reuses superv2 logic. get_K's crcd branch is FIRST -> still returns crcd_K.
+sP = os.path.join(R, 'utils/data_loader.py'); s = io.open(sP, encoding='utf-8').read()
+if "[DDS-crcd-alias]" not in s:
+    s = s.replace("opt.data == 'superv2'", "opt.data in ('superv2', 'crcd')")
+    s = s.replace('opt.data == "superv2"', 'opt.data in ("superv2", "crcd")')
+    io.open(sP, 'w', encoding='utf-8').write(s + "\n# [DDS-crcd-alias]\n")
+    print("[patch-crcd] utils/data_loader.py: superv2->crcd alias")
 print("[patch-crcd] done")
 PY
 }
@@ -344,6 +352,7 @@ run_crcd_one(){
   echo "[$NAME] running upstream tracker on CRCD (frames=$NF res=${IMG_W}x${IMG_H} seg=$CRCD_SEG mesh_step=$CRCD_MESH_STEP, NO pins)"
   ( cd "$SS_REPO" && PYTHONPATH= "$SS_ENV_PY" run_semantic_super.py \
       --model_name "$MN" --data crcd --data_dir "$SUPER" --start_id 0 --end_id "$NF" \
+      --height "$IMG_H" --width "$IMG_W" \
       --load_depth --depth_dir depth --depth_ext .npy \
       --load_seg --seg_dir "seg/$CRCD_SEG" --seg_ext .npy --num_classes 4 \
       --phase test --save_sample_freq 1 --mesh_step_size "$CRCD_MESH_STEP" \
