@@ -49,7 +49,7 @@ run_one(){   # scene tag "EXTRA_ENV" seed [dynamic_idx.npy]
 
 FM="FM_LAMBDA=${FM_LAMBDA:-1.0} FM_DEADBAND=${FM_DEADBAND:-3.0} FM_DEPTH_DB=${FM_DEPTH_DB:-2.0}"
 banner "A/B  base vs flow_map vs uniform-ctrl  n=3  on [$SNIPPETS]  (holdout k=$HOLDOUT)"
-for sc in $SNIPPETS; do for s in 0 1 2; do
+for sc in $SNIPPETS; do for s in ${SEEDS:-0 1 2}; do
   run_one "$sc" base    "FM_HOLDOUT_EVERY=$HOLDOUT"                                                      "$s"  ""
   BDY="experiments/CRCD_base/${sc}_base_s${s}/dynamic_idx.npy"   # freeze the DYNAMIC set from base (decoupled)
   run_one "$sc" flowmap "FLOW_MAP=1 $FM FM_HOLDOUT_EVERY=$HOLDOUT"                                       "$s"  "$BDY"
