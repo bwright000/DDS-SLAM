@@ -262,6 +262,7 @@ crcd_ep_sid(){ local n; n=$(echo "$1"|tr 'a-z' 'A-Z'); [[ "$n" =~ ^[A-Z][0-9]_[0
 # loaded .npy as METRIC depth (skip disp_to_depth); render_img works without pins + dumps the clean
 # render to results/<model>/render/<t>.png for PSNR (the upstream only logs renders to TensorBoard).
 ss_patch_crcd(){
+  ( cd "$SS_REPO" && git checkout -- utils/data_loader.py super/nodes.py 2>/dev/null ) || true  # clean slate -> idempotent
   PYTHONPATH= "$SS_ENV_PY" - "$SS_REPO" <<'PY'
 import io, os, sys
 R = sys.argv[1]
@@ -272,13 +273,18 @@ def edit(path, mark, anchor, ins=None, replace=None):
     if replace is not None: s = s.replace(anchor, replace, 1)
     else: i = s.find(anchor) + len(anchor); s = s[:i] + ins + s[i:]
     io.open(p, 'w', encoding='utf-8').write(s); print(f"[patch-crcd] {path}: patched ({mark})")
-edit('utils/data_loader.py', '[DDS-crcd-K]', "    def get_K(self):\n",
-     ins=("        if self.opt.data == 'crcd':  # [DDS-crcd-K]\n"
-          "            _kv = {}\n"
-          "            for _l in open(os.path.join(self.opt.data_dir, 'crcd_K.txt')):\n"
-          "                _p = _l.split()\n"
-          "                if len(_p) >= 2 and _p[0] in ('fx','fy','cx','cy'): _kv[_p[0]] = float(_p[1])\n"
-          "            return np.array([[_kv['fx'],0,_kv['cx'],0],[0,_kv['fy'],_kv['cy'],0],[0,0,1,0],[0,0,0,1]], dtype=np.float32)\n"))
+# target SuPerDataset.get_K (the override at line 201, used by __getitem__) — NOT the base
+# GeneralDataset.get_K (raise NotImplementedError). Anchor = its signature + first 'superv1' line.
+edit('utils/data_loader.py', '[DDS-crcd-K]',
+     "    def get_K(self):\n        if self.opt.data == 'superv1':\n",
+     replace=("    def get_K(self):\n"
+              "        if self.opt.data == 'crcd':  # [DDS-crcd-K]\n"
+              "            _kv = {}\n"
+              "            for _l in open(os.path.join(self.opt.data_dir, 'crcd_K.txt')):\n"
+              "                _p = _l.split()\n"
+              "                if len(_p) >= 2 and _p[0] in ('fx','fy','cx','cy'): _kv[_p[0]] = float(_p[1])\n"
+              "            return np.array([[_kv['fx'],0,_kv['cx'],0],[0,_kv['fy'],_kv['cy'],0],[0,0,1,0],[0,0,0,1]], dtype=np.float32)\n"
+              "        if self.opt.data == 'superv1':\n"))
 edit('utils/data_loader.py', '[DDS-crcd-depth]',
      "            disp, depth = disp_to_depth(disp, self.min_depth, self.max_depth)\n",
      replace=("            if self.opt.data == 'crcd':  # [DDS-crcd-depth] loaded .npy is METRIC depth (metres)\n"
