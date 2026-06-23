@@ -1,0 +1,29 @@
+# THE COMBINED "BEST MODEL" — stacks every proven winner, each signal on the half it's strongest:
+#   RENDER   : curmap100 (cur_frame_iters 0->100) + decoder64/3            (the "improved" config win, +4.12 PSNR)
+#   MAPPING  : flow-residual MAP UP-WEIGHT (map_upweight + map_route region) -> chase the motion, render-as-is
+#   TRACKING : geo σ² DOWN-weight (Inc-1/2) + flow AGREEMENT gate + freeze_ba  (inherited from geo_flow_agree_baf
+#              = the path-length winner; σ² == geo_feat, cuts the deformation-moment ATE spikes = jitter)
+# => "up-weight mapping (flow), down-weight tracking (σ²)" with the RIGHT signal per half (σ² is appearance-blind
+# to motion, so flow does the map up-weight, σ² does the pose down-weight). All flags default-off in base => the
+# only deltas vs base are these proven levers. NOTE: map_route(region) [mapping] + flow_agree [tracking] both read
+# DINO flow but apply in different functions -> no conflict, just a shared flow compute. A 4th lever (σ²-as-map-
+# upweight = hard-example mining on the map's own NLL error) is NOT wired here -- separate test if wanted.
+inherit_from: configs/CRCD/c1_001_canon_geo_flow_agree_baf.yaml
+data:
+  output: output/CRCD/C1_001_canon_best_combine
+mapping:
+  cur_frame_iters: 100           # improved: per-frame fast map update
+decoder:
+  hidden_dim: 64                 # improved: decoder64/3
+  num_layers: 3
+  num_layers_color: 3
+training:
+  map_upweight: 2.0              # upweight: map_ray_w = 1 + 2*route on RGB+depth map loss (chase motion)
+map_route:
+  enable: true
+  mode: region                   # DINO-region Sampson residual = the motion signal
+  ref_stride: 8
+  deadband: 3.0
+  n_groups: 12
+  ransac_thresh: 1.0
+  soft_scale: 2.0
