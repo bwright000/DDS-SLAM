@@ -53,41 +53,32 @@ paper_ref(){ case "$1" in
 
 # ---- ENV-SS: isolated py3.8 old-stack (pinned wheels) + Pulsar smoke ------------------------
 build_env(){
-  echo "[env] ENV-SS (py3.8/torch1.11+cu113/pytorch3d0.6.2 Pulsar) - isolated old stack"
+  echo "[env] ENV-SS from authors' environment.yaml (conda: pytorch3d 0.6.2 binary, no fbai wheels)"
   [ -d "$SS_REPO/.git" ] || git clone "$SS_URL" "$SS_REPO" || { echo "[env] FATAL clone Python-SuPer"; return 30; }
+  local YAML="$SS_REPO/resources/environment.yaml"
+  [ -f "$YAML" ] || { echo "[env] FATAL no $YAML"; return 30; }
+  # already built? Pulsar imports -> skip (REBUILD_ENV=1 to force a clean rebuild)
+  if [ "${REBUILD_ENV:-0}" != 1 ] && [ -x "$SS_ENV_PY" ] \
+     && PYTHONPATH= "$SS_ENV_PY" -c "from pytorch3d.renderer.points.pulsar import Renderer" 2>/dev/null; then
+    echo "[env] $SS_ENV ready (Pulsar imports; REBUILD_ENV=1 to rebuild)"; return 0; fi
   if [ ! -x "$CONDA_ROOT/bin/conda" ]; then
     wget -qO /tmp/mc.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
       && bash /tmp/mc.sh -b -p "$CONDA_ROOT" || { echo "[env] FATAL miniconda"; return 30; }
   fi
-  # recent conda blocks non-interactive use of the 'defaults' channel on a TOS gate -> accept it
-  # defensively, and create from conda-forge ONLY (--override-channels) like the SGS runbook does.
+  # environment.yaml lists 'defaults'+'anaconda' channels -> accept their TOS non-interactively
   "$CONDA_ROOT/bin/conda" tos accept --override-channels \
     --channel https://repo.anaconda.com/pkgs/main --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
   "$CONDA_ROOT/bin/conda" config --set channel_priority flexible 2>/dev/null || true
-  if ! "$CONDA_ROOT/bin/conda" env list | grep -q "^$SS_ENV "; then
-    "$CONDA_ROOT/bin/conda" create -y -n "$SS_ENV" -c conda-forge --override-channels python=3.8 pip \
-      || { echo "[env] FATAL conda create (see error above)"; return 30; }
-  fi
-  [ -x "$SS_ENV_PY" ] || { echo "[env] FATAL conda env python missing ($SS_ENV_PY)"; return 30; }
-  # conda-forge minimal python can ship WITHOUT pip -> ensure it (handles an env already made sans pip)
-  PYTHONPATH= "$SS_ENV_PY" -m pip --version >/dev/null 2>&1 \
-    || "$CONDA_ROOT/bin/conda" install -y -n "$SS_ENV" -c conda-forge --override-channels pip \
-    || PYTHONPATH= "$SS_ENV_PY" -m ensurepip --upgrade \
-    || { echo "[env] FATAL no pip in $SS_ENV"; return 30; }
-  local PIP="PYTHONPATH= $SS_ENV_PY -m pip install -q"
-  eval $PIP --upgrade pip
-  eval $PIP torch==1.11.0+cu113 torchvision==0.12.0+cu113 \
-    -f https://download.pytorch.org/whl/cu113/torch_stable.html || { echo "[env] FATAL torch1.11+cu113"; return 30; }
-  eval $PIP https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py38_cu113_pyt1110/pytorch3d-0.6.2-cp38-cp38-linux_x86_64.whl \
-    || { echo "[env] FATAL pytorch3d 0.6.2 wheel"; return 30; }
-  eval $PIP torch-scatter==2.0.9 torch-sparse==0.6.14 \
-    -f https://data.pyg.org/whl/torch-1.11.0+cu113.html || { echo "[env] FATAL torch-scatter/sparse"; return 30; }
-  eval $PIP torch-geometric==2.0.4 segmentation-models-pytorch==0.3.0 open3d==0.15.2 \
-    "opencv-python==4.5.3.56" numpy==1.23.1 kornia==0.6.6 cupy-cuda113 filterpy moviepy tensorboard tqdm pyyaml scipy \
-    || { echo "[env] FATAL deps"; return 30; }
+  # create the EXACT authors' env: conda installs torch/torchvision/pytorch-scatter/-sparse/pytorch3d
+  # with their pinned build strings (py38_cu113_pyt1110) + runs the pip: section. Wipe any half-built env.
+  "$CONDA_ROOT/bin/conda" env remove -y -n "$SS_ENV" 2>/dev/null || true
+  "$CONDA_ROOT/bin/conda" env create -n "$SS_ENV" -f "$YAML" \
+    || { echo "[env] FATAL conda env create from environment.yaml (see error above)"; return 30; }
   # MANDATORY Pulsar smoke (the >512-track crash + ABI check)
   PYTHONPATH= "$SS_ENV_PY" -c "from pytorch3d.renderer.points.pulsar import Renderer; Renderer(64,64,n_channels=3,n_track=512); print('[env] Pulsar import OK')" \
     || { echo "[env] FATAL Pulsar smoke (pytorch3d/torch ABI)"; return 30; }
+  # run-time extras not pinned in the yaml (defensive; no-op if already present)
+  PYTHONPATH= "$SS_ENV_PY" -m pip install -q tqdm pyyaml 2>/dev/null || true
   echo "[env] ENV-SS ready -> $SS_ENV_PY"
 }
 
