@@ -65,10 +65,15 @@ build_env(){
     --channel https://repo.anaconda.com/pkgs/main --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
   "$CONDA_ROOT/bin/conda" config --set channel_priority flexible 2>/dev/null || true
   if ! "$CONDA_ROOT/bin/conda" env list | grep -q "^$SS_ENV "; then
-    "$CONDA_ROOT/bin/conda" create -y -n "$SS_ENV" -c conda-forge --override-channels python=3.8 \
+    "$CONDA_ROOT/bin/conda" create -y -n "$SS_ENV" -c conda-forge --override-channels python=3.8 pip \
       || { echo "[env] FATAL conda create (see error above)"; return 30; }
   fi
   [ -x "$SS_ENV_PY" ] || { echo "[env] FATAL conda env python missing ($SS_ENV_PY)"; return 30; }
+  # conda-forge minimal python can ship WITHOUT pip -> ensure it (handles an env already made sans pip)
+  PYTHONPATH= "$SS_ENV_PY" -m pip --version >/dev/null 2>&1 \
+    || "$CONDA_ROOT/bin/conda" install -y -n "$SS_ENV" -c conda-forge --override-channels pip \
+    || PYTHONPATH= "$SS_ENV_PY" -m ensurepip --upgrade \
+    || { echo "[env] FATAL no pip in $SS_ENV"; return 30; }
   local PIP="PYTHONPATH= $SS_ENV_PY -m pip install -q"
   eval $PIP --upgrade pip
   eval $PIP torch==1.11.0+cu113 torchvision==0.12.0+cu113 \
