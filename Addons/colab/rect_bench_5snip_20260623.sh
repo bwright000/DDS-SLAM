@@ -63,6 +63,13 @@ for p in sorted(glob.glob(c+'/_mo/*-left_depth.npy')):
     st=os.path.basename(p).split('-')[0]; cv2.imwrite(f'{c}/depth/{st}.png', np.clip(np.load(p).astype(np.float32),0,65535).astype(np.uint16))
 print('depth pngs:', len(glob.glob(c+'/depth/*.png')))
 PY
+  # STEREO ANCHOR every 120 frames + smooth linear ramp -> METRIC depth (the prior CRCD scale-match we ran).
+  # SGBM on the rectified L/R pair (TRUE metric) bakes depth/moge2_stereo120/*.png = moge_m*sc_f*scale; we then
+  # OVERWRITE depth/*.png (the CRCD StereoMISDataset loader globs depth/*.png) so training reads METRIC depth at
+  # sc_factor=1 -> DDS-SLAM's hardcoded trunc/range_d/near/far (tuned for metric stereo) apply correctly. (MoGe
+  # scale is ~one global per-snippet factor, so the 120-frame ramp mainly smooths residual.) Asserts >=1 anchor.
+  $DINO_PY Addons/depth/stereo120_metric_anchor.py --staged "$DD" --interval 120 --in_scale $DEPTH_SCALE --out_scale $DEPTH_SCALE --max_depth_m 5.0 || { say "  FATAL stereo120 anchor"; return 1; }
+  cp -f "$DD/depth/moge2_stereo120"/*.png "$DD/depth/" || { say "  FATAL bake metric depth -> depth/"; return 1; }
   $DINO_PY Addons/preprocess/derive_crcd_bounds.py --depth_dir "$DD/depth" --calib "$DD/rectified_calib.txt" --depth_scale $DEPTH_SCALE --name "$NAME" --out "$DD/bound.yaml" || { say "  FATAL bound"; return 1; }
   rm -rf "$DD/_mi" "$DD/_mo"; touch "$DD/.STAGED"
   say "  $NAME staged: $(ls "$DD/video_frames"/*l.png|wc -l) frames, $(ls "$DD/depth"/*.png|wc -l) depth, masks $(ls "$DD/masks"/*.png 2>/dev/null|wc -l)"
