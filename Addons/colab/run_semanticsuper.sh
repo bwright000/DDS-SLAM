@@ -59,8 +59,16 @@ build_env(){
     wget -qO /tmp/mc.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh \
       && bash /tmp/mc.sh -b -p "$CONDA_ROOT" || { echo "[env] FATAL miniconda"; return 30; }
   fi
-  "$CONDA_ROOT/bin/conda" create -y -n "$SS_ENV" python=3.8 >/dev/null 2>&1 || true
-  [ -x "$SS_ENV_PY" ] || { echo "[env] FATAL conda env not created ($SS_ENV_PY)"; return 30; }
+  # recent conda blocks non-interactive use of the 'defaults' channel on a TOS gate -> accept it
+  # defensively, and create from conda-forge ONLY (--override-channels) like the SGS runbook does.
+  "$CONDA_ROOT/bin/conda" tos accept --override-channels \
+    --channel https://repo.anaconda.com/pkgs/main --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
+  "$CONDA_ROOT/bin/conda" config --set channel_priority flexible 2>/dev/null || true
+  if ! "$CONDA_ROOT/bin/conda" env list | grep -q "^$SS_ENV "; then
+    "$CONDA_ROOT/bin/conda" create -y -n "$SS_ENV" -c conda-forge --override-channels python=3.8 \
+      || { echo "[env] FATAL conda create (see error above)"; return 30; }
+  fi
+  [ -x "$SS_ENV_PY" ] || { echo "[env] FATAL conda env python missing ($SS_ENV_PY)"; return 30; }
   local PIP="PYTHONPATH= $SS_ENV_PY -m pip install -q"
   eval $PIP --upgrade pip
   eval $PIP torch==1.11.0+cu113 torchvision==0.12.0+cu113 \
