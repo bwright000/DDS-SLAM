@@ -53,8 +53,17 @@ snip_src(){ local n=$1; local ep=${n%_*}; local sn=${n#*_}; echo "$DPUB/${ep:0:1
 stage_rect(){ local NAME=$1 SRC; local DD="$REPO/data/CRCD/$NAME"; SRC=$(snip_src "$NAME")
   [ -f "$DD/.STAGED" ] && { say "  $NAME already staged"; return 0; }
   [ -d "$SRC/rgb" ] || { say "  FATAL: snippet rgb missing at $SRC"; return 1; }
-  say "  rectify $NAME  ($SRC)"
-  python Addons/preprocess/preprocess_crcd_published.py --snippet_dir "$SRC" --calib_pkl "$CALIB" --output_dir "$DD" || { say "  FATAL rectify"; return 1; }
+  # RESUME: skip rectify / MoGe if already on disk (e.g. a re-run after an anchor-gate fix) -> straight to anchor.
+  if [ "$(ls "$DD/video_frames"/*l.png 2>/dev/null | wc -l)" -gt 0 ]; then
+    say "  rectify $NAME CACHED ($(ls "$DD/video_frames"/*l.png | wc -l) frames) -> skip"
+  else
+    say "  rectify $NAME  ($SRC)"
+    python Addons/preprocess/preprocess_crcd_published.py --snippet_dir "$SRC" --calib_pkl "$CALIB" --output_dir "$DD" || { say "  FATAL rectify"; return 1; }
+  fi
+  _nf=$(ls "$DD/video_frames"/*l.png 2>/dev/null | wc -l); _nd=$(ls "$DD/depth"/*.png 2>/dev/null | wc -l)
+  if [ "$_nd" -gt 0 ] && [ "$_nd" -eq "$_nf" ]; then
+    say "  MoGe depth $NAME CACHED ($_nd == $_nf) -> skip"
+  else
   mkdir -p "$DD/_mi"; for f in "$DD/video_frames"/*l.png; do ln -sf "$f" "$DD/_mi/$(basename "${f%l.png}")-left.png"; done
   $DINO_PY Addons/depth/generate_depth_moge.py --rgb "$DD/_mi" --out "$DD/_mo" --temporal_window 1 --depth_scale $DEPTH_SCALE --max_depth_m 5.0 --resolution_level 9 || { say "  FATAL MoGe"; return 1; }
   mkdir -p "$DD/depth"; $DINO_PY - "$DD" <<'PY'
@@ -63,6 +72,7 @@ for p in sorted(glob.glob(c+'/_mo/*-left_depth.npy')):
     st=os.path.basename(p).split('-')[0]; cv2.imwrite(f'{c}/depth/{st}.png', np.clip(np.load(p).astype(np.float32),0,65535).astype(np.uint16))
 print('depth pngs:', len(glob.glob(c+'/depth/*.png')))
 PY
+  fi
   # STEREO ANCHOR every 120 frames + smooth linear ramp -> METRIC depth (the prior CRCD scale-match we ran).
   # SGBM on the rectified L/R pair (TRUE metric) bakes depth/moge2_stereo120/*.png = moge_m*sc_f*scale; we then
   # OVERWRITE depth/*.png (the CRCD StereoMISDataset loader globs depth/*.png) so training reads METRIC depth at
