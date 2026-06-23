@@ -50,7 +50,7 @@ python -c "import lpips" 2>/dev/null || pip install -q lpips || true
 snip_src(){ local n=$1; local ep=${n%_*}; local sn=${n#*_}; echo "$DPUB/${ep:0:1}_${ep:1}/snippet_${sn}"; }
 
 # ---------- stage ONE snippet rectified (idempotent: .STAGED marker) ----------
-stage_rect(){ local NAME=$1 DD=$REPO/data/CRCD/$NAME SRC; SRC=$(snip_src "$NAME")
+stage_rect(){ local NAME=$1 SRC; local DD="$REPO/data/CRCD/$NAME"; SRC=$(snip_src "$NAME")
   [ -f "$DD/.STAGED" ] && { say "  $NAME already staged"; return 0; }
   [ -d "$SRC/rgb" ] || { say "  FATAL: snippet rgb missing at $SRC"; return 1; }
   say "  rectify $NAME  ($SRC)"
@@ -77,7 +77,7 @@ PY
 }
 
 # ---------- assemble per-snippet config: template + seed/datadir/timesteps/bound/rectified-intrinsics ----------
-mk_cfg(){ local NAME=$1 DD=$REPO/data/CRCD/$NAME OUT=$2 OVR=$3 S=$4
+mk_cfg(){ local NAME=$1 OUT=$2 OVR=$3 S=$4; local DD="$REPO/data/CRCD/$NAME"
   $DINO_PY - "$NAME" "$DD" "$OUT" "$OVR" "$DEPTH_SCALE" "$S" <<'PY'
 import sys, yaml, glob, cv2
 NAME, DD, OUT, OVR, DS, S = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]), int(sys.argv[6])
@@ -101,8 +101,8 @@ PY
 }
 
 # ---------- run ONE (snippet x seed): train -> Sim3 ATE + render + Depth-L1 + 6-panel video -> ship ----------
-run_one(){ local NAME=$1 S=$2 DD=$REPO/data/CRCD/$NAME
-  local CELL="${NAME}_s${S}" DST="$DRIVE/$CELL" OUT="output/$CELL" RUN="output/$CELL/demo" OVR="/content/_rect_${CELL}.yaml"
+run_one(){ local NAME=$1 S=$2; local DD="$REPO/data/CRCD/$NAME" CELL="${NAME}_s${S}"
+  local DST="$DRIVE/$CELL" OUT="output/$CELL" RUN="output/$CELL/demo" OVR="/content/_rect_${CELL}.yaml"
   done_m "$DST" && { say "  $CELL done -> skip"; return 0; }
   mkdir -p "$DST"; mk_cfg "$NAME" "$OUT" "$OVR" "$S" || { echo "FAILED cfg" >"$DST/.FAILED"; return 1; }
   { echo "=== $CELL $(date -Iseconds) ==="
