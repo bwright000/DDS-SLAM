@@ -1,0 +1,21 @@
+# RENDER-THE-SCENE-AS-IT-IS + chase the motion (NO tool mask). = improved (curmap100 + decoder64) + the
+# inverse-flow MAP UP-WEIGHT, with tool_mask OFF. Philosophy: don't ERASE the tool -- the tool is constantly
+# moving, so up-weight the fast-moving regions (tool = high DINO-flow residual) and let the per-frame map fit
+# (curmap100) quickly+accurately track WHERE IT IS, rendering the scene as observed. The tool stays in the
+# render at its current position; the up-weight points curmap100's iters at the motion so it doesn't lag/smear.
+# A/B: vs improved (does chasing the motion sharpen the moving tool?) and vs toolmask_up (chase WITHOUT erasing
+# vs chase-after-erasing). CAVEAT: per-frame chase matches the LIVE render (our metric) but global_BA still
+# re-bakes past tool positions into the canonical map -> a trail is the next lever (global_BA-side handling).
+inherit_from: configs/CRCD/c1_001_canon_curmap100_decoder64.yaml
+data:
+  output: output/CRCD/C1_001_canon_curmap100_decoder64_upweight
+training:
+  map_upweight: 2.0      # map_ray_w = 1 + 2*route : static->1, moving(route=1)->3x on RGB+depth map loss
+map_route:
+  enable: true
+  mode: region           # DINO k-means regions + Sampson residual = the motion signal (tool = high residual)
+  ref_stride: 8          # causal flow t-8 -> t
+  deadband: 3.0          # per-region Sampson residual (px) above which the region is "moving"
+  n_groups: 12
+  ransac_thresh: 1.0
+  soft_scale: 2.0        # graded route (0->1) -> graded up-weight
