@@ -252,6 +252,7 @@ aggregate(){
 DDS_PY=${DDS_PY:-python3}                          # system torch2 python for the DDS eval tools
 DRIVE_CRCD=${DRIVE_CRCD:-/content/drive/MyDrive/Datasets/CRCD-Published}
 DRIVE_CRCD_MOGE=${DRIVE_CRCD_MOGE:-/content/drive/MyDrive/Datasets/CRCD-Published-MoGe-2}
+DRIVE_CRCD_RECT=${DRIVE_CRCD_RECT:-/content/drive/MyDrive/Datasets/CRCD-Published-rectified}  # rectify ONCE, cache here
 CALIB_PKL=${CALIB_PKL:-$DRIVE_CRCD/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl}
 CRCD_DRIVE=${CRCD_DRIVE:-/content/drive/MyDrive/Outputs/SemanticSuPer_crcd_$DATE}
 BENCH5_CRCD="c1_001 c2_001 e3_005 c3_001 g3_001"
@@ -311,14 +312,32 @@ run_crcd_one(){
   local SRC="$DRIVE_CRCD/$EP/snippet_$SID" MOGE="$DRIVE_CRCD_MOGE/$EP/snippet_$SID/depth"
   [ -d "$SRC/rgb" ] && [ -d "$SRC/rgbright" ] || { echo "BLOCKED: CRCD stereo missing ($SRC: rgb+rgbright)" > "$OUT/status.txt"; echo "[$NAME] BLOCKED no stereo"; return 20; }
   [ "$(ls "$MOGE"/*.png 2>/dev/null|wc -l)" -gt 0 ] || { echo "BLOCKED: MoGe depth missing ($MOGE)" > "$OUT/status.txt"; echo "[$NAME] BLOCKED no MoGe"; return 20; }
-  local STAGED=/content/CRCD_staged/$UP SUPER=/content/Super_crcd/$UP; rm -rf "$STAGED" "$SUPER"
-  PYTHONPATH= "$DDS_PY" "$REPO/Addons/preprocess/preprocess_crcd_published.py" \
-     --snippet_dir "$SRC" --calib_pkl "$CALIB_PKL" --output_dir "$STAGED" \
-     || { echo "FAILED rectify/preprocess" > "$OUT/status.txt"; return 1; }
-  PYTHONPATH= "$DDS_PY" "$REPO/Addons/colab/crcd_assemble_super.py" \
-     --staged "$STAGED" --moge_depth "$MOGE" --calib "$STAGED/rectified_calib.txt" \
-     --out "$SUPER" --img_w "$IMG_W" --img_h "$IMG_H" --n_classes 4 --seg_src "$CRCD_SEG" \
-     || { echo "FAILED assemble-super" > "$OUT/status.txt"; return 1; }
+  local STAGED=/content/CRCD_staged/$UP SUPER=/content/Super_crcd/$UP
+  local nraw; nraw=$(ls "$SRC/rgb"/*.png 2>/dev/null | wc -l)
+  # ---- rectify ONCE, cached (Drive-persisted + local fast-path) ----
+  if [ "$nraw" -gt 0 ] && [ "$(ls "$STAGED/video_frames"/*l.png 2>/dev/null | wc -l)" = "$nraw" ]; then
+    echo "[$NAME] rectified: local cache hit ($nraw frames)"
+  elif [ "$nraw" -gt 0 ] && [ "$(ls "$DRIVE_CRCD_RECT/$UP/video_frames"/*l.png 2>/dev/null | wc -l)" = "$nraw" ]; then
+    echo "[$NAME] rectified: Drive cache hit -> copying local"; rm -rf "$STAGED"; mkdir -p "$STAGED"; cp -rn "$DRIVE_CRCD_RECT/$UP/." "$STAGED/"
+  else
+    echo "[$NAME] rectifying (no cache) -> $STAGED, then caching to $DRIVE_CRCD_RECT/$UP"; rm -rf "$STAGED"
+    PYTHONPATH= "$DDS_PY" "$REPO/Addons/preprocess/preprocess_crcd_published.py" \
+       --snippet_dir "$SRC" --calib_pkl "$CALIB_PKL" --output_dir "$STAGED" \
+       || { echo "FAILED rectify/preprocess" > "$OUT/status.txt"; return 1; }
+    mkdir -p "$DRIVE_CRCD_RECT/$UP"; cp -rn "$STAGED/." "$DRIVE_CRCD_RECT/$UP/" 2>/dev/null \
+       || echo "[$NAME] WARN Drive rect-cache write failed (kept local)"
+  fi
+  # ---- assemble to SuPer (skip if complete + !FORCE; depends on resize/seg params) ----
+  local nrect; nrect=$(ls "$STAGED/video_frames"/*l.png 2>/dev/null | wc -l)
+  if [ "$(ls "$SUPER/rgb"/*-left.png 2>/dev/null | wc -l)" = "$nrect" ] && [ -f "$SUPER/crcd_K.txt" ] && [ "${FORCE:-0}" != 1 ]; then
+    echo "[$NAME] SuPer-assembled: cache hit (FORCE=1 to redo)"
+  else
+    rm -rf "$SUPER"
+    PYTHONPATH= "$DDS_PY" "$REPO/Addons/colab/crcd_assemble_super.py" \
+       --staged "$STAGED" --moge_depth "$MOGE" --calib "$STAGED/rectified_calib.txt" \
+       --out "$SUPER" --img_w "$IMG_W" --img_h "$IMG_H" --n_classes 4 --seg_src "$CRCD_SEG" \
+       || { echo "FAILED assemble-super" > "$OUT/status.txt"; return 1; }
+  fi
   ss_patch_crcd || { echo "FAILED crcd patches" > "$OUT/status.txt"; return 1; }
   ss_fix_versions
   local NF; NF=$(ls "$SUPER/rgb"/*-left.png 2>/dev/null|wc -l); local MN="ss_crcd_$UP"
