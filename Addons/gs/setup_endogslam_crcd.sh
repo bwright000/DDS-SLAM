@@ -31,6 +31,19 @@ install -D -m644 "$OV/scripts/gs_eval.py"                 scripts/gs_eval.py
 echo ">>> apply in-place edits (patch, not vendor)"
 python3 "$SELF_DIR/apply_patches.py" "$ENDO_DIR"
 
+echo ">>> lay down v1 flow_map (sensor + adapter + injector + parity test + runbook)"
+install -D -m644 "$SELF_DIR/../motion/flow_track.py"        "$ENDO_DIR/Addons/motion/flow_track.py"
+install -D -m644 "$SELF_DIR/../motion/gs_flow_gate.py"      "$ENDO_DIR/Addons/motion/gs_flow_gate.py"
+install -D -m644 "$SELF_DIR/inject_flowmap_knobs.py"        "$ENDO_DIR/Addons/gs/inject_flowmap_knobs.py"
+install -D -m644 "$SELF_DIR/apply_patches_flowmap.py"       "$ENDO_DIR/Addons/gs/apply_patches_flowmap.py"
+install -D -m644 "$SELF_DIR/regression/test_flowmap_inc0.py" "$ENDO_DIR/Addons/gs/regression/test_flowmap_inc0.py"
+install -D -m644 "$SELF_DIR/flow_map_ab_20260623.sh"        "$ENDO_DIR/Addons/gs/flow_map_ab_20260623.sh"
+# package __init__ so `from Addons.motion.gs_flow_gate import ...` resolves (EndoGSLAM root is on sys.path)
+for d in Addons Addons/motion Addons/gs Addons/gs/regression; do touch "$ENDO_DIR/$d/__init__.py"; done
+
+echo ">>> apply v1 flow_map patches (parity-safe; no-op when flow_map disabled)"
+python3 "$SELF_DIR/apply_patches_flowmap.py" "$ENDO_DIR"
+
 # Upstream typo: datasets/ ships `_init_.py` (single underscores) not `__init__.py`, so the local
 # `datasets` is only a namespace package -> on Colab the installed HuggingFace `datasets` package
 # shadows it (ModuleNotFoundError: datasets.gradslam_datasets). Give it a real __init__.py so the
@@ -42,5 +55,6 @@ echo ">>> verify (syntax)"
 python3 -m py_compile \
   datasets/gradslam_datasets/crcd.py datasets/gradslam_datasets/__init__.py \
   datasets/gradslam_datasets/basedataset.py scripts/main.py \
-  configs/crcd/crcd_base.py scripts/eval_sim3_crcd.py
+  configs/crcd/crcd_base.py scripts/eval_sim3_crcd.py \
+  Addons/motion/gs_flow_gate.py Addons/motion/flow_track.py Addons/gs/inject_flowmap_knobs.py
 echo ">>> OK: EndoGSLAM + CRCD adapter ready at $ENDO_DIR"
