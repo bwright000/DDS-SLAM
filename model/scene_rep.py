@@ -609,6 +609,21 @@ class JointEncoding(nn.Module):
                 _mw_d = map_ray_w.squeeze()[valid_depth_mask]
                 depth_unc_w = _mw_d if depth_unc_w is None else depth_unc_w * _mw_d
 
+            # --- sigma^2 MAP UP-WEIGHT (mapping ONLY, the 4th lever): HARD-EXAMPLE MINING. Up-weight the map
+            # loss on the rays the map fits WORST -- high sigma^2 == high NLL residual (sigma^2 tracks the map
+            # error). DISTINCT from the flow map up-weight above (motion-chase): this targets FIT-error, not
+            # motion. Graded + bounded: 1x at/below the median sigma^2, up to (1+beta)x at >=5x median.
+            # .detach()ed so the optimiser can't game sigma^2 via the weight. None unless map_unc_upweight>0
+            # AND the head is on -> base / tracking / flow-only paths are byte-identical.
+            _muw = self.config['training'].get('map_unc_upweight', 0.0)
+            if (not tracking) and _muw > 0 and getattr(self, 'unc_on', False) and ('sigma2' in rend_dict):
+                _s = rend_dict['sigma2'].detach().squeeze()                                # [N_rays]
+                _r = ((_s / (_s.median() + 1e-8)) - 1.0).clamp(0.0, 4.0) / 4.0             # 0 well-fit -> 1 worst-fit
+                _suw = (1.0 + _muw * _r).unsqueeze(-1)                                     # [N_rays,1] : 1..(1+beta)x
+                rgb_unc_w = _suw if rgb_unc_w is None else rgb_unc_w * _suw
+                _sw_d = _suw.squeeze()[valid_depth_mask]
+                depth_unc_w = _sw_d if depth_unc_w is None else depth_unc_w * _sw_d
+
             rgb_loss = compute_loss(rend_dict["rgb"]*rgb_weight, target_rgb*rgb_weight, weights=rgb_unc_w)
             psnr = mse2psnr(rgb_loss)
             depth_loss = compute_loss(rend_dict["depth"].squeeze()[valid_depth_mask], target_d.squeeze()[valid_depth_mask], weights=depth_unc_w)

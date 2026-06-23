@@ -1,0 +1,15 @@
+# improved (curmap100 + decoder64) + the PROVEN geo sigma^2 (Inc-1 NLL on the mapping residual + Inc-2 tracking
+# down-weight). This is the REFERENCE for the sigma^2-map-upweight A/B: mapunc = THIS + map_unc_upweight, so
+# mapunc -> geo_improved isolates JUST the sigma^2 map up-weight (both share improved + the sigma^2 tracking
+# down-weight). Useful in its own right = improved render config + the proven jitter fix.
+inherit_from: configs/CRCD/c1_001_canon_curmap100_decoder64.yaml
+data:
+  output: output/CRCD/C1_001_canon_geo_improved
+uncertainty:
+  enable: true
+  hidden_dim: 32
+  num_layers: 2
+  nll_weight: 0.1
+  w_min: 0.1
+  w_max: 10.0
+  detach_pose_weight: true

@@ -1,0 +1,12 @@
+# sigma^2-as-MAP-UPWEIGHT (the 4th lever): HARD-EXAMPLE MINING. = geo_improved + map_unc_upweight -> up-weight
+# the map RGB+depth loss on the rays the map fits WORST (high sigma^2 = high NLL residual) so the map spends
+# capacity on its own worst renders. DISTINCT from the flow map up-weight (upweight = motion-chase); this targets
+# FIT-error. THE OPEN RISK: sigma^2 is aleatoric (irreducible noise) -> up-weighting genuinely-unfittable regions
+# (specular glints) wastes capacity / fits noise. Isolated A/B: mapunc -> geo_improved (does focusing the map on
+# its high-error rays RAISE render, or overfit noise and DROP it?) + mapunc vs upweight (sigma^2 vs flow). If it
+# wins, the principled form is sigma^2*route (only the reducible/moving high-error rays). Default off => parity.
+inherit_from: configs/CRCD/c1_001_canon_geo_improved.yaml
+data:
+  output: output/CRCD/C1_001_canon_mapunc
+training:
+  map_unc_upweight: 2.0      # 1x at/below median sigma^2, up to 3x on the worst-fit rays (bounded, detached)
