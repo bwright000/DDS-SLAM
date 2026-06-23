@@ -107,7 +107,7 @@ def get_masks(z_vals, target_d, truncation):
 
     return front_mask, sdf_mask, fs_weight, sdf_weight
 
-def compute_loss(prediction, target, border=None, loss_type='l2', weights=None, UsePercentage=False, percentage=0.8):
+def compute_loss(prediction, target, border=None, loss_type='l2', weights=None, UsePercentage=False, percentage=0.8, charbonnier_eps=0.01):
     '''
     Params: 
         prediction: torch.Tensor, (Bs, N_samples)
@@ -127,7 +127,13 @@ def compute_loss(prediction, target, border=None, loss_type='l2', weights=None, 
             weighted_loss = loss * weights
         elif loss_type == 'l1':
             loss = F.l1_loss(prediction, target, reduction='none')
-            weighted_loss = loss * weights   
+            weighted_loss = loss * weights
+        elif loss_type == 'charbonnier':
+            # robust pseudo-Huber (On-the-go / WildGS / chinaxiv-spirit): sqrt((pred-tgt)^2 + eps^2) - eps
+            # down-weights the specular / instrument-glint outliers that L2 over-fits -> the optimiser spends
+            # capacity on structure instead of chasing saturated pixels -> sharper SSIM/LPIPS.
+            loss = torch.sqrt((prediction - target) ** 2 + charbonnier_eps ** 2) - charbonnier_eps
+            weighted_loss = loss * weights
         else:
             raise Exception('Unsupported loss type')
         return weighted_loss.mean()

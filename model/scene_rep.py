@@ -624,7 +624,7 @@ class JointEncoding(nn.Module):
                 _sw_d = _suw.squeeze()[valid_depth_mask]
                 depth_unc_w = _sw_d if depth_unc_w is None else depth_unc_w * _sw_d
 
-            rgb_loss = compute_loss(rend_dict["rgb"]*rgb_weight, target_rgb*rgb_weight, weights=rgb_unc_w)
+            rgb_loss = compute_loss(rend_dict["rgb"]*rgb_weight, target_rgb*rgb_weight, loss_type=self.config['training'].get('rgb_loss_type', 'l2'), charbonnier_eps=self.config['training'].get('charbonnier_eps', 0.01), weights=rgb_unc_w)
             psnr = mse2psnr(rgb_loss)
             depth_loss = compute_loss(rend_dict["depth"].squeeze()[valid_depth_mask], target_d.squeeze()[valid_depth_mask], weights=depth_unc_w)
 

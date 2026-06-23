@@ -1,0 +1,7 @@
+# Robust photometric render loss on top of best: L2 -> Charbonnier (sqrt((pred-tgt)^2+eps^2)-eps). Endoscopy has
+# severe specular/instrument glint; L2 squares + chases those outliers at the cost of structure. Charbonnier
+# de-weights them -> the optimiser fits structure -> targets SSIM/LPIPS (at a small PSNR cost by design).
+# Parity: rgb_loss_type default 'l2' => base byte-identical.
+inherit_from: configs/CRCD/c1_001_canon_best_combine.yaml
+data: {output: output/CRCD/C1_001_canon_best_charbonnier}
+training: {rgb_loss_type: charbonnier, charbonnier_eps: 0.01}

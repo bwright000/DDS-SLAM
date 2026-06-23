@@ -1,0 +1,7 @@
+# RENDER capacity moonshot on top of best: decoder 64/3 -> 128/4 (color+SDF) + denser surface sampling
+# (n_range_d 16 -> 24). Pure config. Targets PSNR (+0.6-1.8 if decoder-bound) / LPIPS. ATE neutral. Parity:
+# only render-capacity knobs, base byte-identical when not inherited.
+inherit_from: configs/CRCD/c1_001_canon_best_combine.yaml
+data: {output: output/CRCD/C1_001_canon_best_dec128_nr24}
+decoder: {hidden_dim: 128, num_layers: 4, num_layers_color: 4}
+training: {n_range_d: 24}

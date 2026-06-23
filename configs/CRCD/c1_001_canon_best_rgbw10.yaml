@@ -1,0 +1,6 @@
+# RENDER signal boost on top of best: rgb_weight 5 -> 10 (hold SDF 1000, fs 10). The photometric budget is ~0.5%
+# of the loss; doubling it gives the color MLP more say WITHOUT touching geometry (zero ATE risk). Targets PSNR
+# +0.2-0.8. NOTE edge_semantic is scaled by rgb_weight*0.1 (ddsslam.py get_loss_from_ret) -> it also doubles.
+inherit_from: configs/CRCD/c1_001_canon_best_combine.yaml
+data: {output: output/CRCD/C1_001_canon_best_rgbw10}
+training: {rgb_weight: 10.0}

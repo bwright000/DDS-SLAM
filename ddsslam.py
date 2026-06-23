@@ -843,6 +843,13 @@ class DDSSLAM():
 
                 # Slicing
                 indice_h, indice_w = indice % (self.dataset.H - iH * 2), indice // (self.dataset.H - iH * 2)
+                # tool exclusion from the POSE solve ONLY -- the tool STAYS in the map and is still RENDERED;
+                # we just drop the GT tool (seg==2) from the tracking rays so its independent motion can't drag
+                # the camera pose. Default off (tool_mask_track flag off OR no seg) => base byte-identical.
+                if self.config['training'].get('tool_mask_track', False) and 'seg' in batch:
+                    _kt = (batch['seg'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w] != 2)
+                    if 0 < int(_kt.sum()) < _kt.numel():
+                        indice_h, indice_w = indice_h[_kt], indice_w[_kt]
                 rays_d_cam = batch['direction'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
             target_s = batch['rgb'].squeeze(0)[iH:-iH, iW:-iW, :][indice_h, indice_w, :].to(self.device)
             target_d = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][indice_h, indice_w].to(self.device).unsqueeze(-1)
@@ -852,7 +859,7 @@ class DDSSLAM():
             # cropped frame, so offset the pixel coords by (iH,iW) into the full-FOV grid.
             target_dino = sample_dino_grid(batch['dino_grid'].squeeze(0), indice_h + iH, indice_w + iW, self.dataset.H, self.dataset.W).to(self.device) if 'dino_grid' in batch else None
 
-            rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample'], 1)
+            rays_o = c2w_est[...,:3, -1].repeat(rays_d_cam.shape[0], 1)   # ACTUAL ray count (tool_mask_track may drop tool px); == tracking.sample unfiltered => base byte-identical
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1)
 
             if self.config['dynamic']:

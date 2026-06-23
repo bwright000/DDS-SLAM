@@ -1,0 +1,7 @@
+# Pose-only GT tool exclusion on top of best: drop the GT tool (seg==2) from the TRACKING ray sample so its
+# independent motion can't drag the camera pose -- the tool STAYS in the map and is fully RENDERED (nothing
+# removed from the scene). Targets PSNR/SSIM via cleaner pose -> better-aligned map (the +0.47 'best' mechanism),
+# replacing the flow gate's weak (AUC 0.6) tool down-weight with a perfect mask. Parity: tool_mask_track off => base.
+inherit_from: configs/CRCD/c1_001_canon_best_combine.yaml
+data: {output: output/CRCD/C1_001_canon_best_tooltrack}
+training: {tool_mask_track: true}
