@@ -43,18 +43,29 @@ def sgbm_metric_depth(left_gray, right_gray, baseline_m, fx):
 
 
 def anchor_scale(staged, fid, baseline_m, fx, in_scale):
-    """sc = median(stereo_depth / moge_depth) at one anchor frame. None if too few joint px."""
+    """Reliability-aware anchor. Returns (sc, spread, n):
+       sc     = median(stereo_depth / moge_depth) over joint-valid px (the metric scale at this frame),
+       spread = IQR/median of that ratio = how CONSISTENT stereo and MoGe are. A reliable frame has a tight
+                ratio (one global scale); a SCATTERED ratio means SGBM invented disparities on a textureless/
+                specular/blurred frame -> the median is a wrong-but-confident scale (the F_3/007 failure),
+       n      = joint-valid px count.
+       Returns (None, None, n) if unreadable or too few joint px to trust at all."""
     left = cv2.imread(f'{staged}/video_frames/{fid}l.png', cv2.IMREAD_GRAYSCALE)
     right = cv2.imread(f'{staged}/video_frames/{fid}r.png', cv2.IMREAD_GRAYSCALE)
     moge = cv2.imread(f'{staged}/depth/{fid}.png', cv2.IMREAD_UNCHANGED)
     if left is None or right is None or moge is None:
-        return None
+        return None, None, 0
     moge_m = moge.astype(np.float32) / in_scale
     sd, vs = sgbm_metric_depth(left, right, baseline_m, fx)
     vj = vs & (sd > 0.05) & (sd < 3.0) & (moge_m > 0.01)
-    if vj.sum() < 500:
-        return None
-    return float(np.median(sd[vj] / moge_m[vj]))
+    n = int(vj.sum())
+    if n < 500:
+        return None, None, n
+    r = sd[vj] / moge_m[vj]
+    med = float(np.median(r))
+    q1, q3 = np.percentile(r, [25, 75])
+    spread = float((q3 - q1) / med) if med > 0 else 9.99
+    return med, spread, n
 
 
 def main():
@@ -65,6 +76,14 @@ def main():
     ap.add_argument('--out_scale', type=float, default=10000.0, help='output PNG = metric_m * out_scale')
     ap.add_argument('--max_depth_m', type=float, default=5.0)
     ap.add_argument('--out_subdir', default='moge2_stereo120')
+    ap.add_argument('--max_ratio_spread', type=float, default=0.50,
+                    help='reject an anchor whose stereo/MoGe ratio IQR/median exceeds this (scattered=bad stereo)')
+    ap.add_argument('--rel_tol', type=float, default=0.25,
+                    help='cross-anchor: drop sc-outliers >this fraction from the robust median (needs >=3 anchors)')
+    ap.add_argument('--min_inliers', type=int, default=1,
+                    help='FAIL LOUDLY (non-zero exit) if fewer than this many reliable anchors survive')
+    ap.add_argument('--max_cv', type=float, default=0.30,
+                    help='WARN if surviving-anchor CV exceeds this (a global MoGe scale is expected ~0.03)')
     args = ap.parse_args()
 
     calib = {}
@@ -81,16 +100,45 @@ def main():
     anchor_idx = sorted(set(list(range(0, N, args.interval)) + [0, N - 1]))
     a_idx, a_sc = [], []
     for i in anchor_idx:
-        sc = anchor_scale(args.staged, fids[i], baseline_m, fx, args.in_scale)
-        if sc is not None:
-            a_idx.append(i); a_sc.append(sc)
-            print(f'  anchor frame {i:4d} ({fids[i]}): sc_f = {sc:.4f}')
+        sc, spread, n = anchor_scale(args.staged, fids[i], baseline_m, fx, args.in_scale)
+        if sc is None:
+            print(f'  anchor frame {i:4d} ({fids[i]}): SKIP (unreadable / {n}<500 joint stereo px)')
+        elif spread > args.max_ratio_spread:
+            print(f'  anchor frame {i:4d} ({fids[i]}): REJECT (stereo/MoGe ratio spread {spread:.2f} '
+                  f'> {args.max_ratio_spread} -> unreliable stereo) sc~{sc:.4f}')
         else:
-            print(f'  anchor frame {i:4d} ({fids[i]}): SKIP (too few joint stereo px)')
-    assert len(a_sc) >= 1, 'no usable stereo anchor -> cannot build metric depth'
+            a_idx.append(i); a_sc.append(sc)
+            print(f'  anchor frame {i:4d} ({fids[i]}): sc_f = {sc:.4f}  ratio-spread={spread:.2f}  n={n}')
+
+    # ---- 1b. cross-anchor outlier rejection: the MoGe scale is ~ONE global factor, so a reliable anchor's sc
+    #          must agree with the robust median; a survivor that does not (a textured-background false match)
+    #          is dropped. Needs >=3 anchors to vote. ----
+    if len(a_sc) >= 3:
+        med = float(np.median(a_sc))
+        keep = [j for j, s in enumerate(a_sc) if abs(s - med) / med <= args.rel_tol]
+        if len(keep) < len(a_sc):
+            print(f'  cross-anchor: dropped {len(a_sc)-len(keep)} sc-outlier anchor(s) '
+                  f'(> {args.rel_tol:.0%} from median {med:.4f})')
+            a_idx = [a_idx[j] for j in keep]; a_sc = [a_sc[j] for j in keep]
+
+    # ---- 1c. QUALITY GATE: fail LOUDLY rather than bake a silently-wrong scale (the F_3/007 lesson). A bad
+    #          snippet's stereo is untrustworthy throughout -> every anchor sparse/scattered -> 0 inliers -> stop.
+    #          The post-hoc Sim3 path-ratio (~1 when right) is the downstream confirmation. ----
+    n_in = len(a_sc)
+    cv = float(np.std(a_sc) / np.mean(a_sc)) if n_in >= 2 else 0.0
+    if n_in < args.min_inliers:
+        open(f'{args.staged}/.anchor_quality', 'w').write(f'FAIL inliers={n_in} need>={args.min_inliers}\n')
+        raise SystemExit(f'\nSTEREO ANCHOR FAILED: {n_in} reliable anchor(s) (< {args.min_inliers}). Every anchor '
+                         f'was sparse or scattered -> this snippet\'s stereo is untrustworthy; NOT baking a guessed '
+                         f'scale. Marker: {args.staged}/.anchor_quality')
+    status = 'PASS' if (n_in >= 2 and cv <= args.max_cv) else 'WARN'
+    note = '' if status == 'PASS' else (
+        f'  <-- {"single anchor (no cross-check)" if n_in < 2 else f"high CV {cv:.0%} (expected ~3%)"}; '
+        f'trust the post-hoc Sim3 path-ratio')
+    open(f'{args.staged}/.anchor_quality', 'w').write(f'{status} inliers={n_in} cv={cv:.3f} sc_med={np.median(a_sc):.4f}\n')
     a_idx, a_sc = np.array(a_idx, float), np.array(a_sc, float)
-    print(f'  {len(a_sc)} usable anchors; sc range [{a_sc.min():.4f}, {a_sc.max():.4f}] '
-          f'(drift {100*(a_sc.max()/a_sc.min()-1):.1f}%)')
+    print(f'  ANCHOR QUALITY: {status}  reliable_anchors={n_in}  cross-anchor CV={cv:.1%}  '
+          f'sc_med={np.median(a_sc):.4f}  range [{a_sc.min():.4f}, {a_sc.max():.4f}]{note}')
 
     # ---- 2. smooth linear ramp of sc across ALL frames (np.interp clamps at the ends) ----
     sc_per_frame = np.interp(np.arange(N, dtype=float), a_idx, a_sc)

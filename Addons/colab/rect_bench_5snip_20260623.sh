@@ -70,6 +70,7 @@ PY
   # scale is ~one global per-snippet factor, so the 120-frame ramp mainly smooths residual.) Asserts >=1 anchor.
   $DINO_PY Addons/depth/stereo120_metric_anchor.py --staged "$DD" --interval 120 --in_scale $DEPTH_SCALE --out_scale $DEPTH_SCALE --max_depth_m 5.0 || { say "  FATAL stereo120 anchor"; return 1; }
   cp -f "$DD/depth/moge2_stereo120"/*.png "$DD/depth/" || { say "  FATAL bake metric depth -> depth/"; return 1; }
+  say "  $NAME stereo-anchor quality: $(cat "$DD/.anchor_quality" 2>/dev/null || echo '?')"   # PASS/WARN/FAIL gate (FAIL already aborted above)
   $DINO_PY Addons/preprocess/derive_crcd_bounds.py --depth_dir "$DD/depth" --calib "$DD/rectified_calib.txt" --depth_scale $DEPTH_SCALE --name "$NAME" --out "$DD/bound.yaml" || { say "  FATAL bound"; return 1; }
   rm -rf "$DD/_mi" "$DD/_mo"; touch "$DD/.STAGED"
   say "  $NAME staged: $(ls "$DD/video_frames"/*l.png|wc -l) frames, $(ls "$DD/depth"/*.png|wc -l) depth, masks $(ls "$DD/masks"/*.png 2>/dev/null|wc -l)"
@@ -118,7 +119,7 @@ PY
       --rgb_output_dir "$OUT" --rgb_output_pattern '[0-9]*.jpg' --depth_input_dir "$DD/depth" --depth_output_dir "$OUT/depth" \
       --seg_dir "$DD/masks" --seg_classmap --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DD/groundtruth.txt" \
       --output "$DST/panels.mp4" --fps 15 || echo WARN-video
-    cp "$RUN/est_c2w_data.txt" "$DST/" 2>/dev/null
+    cp "$RUN/est_c2w_data.txt" "$DD/.anchor_quality" "$DST/" 2>/dev/null
   } > "$DST/run.log" 2>&1
   local N; N=$(grep -cvE '^\s*#|^\s*$' "$RUN/est_c2w_data.txt" 2>/dev/null); [ "${N:-0}" -ge 1 ] && touch "$DST/.DONE" || echo "FAILED" >"$DST/.FAILED"
   say "  $CELL -> $(grep -h PSNR "$DST/render_eval.txt" 2>/dev/null|head -1) | $(grep -hE 'rmse/mean' "$DST/sim3_metrics.txt" 2>/dev/null|head -1)"
