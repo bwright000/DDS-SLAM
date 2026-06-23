@@ -155,7 +155,7 @@ def compute_loss(prediction, target, border=None, loss_type='l2', weights=None, 
         return loss
 
     
-def get_sdf_loss(z_vals, target_d, predicted_sdf, truncation, loss_type=None, grad=None):
+def get_sdf_loss(z_vals, target_d, predicted_sdf, truncation, loss_type=None, grad=None, ray_weight=None):
     '''
     Params:
         z_vals: torch.Tensor, (Bs, N_samples)
@@ -170,8 +170,13 @@ def get_sdf_loss(z_vals, target_d, predicted_sdf, truncation, loss_type=None, gr
     '''
     front_mask, sdf_mask, fs_weight, sdf_weight = get_masks(z_vals, target_d, truncation)
 
-    fs_loss = compute_loss(predicted_sdf * front_mask, torch.ones_like(predicted_sdf) * front_mask, loss_type) * fs_weight
-    sdf_loss = compute_loss((z_vals + predicted_sdf * truncation) * sdf_mask, target_d * sdf_mask, loss_type) * sdf_weight
+    # ARM (the RIGHT knob for "chase the deforming region"): optional per-ray up-weight on the GEOMETRY loss.
+    # SDF+fs are ~99% of the loss budget and ARE what renders the (deformed) surface -- up-weighting moving rays
+    # HERE (not on RGB+depth ~0.5%, which map_upweight wrongly touched) makes the current-frame map fit the
+    # deforming geometry harder. ray_weight [N_rays] -> broadcast over samples. None => byte-identical (ones).
+    _w = ray_weight.view(-1, 1).expand_as(z_vals) if ray_weight is not None else None
+    fs_loss = compute_loss(predicted_sdf * front_mask, torch.ones_like(predicted_sdf) * front_mask, loss_type, weights=_w) * fs_weight
+    sdf_loss = compute_loss((z_vals + predicted_sdf * truncation) * sdf_mask, target_d * sdf_mask, loss_type, weights=_w) * sdf_weight
 
     with torch.no_grad():
         n_fs = int(front_mask.sum().item())

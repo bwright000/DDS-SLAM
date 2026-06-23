@@ -1,0 +1,21 @@
+# THE RIGHT KNOB: SDF (GEOMETRY) up-weight on deforming regions. = improved + map_sdf_upweight + map_route.
+# The deformation render IS geometry, driven by the SDF loss (weight 1000, from the depth) -- NOT RGB+depth
+# (5 + 0.1) which map_upweight wrongly touched and which did NOTHING (flat render, identical video, even where
+# the route fired at 55%). Up-weight the SDF+fs loss on moving rays (route high) -> the current-frame map fits
+# the deformed surface HARDER there -> sharper deformation render. A/B vs improved: does chasing the GEOMETRY --
+# the loss that actually moves the surface -- sharpen the deformation? NOTE the route is region-MEDIAN (coarse:
+# fires on BROAD motion like c1_001's last third [P99 15-106px], misses localized) -> this is testable on the
+# heavy last-third motion; if it wins, refine to a PER-PIXEL route to also catch localized deformation.
+inherit_from: configs/CRCD/c1_001_canon_curmap100_decoder64.yaml
+data:
+  output: output/CRCD/C1_001_canon_curmap100_decoder64_sdfup
+training:
+  map_sdf_upweight: 2.0      # up-weight SDF+fs GEOMETRY loss on moving rays: 1x static, up to 3x deforming
+map_route:
+  enable: true
+  mode: region               # DINO-region Sampson residual vs camera = the motion signal
+  ref_stride: 8
+  deadband: 3.0
+  n_groups: 12
+  ransac_thresh: 1.0
+  soft_scale: 2.0

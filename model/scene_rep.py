@@ -650,7 +650,14 @@ class JointEncoding(nn.Module):
             z_vals = rend_dict['z_vals']  # [N_rand, N_samples + N_importance]
             sdf = rend_dict['raw'][..., -1]  # [N_rand, N_samples + N_importance]
             truncation = self.config['training']['trunc'] * self.config['data']['sc_factor']
-            fs_loss, sdf_loss, sdf_stats = get_sdf_loss(z_vals, target_d, sdf, truncation, 'l2', grad=None)
+            # --- SDF MAP UP-WEIGHT (the RIGHT knob): up-weight the GEOMETRY loss (SDF+fs, ~99% of the budget --
+            # the thing that renders the deformed surface) on moving/deforming rays. route_w high -> the current-
+            # frame map fits the deformed geometry HARDER there -> sharper deformation render. This is what
+            # map_upweight SHOULD have been (it wrongly touched RGB+depth ~0.5% and did nothing). .detach()ed;
+            # None unless map_sdf_upweight>0 + route exists + mapping -> base/tracking byte-identical.
+            _sw = self.config['training'].get('map_sdf_upweight', 0.0)
+            _sdf_rw = (1.0 + _sw * route_w).detach().squeeze() if ((not tracking) and _sw > 0 and route_w is not None) else None
+            fs_loss, sdf_loss, sdf_stats = get_sdf_loss(z_vals, target_d, sdf, truncation, 'l2', grad=None, ray_weight=_sdf_rw)
 
             # --- ARM-2 Inc-1: self-supervised aleatoric NLL on the photometric residual.
             # L_nll = mean( 0.5 * (rgb_err^2 / sigma^2 + log sigma^2) ). Trains the
