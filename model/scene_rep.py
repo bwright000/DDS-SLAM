@@ -625,6 +625,22 @@ class JointEncoding(nn.Module):
                 depth_unc_w = _sw_d if depth_unc_w is None else depth_unc_w * _sw_d
 
             rgb_loss = compute_loss(rend_dict["rgb"]*rgb_weight, target_rgb*rgb_weight, loss_type=self.config['training'].get('rgb_loss_type', 'l2'), charbonnier_eps=self.config['training'].get('charbonnier_eps', 0.01), weights=rgb_unc_w)
+            # chinaxiv (Eq.17) gradient-constancy ||grad(render)-grad(target)|| + L1 image-gradient (TV) render
+            # term -> matches edges / penalises high-freq noise = STRUCTURE -> SSIM/LPIPS (pure-L2 never optimises
+            # them). The mapper patch-samples k×k blocks when gradloss_weight>0, so rgb/target reshape to [P,k,k,3].
+            # None unless gradloss_weight>0 AND not tracking -> base byte-identical.
+            _gw = self.config['training'].get('gradloss_weight', 0.0)
+            if (not tracking) and _gw > 0:
+                _k = int(self.config['training'].get('grad_patch', 8))
+                _P = rend_dict['rgb'].shape[0] // (_k * _k)
+                if _P > 0:
+                    _r = rend_dict['rgb'][:_P*_k*_k].view(_P, _k, _k, 3)
+                    _t = target_rgb[:_P*_k*_k].view(_P, _k, _k, 3)
+                    _gxr = _r[:, :, 1:, :] - _r[:, :, :-1, :]; _gxt = _t[:, :, 1:, :] - _t[:, :, :-1, :]
+                    _gyr = _r[:, 1:, :, :] - _r[:, :-1, :, :]; _gyt = _t[:, 1:, :, :] - _t[:, :-1, :, :]
+                    _gc = (_gxr - _gxt).abs().mean() + (_gyr - _gyt).abs().mean()        # gradient constancy
+                    _tv = _gxr.abs().mean() + _gyr.abs().mean()                          # L1 image-gradient (TV)
+                    rgb_loss = rgb_loss + _gw * (_gc + self.config['training'].get('grad_tv_beta', 0.1) * _tv)
             psnr = mse2psnr(rgb_loss)
             depth_loss = compute_loss(rend_dict["depth"].squeeze()[valid_depth_mask], target_d.squeeze()[valid_depth_mask], weights=depth_unc_w)
 

@@ -413,9 +413,18 @@ class DDSSLAM():
             pose_optimizer.zero_grad()
             self.cur_map_optimizer.zero_grad()
             c2w_est = self.matrix_from_tensor(cur_rot, cur_trans)
-            indice = self.select_samples(self.dataset.H, self.dataset.W, self.config['mapping']['sample'])
-
-            indice_h, indice_w = indice % (self.dataset.H), indice // (self.dataset.H)
+            # chinaxiv gradient loss needs SPATIAL neighbours -> sample k×k PATCHES (in patch order) so the render
+            # can reshape to [P,k,k,3] for the gradient term. Default off (gradloss_weight 0) => scattered = base.
+            if self.config['training'].get('gradloss_weight', 0.0) > 0:
+                _k = int(self.config['training'].get('grad_patch', 8))
+                _P = max(1, self.config['mapping']['sample'] // (_k * _k))
+                _th = torch.randint(0, self.dataset.H - _k, (_P,)); _tw = torch.randint(0, self.dataset.W - _k, (_P,))
+                _dh = torch.arange(_k).view(1, _k, 1); _dw = torch.arange(_k).view(1, 1, _k)
+                indice_h = (_th.view(_P, 1, 1) + _dh).expand(_P, _k, _k).reshape(-1)
+                indice_w = (_tw.view(_P, 1, 1) + _dw).expand(_P, _k, _k).reshape(-1)
+            else:
+                indice = self.select_samples(self.dataset.H, self.dataset.W, self.config['mapping']['sample'])
+                indice_h, indice_w = indice % (self.dataset.H), indice // (self.dataset.H)
             # TOOL BINARY MASK: drop tool pixels (canonical seg==2) from this current-frame map update -- the
             # DOMINANT mapper under curmap100 (~100 iters/frame vs global_BA ~4) -- so the static map is not
             # corrupted by the moving instrument; the tool region then renders the tissue behind it, fused from

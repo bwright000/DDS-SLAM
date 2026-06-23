@@ -1,0 +1,11 @@
+# chinaxiv-inspired GRADIENT render loss on top of best (Luan et al. 2022, Eq.17 transferred to NeRF render):
+# gradient-constancy ||grad(render)-grad(target)|| + L1 image-gradient (TV). Pure-L2 optimises PSNR but never
+# SSIM/LPIPS; this structure term targets them. Requires SPATIAL neighbours -> the mapper PATCH-samples 8x8 blocks
+# when gradloss_weight>0 (default 0 => scattered = base byte-identical). Targets SSIM/LPIPS. BOLD: the patch
+# sampling changes the mapping ray distribution (clustered vs scattered) -> A/B vs best tests the combined effect.
+inherit_from: configs/CRCD/c1_001_canon_best_combine.yaml
+data: {output: output/CRCD/C1_001_canon_best_gradloss}
+training:
+  gradloss_weight: 0.5      # weight of (grad-constancy + beta*TV), relative to the rgb L2
+  grad_patch: 8             # k: sample 8x8 patches -> 2048/64 = 32 patches
+  grad_tv_beta: 0.1         # weight of the L1 image-gradient (TV) regulariser within the term
