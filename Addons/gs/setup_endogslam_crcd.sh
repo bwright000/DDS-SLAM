@@ -38,6 +38,7 @@ install -D -m644 "$SELF_DIR/inject_flowmap_knobs.py"        "$ENDO_DIR/Addons/gs
 install -D -m644 "$SELF_DIR/apply_patches_flowmap.py"       "$ENDO_DIR/Addons/gs/apply_patches_flowmap.py"
 install -D -m644 "$SELF_DIR/regression/test_flowmap_inc0.py" "$ENDO_DIR/Addons/gs/regression/test_flowmap_inc0.py"
 install -D -m644 "$SELF_DIR/flow_map_ab_20260623.sh"        "$ENDO_DIR/Addons/gs/flow_map_ab_20260623.sh"
+install -D -m644 "$SELF_DIR/flowmap_decide.py"             "$ENDO_DIR/Addons/gs/flowmap_decide.py"
 # package __init__ so `from Addons.motion.gs_flow_gate import ...` resolves (EndoGSLAM root is on sys.path)
 for d in Addons Addons/motion Addons/gs Addons/gs/regression; do touch "$ENDO_DIR/$d/__init__.py"; done
 
