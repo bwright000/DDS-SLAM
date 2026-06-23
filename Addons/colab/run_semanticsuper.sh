@@ -300,6 +300,12 @@ edit('super/nodes.py', '[DDS-crcd-render]',
           "            _rd = _os.path.join(self.output_dir, 'render'); _os.makedirs(_rd, exist_ok=True)\n"
           "            _cv2.imwrite(_os.path.join(_rd, '%06d.png' % self.time), render_img.permute(1,2,0).cpu().numpy()[:, :, ::-1])\n"
           "        except Exception: pass\n"))
+# evaluate() (the reproj-err eval) is called unconditionally (super.py:81) but accesses pin-only
+# attrs (track_rsts @775); with no green-pins (evaluate_tracking=False) -> AttributeError. Early-return.
+edit('super/nodes.py', '[DDS-crcd-noeval]',
+     "    def evaluate(self):\n",
+     ins="        if not getattr(self, 'evaluate_tracking', False): return  # [DDS-crcd-noeval] no green-pins on CRCD\n")
+
 # per-class kernel lists are hardcoded for 3 classes ([3,3,3]) but indexed by range(num_classes) ->
 # overflow at CRCD's 4 classes. Size them to num_classes.
 edit('utils/data_loader.py', '[DDS-crcd-kernels]', "            kernels = [3, 3, 3]\n",
