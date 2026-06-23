@@ -43,16 +43,10 @@ for NAME in $SNIPPETS; do
       --drive "$DRIVE" $SMALL_FLAG || { say "  attribution FAILED"; continue; }
 done
 
-say "===== VERDICT SUMMARY ====="
-printf "%-10s %8s %8s %8s %8s %-12s\n" snippet R_tool R_tissue ratio AUC verdict
+say "===== MOTION SUMMARY (per-pixel P99 — NeRF agent: localized motion, NOT the median) ====="
 for NAME in C1_001 $SNIPPETS; do
   r="output/attribution/$NAME/results.txt"; [ -f "$r" ] || r="$DRIVE/$NAME/results.txt"
-  [ -f "$r" ] || { printf "%-10s %s\n" "$NAME" "(no results)"; continue; }
-  rt=$(awk -F: '/residual  TOOL/{gsub(/ /,"",$2);print $2}' "$r")
-  ri=$(awk -F: '/residual  TISSUE/{gsub(/ /,"",$2);print $2}' "$r")
-  ra=$(awk -F'(REAL)' '/ratio  tool\/tissue  \(REAL\)/{n=split($2,a,":");gsub(/[^0-9.]/,"",a[2]);print a[2]}' "$r")
-  au=$(awk -F'\\(REAL\\):' '/AUC  R: tool-vs-tissue \(REAL\)/{gsub(/[^0-9.]/,"",$2);print $2}' "$r")
-  vd=$(awk '/VERDICT:/{print $3}' "$r")
-  printf "%-10s %8s %8s %8s %8s %-12s\n" "$NAME" "${rt:-?}" "${ri:-?}" "${ra:-?}" "${au:-?}" "${vd:-?}"
+  echo "--- $NAME ---"
+  if [ -f "$r" ]; then grep -E 'P99 residual|frames with motion|px > .*TOOL|VERDICT:' "$r" | sed 's/^/  /'; else echo "  (no results)"; fi
 done
-say "Panels + results in $DRIVE/<snippet>/  ·  key read: which snippets have residual >> the ~3px gate deadband (real motion to detect)"
+say "Panels + results in $DRIVE/<snippet>/  ·  key read = MAX P99 (px) + motion-frames: which snippets have real above-deadband scene motion to model."

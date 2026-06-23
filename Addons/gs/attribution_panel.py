@@ -114,13 +114,17 @@ def main():
     log(">>> [attribution] loading RAFT ...")
     model, tf = ft.load_raft(dev, small=a.small)
 
-    # accumulators
-    rt, rti, rbg = [], [], []          # per-frame median residual on tool / tissue / (real)
-    ratio_real, ratio_null = [], []    # per-frame med_tool/med_tissue  (real & spatially-misaligned)
-    auc_tool_vals, auc_labels = [], []  # pooled pixel residuals + labels (1 tool, 0 tissue) for AUC
+    # accumulators. NeRF-agent #3: localized/intermittent motion is WASHED OUT by the median ->
+    # the real signal is per-pixel P99 + fraction-above-deadband, NOT the median (their P99 hit 106px).
+    DEADBAND = 3.0                     # gate "real motion" threshold (px)
+    rt, rti, rbg = [], [], []          # per-frame median residual tool/tissue/bg (kept for the ratio)
+    p99_all = []                       # per-frame P99 over the whole frame ("how much motion this frame")
+    f3_tool, f3_tissue = [], []        # per-frame fraction of px > DEADBAND (tool / tissue)
+    ratio_real, ratio_null = [], []    # per-frame med_tool/med_tissue (real & spatially-misaligned null)
+    auc_tool_vals, auc_labels = [], []  # pooled pixel residuals + labels for AUC
     n_used = n_fail = n_notool = 0
-    seg_buf = deque(maxlen=a.shift + 1)  # ring buffer of (tool,tissue) masks for NULL-B
-    viz_pool = []                        # (tool_count, ref_idx) -> pick top n_viz
+    seg_buf = deque(maxlen=a.shift + 1)
+    viz_pool = []                       # (p99_frame, ref) -> show the HIGHEST-motion frames
 
     log(f">>> [attribution] scanning { (n-a.stride)//1 } pairs ...")
     t0 = time.time()
@@ -135,12 +139,17 @@ def main():
 
         if R.max() <= 0:                   # F-fit failed -> residual all-zero (degenerate forward/zoom)
             n_fail += 1
+        p99f = float(np.percentile(R, 99))  # overall-frame motion (every frame, even no-tool)
+        p99_all.append(p99f); viz_pool.append((p99f, ref))
         if tool.sum() < MIN_PX or tissue.sum() < MIN_PX:
             n_notool += 1
         else:
             n_used += 1
-            mt, mi, mb = np.median(R[tool]), np.median(R[tissue]), np.median(R[seg == 0]) if (seg == 0).any() else 0.0
+            mt, mi = np.median(R[tool]), np.median(R[tissue])
+            mb = np.median(R[seg == 0]) if (seg == 0).any() else 0.0
             rt.append(mt); rti.append(mi); rbg.append(float(mb))
+            f3_tool.append(float(np.mean(R[tool] > DEADBAND)))        # px-fraction above deadband (NOT median)
+            f3_tissue.append(float(np.mean(R[tissue] > DEADBAND)))
             ratio_real.append(mt / (mi + 1e-6))
             # NULL-B: this frame's residual vs the tool mask from `shift` frames ago
             if len(seg_buf) == seg_buf.maxlen:
@@ -155,56 +164,59 @@ def main():
             Rr = R.ravel()
             auc_tool_vals.append(Rr[ti]); auc_labels.append(np.ones(len(ti)))
             auc_tool_vals.append(Rr[si]); auc_labels.append(np.zeros(len(si)))
-            viz_pool.append((int(tool.sum()), ref))
 
         if (i % 30 == 0) or (i == n - 1):
             el = time.time() - t0
             eta = el / max(i - a.stride + 1, 1) * (n - 1 - i)
             log(f"    pair {i}/{n-1} · used {n_used} · no-tool {n_notool} · F-fail {n_fail} · {el:.0f}s · eta {eta:.0f}s")
 
-    # ---- stats ----
+    # ---- stats (P99 / deadband-centric: the signal is localized motion, NOT the median) ----
     fitfail_rate = n_fail / max(n_used + n_notool + n_fail, 1)
-    if n_used < 5:
-        # Not enough tool-visible frames to use the tool as the independent-motion proxy.
-        rr = rn = frac = auc_real = auc_null = float('nan')
-        verdict = "UNTESTABLE"
-        log(f">>> [attribution] only {n_used} frames had both tool & tissue (>= {MIN_PX}px) -> tool-proxy test UNTESTABLE.")
-        log(">>> [attribution] will still ship a residual panel for visual inspection.")
-        rt = rt or [float('nan')]; rti = rti or [float('nan')]; rbg = rbg or [float('nan')]
-    else:
+    p99_max = float(np.max(p99_all)) if p99_all else 0.0
+    p99_med = float(np.median(p99_all)) if p99_all else 0.0
+    n_moving = int(np.sum(np.array(p99_all) > DEADBAND)) if p99_all else 0     # frames with real motion
+    has_motion = (p99_max > 5.0) and (n_moving >= max(3, int(0.05 * max(len(p99_all), 1))))
+    if n_used >= 5:
         from sklearn.metrics import roc_auc_score
         vals = np.concatenate(auc_tool_vals); labs = np.concatenate(auc_labels)
         auc_real = roc_auc_score(labs, vals)
-        rng = np.random.default_rng(0)
-        auc_null = roc_auc_score(rng.permutation(labs), vals)   # NULL-A: shuffled labels -> ~0.5
+        auc_null = roc_auc_score(np.random.default_rng(0).permutation(labs), vals)  # NULL-A: shuffled labels ~0.5
         rr = float(np.median(ratio_real)) if ratio_real else float('nan')
         rn = float(np.median(ratio_null)) if ratio_null else float('nan')
-        frac = float(np.mean(np.array(rt) > np.array(rti)))
-        # ---- verdict ----
-        go = (rr > 1.30) and (auc_real > 0.60) and (rr > 1.5 * (rn if rn == rn else 1.0)) and (auc_real - auc_null > 0.08)
-        weak = (not go) and (rr > 1.12) and (auc_real > 0.55)
-        verdict = "GO" if go else ("WEAK" if weak else "NO-GO")
+        ft_tool, ft_tissue = float(np.mean(f3_tool)), float(np.mean(f3_tissue))
+        localizes = (ft_tool > 2 * ft_tissue + 1e-6) or (auc_real > 0.60)
+    else:
+        auc_real = auc_null = rr = rn = ft_tool = ft_tissue = float('nan'); localizes = None
+        rt = rt or [float('nan')]; rti = rti or [float('nan')]; rbg = rbg or [float('nan')]
+    # ---- verdict (motion-FIRST; localization refines). NeRF agent: motion is real & large on CRCD. ----
+    if not has_motion:
+        verdict = "NO-GO (rigid)"
+    elif localizes is None:
+        verdict = "GO (motion; tool-loc untestable)"
+    elif localizes:
+        verdict = "GO"
+    else:
+        verdict = "WEAK (motion, diffuse)"
 
     summary = [
         "=" * 64,
         ">>> [attribution] RESULT",
         "=" * 64,
-        f"  frames used (tool present)   : {n_used}   (no-tool {n_notool}, F-fail {n_fail})",
-        f"  F-fit failure rate           : {fitfail_rate:6.1%}   (high => forward/zoom degeneracy; sensor unreliable there)",
-        f"  median residual  TOOL        : {np.median(rt):7.3f}",
-        f"  median residual  TISSUE      : {np.median(rti):7.3f}",
-        f"  median residual  BG          : {np.median(rbg):7.3f}",
-        f"  ratio  tool/tissue  (REAL)   : {rr:6.2f}   <- effect size (>1 = residual sits on the tool)",
-        f"  ratio  tool/tissue  (NULL-B) : {rn:6.2f}   <- spatial-misalign null (should collapse to ~1)",
-        f"  frac frames  tool>tissue     : {frac:6.1%}",
-        f"  AUC  R: tool-vs-tissue (REAL): {auc_real:6.3f}   <- can the residual classify the tool",
-        f"  AUC  R: tool-vs-tissue (NULL): {auc_null:6.3f}   <- shuffled labels (~0.5)",
+        f"  frames                       : {n_used} tool-present (+{n_notool} no-tool, {n_fail} F-fail)",
+        f"  F-fit failure rate           : {fitfail_rate:6.1%}",
+        "  -- SCENE MOTION (per-pixel P99 over the frame; the signal, NOT the median) --",
+        f"  P99 residual  per-frame      : median {p99_med:6.2f} px   MAX {p99_max:7.1f} px",
+        f"  frames with motion P99>{DEADBAND:g}px  : {n_moving}/{len(p99_all)}   <- how often/where the scene moves",
+        "  -- LOCALIZATION (does the motion sit on the moving tool?) --",
+        f"  px > {DEADBAND:g}px:  TOOL {ft_tool:6.1%}  vs  TISSUE {ft_tissue:6.1%}",
+        f"  AUC  R tool-vs-tissue        : {auc_real:6.3f}  (null {auc_null:.3f})",
+        f"  median tool/tissue           : {np.median(rt):.3f} / {np.median(rti):.3f}  (ratio {rr:.2f}, null {rn:.2f})",
         "-" * 64,
         f"  VERDICT: {verdict}",
-        {"GO":   "  -> residual localizes independent motion; build v1 on it.",
-         "WEAK": "  -> WEAK signal; eyeball the panel before committing v1.",
-         "NO-GO": "  -> residual does NOT track real motion; v1 mis-aimed (fix depth-scale/LR, not a gate).",
-         "UNTESTABLE": "  -> too few tool frames; judge from the residual panel + rerun on a tool-rich snippet."}.get(verdict, ""),
+        ("  -> real, localized motion on the mover: BUILD v1 here (geometry-path up-weight)." if verdict == "GO" else
+         "  -> real motion present; too few tool frames to attribute -> eyeball the panel." if "untestable" in verdict else
+         "  -> motion present but diffuse (specular/global?) -> eyeball before v1." if verdict.startswith("WEAK") else
+         "  -> sub-deadband everywhere: genuinely rigid here, nothing for v1 to model."),
         "=" * 64,
     ]
     for s in summary:
@@ -212,7 +224,7 @@ def main():
     with open(os.path.join(a.out, 'results.txt'), 'w') as f:
         f.write("\n".join(summary) + "\n")
 
-    # ---- visual panel: top-n_viz frames by tool area ----
+    # ---- visual panel: top-n_viz HIGHEST-MOTION frames (by per-frame P99) ----
     log(">>> [attribution] building visual panel ...")
     import matplotlib
     matplotlib.use('Agg')
@@ -240,7 +252,7 @@ def main():
                 ax[r, c].set_xticks([]); ax[r, c].set_yticks([])
         for c, t in enumerate(['input RGB', 'flow residual', 'seg (tool=R, tissue=G)', 'residual on TISSUE (cand. deform)']):
             ax[0, c].set_title(t, fontsize=11)
-        fig.suptitle(f'attribution  c1_001  ·  tool/tissue ratio REAL {rr:.2f} vs NULL {rn:.2f}  ·  AUC {auc_real:.3f}  ·  {verdict}', fontsize=12)
+        fig.suptitle(f'attribution {os.path.basename(a.scene.rstrip("/"))}  ·  P99 max {p99_max:.0f}px · motion-frames {n_moving}/{len(p99_all)} · tool>{DEADBAND:g}px {ft_tool:.0%} · {verdict}', fontsize=11)
         fig.tight_layout()
         pp = os.path.join(figs, 'attribution_panel.png')
         fig.savefig(pp, dpi=90, bbox_inches='tight'); plt.close(fig)
