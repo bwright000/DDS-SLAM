@@ -215,7 +215,7 @@ class StereoMISDataset(BaseDataset):
         # the SAME ratio rule as __getitem__ (1:1 CRCD vs half-rate StereoMIS) so seg_label_paths[index]
         # pairs correctly. None => no 'seg' key => base/per-pixel-dino bit-identical.
         self.seg_label_paths = None
-        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0 or self.config.get('training', {}).get('tool_mask', False):
+        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0 or self.config.get('training', {}).get('tool_mask', False) or self.config.get('training', {}).get('tool_mask_track', False):
             if len(self.semantic_paths) >= len(self.img_files):
                 self.seg_label_paths = [self.semantic_paths[min(i, len(self.semantic_paths) - 1)]
                                         for i in range(len(self.img_files))]
@@ -415,7 +415,7 @@ class SuperDataset(BaseDataset):
         # 1:1 (one mask per frame). Read via cv2.IMREAD_UNCHANGED in _attach_seg. None => no 'seg' key
         # => base/per-pixel-dino bit-identical.
         self.seg_label_paths = None
-        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0 or self.config.get('training', {}).get('tool_mask', False):
+        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0 or self.config.get('training', {}).get('tool_mask', False) or self.config.get('training', {}).get('tool_mask_track', False):
             self.seg_label_paths = [self.semantic_paths[min(i, len(self.semantic_paths) - 1)]
                                     for i in range(len(self.img_files))]
 
