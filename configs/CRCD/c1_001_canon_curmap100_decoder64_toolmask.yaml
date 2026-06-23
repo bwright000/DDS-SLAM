@@ -1,0 +1,13 @@
+# TOOL BINARY MASK on the improved render config. Drops tool pixels (canonical seg==2) from the dominant
+# current-frame map update (curmap100 must be ON, which it is) -> the static tissue map is not corrupted by
+# the moving instrument; the tool region renders the tissue behind it (fused from tool-free frames) = the
+# standard surgical tool-removal that DDS-SLAM never did. CRCD masks staged by the runbook (masks/*l.png,
+# canonicalised {0 bg, 1 tissue, 2 tool}). JUDGE: tissue render (whole-image AND tissue-only PSNR/SSIM/LPIPS)
+# + the 6-panel video (tool region should show clean tissue, not a ghost). A/B vs curmap100_decoder64 (no mask).
+# NOTE: global_BA (~4 iters/frame) still maps the tool faintly -> a residual ghost may remain; global_BA mask
+# (keyframe-DB tool exclusion) is the follow-up if the residual shows.
+inherit_from: configs/CRCD/c1_001_canon_curmap100_decoder64.yaml
+data:
+  output: output/CRCD/C1_001_canon_curmap100_decoder64_toolmask
+training:
+  tool_mask: true

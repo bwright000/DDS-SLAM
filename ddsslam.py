@@ -416,6 +416,14 @@ class DDSSLAM():
             indice = self.select_samples(self.dataset.H, self.dataset.W, self.config['mapping']['sample'])
 
             indice_h, indice_w = indice % (self.dataset.H), indice // (self.dataset.H)
+            # TOOL BINARY MASK: drop tool pixels (canonical seg==2) from this current-frame map update -- the
+            # DOMINANT mapper under curmap100 (~100 iters/frame vs global_BA ~4) -- so the static map is not
+            # corrupted by the moving instrument; the tool region then renders the tissue behind it, fused from
+            # tool-free frames. Default off (tool_mask flag off OR no 'seg' key) => base byte-identical.
+            if self.config['training'].get('tool_mask', False) and 'seg' in batch:
+                _keep = (batch['seg'].squeeze(0)[indice_h, indice_w] != 2)
+                if 0 < int(_keep.sum()) < _keep.numel():
+                    indice_h, indice_w = indice_h[_keep], indice_w[_keep]
             rays_d_cam = batch['direction'].squeeze(0)[indice_h, indice_w, :].to(self.device)
             target_s = batch['rgb'].squeeze(0)[indice_h, indice_w, :].to(self.device)
             target_edge_semantic = batch['edge_semantic'].squeeze(0)[indice_h, indice_w].to(self.device).unsqueeze(-1)
