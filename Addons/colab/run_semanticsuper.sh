@@ -30,8 +30,11 @@ SS_URL=https://github.com/ucsdarclab/Python-SuPer
 SS_SHA=${SS_SHA:-be244fa}
 CONDA_ROOT=${CONDA_ROOT:-/content/miniconda3}
 SS_ENV=${SS_ENV:-super-ss}; SS_ENV_PY="$CONDA_ROOT/envs/$SS_ENV/bin/python"
-DATA_ROOT=${DATA_ROOT:-$REPO/data/Super}        # trail_3 ships local; trail_4/8/9 from the authors' Drive
-MONO2_CKPT=${MONO2_CKPT:-}                       # Monodepth2-stereo ckpt DIR (user downloads from authors' Drive) - REQUIRED for repro
+DATA_ROOT=${DATA_ROOT:-/content/Super}          # staged LOCAL (Drive FUSE drops on long runs); ss_stage copies here
+# Canonical Drive source for the Super trails (memory reference_drive_dataset_paths): Drive uses
+# 'trial_N' (i), repo wants 'trail_N' (a) -> ss_stage renames on copy.
+DRIVE_SUPER=${DRIVE_SUPER:-/content/drive/MyDrive/Datasets/SemSup/v2_data}
+MONO2_CKPT=${MONO2_CKPT:-/content/drive/MyDrive/Datasets/depthmodels/semsup_variant_a_stereo_paper-faithful}  # Monodepth2-stereo ckpt
 DRIVE=${DRIVE:-/content/drive/MyDrive/Outputs/SemanticSuPer_phaseA_$DATE}
 PHASE=${1:-}; TRAIL_ARG=${2:-}
 ALL4="trail_3 trail_4 trail_8 trail_9"
@@ -105,13 +108,36 @@ print('[patch] reproj txt-dump injected after the TB scalars')
 PY
 }
 
+# ---- stage a Super trail from Drive (trial_N -> trail_N) + verify the UPSTREAM layout --------
+# Drive SemSup/v2_data may hold only the DDS-SLAM SUBSET (left + png_masks + moge depth). The
+# upstream tracker needs MORE: stereo (-left + -right), seg/DeepLabV3+/*.npy soft logits, and the
+# green-pin rgb/*_l_pts.npy. Verify all four and fail LOUD (exit 20) if the subset was shipped.
+ss_stage(){
+  local T=$1 SID=${1##*_} dst="$DATA_ROOT/$T"
+  if [ ! -d "$dst/rgb" ] || [ "$(ls "$dst"/rgb/*-left.png 2>/dev/null | wc -l)" -eq 0 ]; then
+    local src="$DRIVE_SUPER/trial_$SID"
+    [ -d "$src" ] || { echo "[$T] BLOCKED: Super source not on Drive: $src"; return 20; }
+    echo "[$T] staging $src -> $dst (local copy; trial_$SID -> $T)"
+    mkdir -p "$DATA_ROOT"; rm -rf "$dst"; cp -r "$src" "$dst" || { echo "[$T] FAILED copy"; return 1; }
+  fi
+  local nl nr ns np
+  nl=$(ls "$dst"/rgb/*-left.png 2>/dev/null | wc -l); nr=$(ls "$dst"/rgb/*-right.png 2>/dev/null | wc -l)
+  ns=$(ls "$dst"/seg/DeepLabV3+/*-left.npy 2>/dev/null | wc -l); np=$(ls "$dst"/rgb/*_l_pts.npy 2>/dev/null | wc -l)
+  echo "[$T] layout: left=$nl right=$nr seg/DeepLabV3+=$ns pins=$np"
+  { [ "$nl" -ge 2 ] && [ "$nr" -ge 2 ] && [ "$ns" -ge 2 ] && [ "$np" -ge 1 ]; } || {
+    echo "[$T] BLOCKED: incomplete UPSTREAM layout. The Drive $DRIVE_SUPER/trial_$SID looks like the"
+    echo "[$T]   DDS-SLAM subset (left+masks+moge). Upload the FULL Super trail (stereo + seg/DeepLabV3+/*.npy"
+    echo "[$T]   logits + rgb/*_l_pts.npy) to $DRIVE_SUPER/trial_$SID and re-run."; return 20; }
+}
+
 # ---- run ONE trail end-to-end -> reproj_err.txt + report-only Table I gate ------------------
 run_trail(){
   local T=$1 OUT="$DRIVE/$1"; mkdir -p "$OUT"
   [ -f "$OUT/.DONE" ] && [ "${FORCE:-0}" != 1 ] && { echo "[$T] already done -> skip"; return 0; }
+  ss_stage "$T" || { echo "BLOCKED: staging/upstream-layout (see log)" > "$OUT/status.txt"; echo "[$T] BLOCKED stage"; return 20; }
   local DD="$DATA_ROOT/$T"
-  [ -d "$DD/rgb" ] || { echo "BLOCKED: data missing at $DD/rgb (download trail from authors' Drive)" > "$OUT/status.txt"; echo "[$T] BLOCKED no data"; return 20; }
-  [ -n "$MONO2_CKPT" ] && [ -d "$MONO2_CKPT" ] || { echo "BLOCKED: Monodepth2 ckpt dir missing (set MONO2_CKPT=<dir>)" > "$OUT/status.txt"; echo "[$T] BLOCKED no MONO2_CKPT"; return 20; }
+  [ -e "$MONO2_CKPT" ] || { echo "BLOCKED: Monodepth2 ckpt missing at $MONO2_CKPT (set MONO2_CKPT=<dir>)" > "$OUT/status.txt"; echo "[$T] BLOCKED no MONO2_CKPT"; return 20; }
+  [ -d "$MONO2_CKPT" ] && { [ -f "$MONO2_CKPT/encoder.pth" ] && [ -f "$MONO2_CKPT/depth.pth" ]; } || echo "[$T] WARN $MONO2_CKPT may lack encoder.pth/depth.pth -> Monodepth2 load could fail (verify ckpt layout)"
   local gt; gt=$(cd "$DD" && ls rgb/*_l_pts.npy 2>/dev/null | head -1)
   [ -n "$gt" ] || { echo "BLOCKED: no rgb/*_l_pts.npy GT in $DD" > "$OUT/status.txt"; echo "[$T] BLOCKED no GT pts"; return 20; }
   local NF; NF=$(ls "$DD/rgb"/*-left.png 2>/dev/null | wc -l)
