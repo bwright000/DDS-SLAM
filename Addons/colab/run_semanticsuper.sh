@@ -174,6 +174,15 @@ else:
 PY
 }
 
+# ---- pin the authors' numpy/scikit-image (the yaml left them UNPINNED -> conda took NEWER versions
+# that break the old upstream: np.bool removed in numpy>=1.24 (utils.py:503); skimage>=0.20 ssim
+# requires data_range (data_loader.py:367)). Idempotent: only pins if the versions are wrong. ----
+ss_fix_versions(){
+  PYTHONPATH= "$SS_ENV_PY" -c "import numpy,skimage,sys; sys.exit(0 if numpy.__version__.startswith('1.23') and skimage.__version__.startswith('0.19') else 1)" 2>/dev/null \
+    || { echo "[env] pinning authors' numpy==1.23.1 + scikit-image==0.19.3 (upstream needs np.bool / old ssim)"; \
+         PYTHONPATH= "$SS_ENV_PY" -m pip install -q "numpy==1.23.1" "scikit-image==0.19.3"; }
+}
+
 # ---- run ONE trail end-to-end -> reproj_err.txt + report-only Table I gate ------------------
 run_trail(){
   local T=$1 OUT="$DRIVE/$1"; mkdir -p "$OUT"
@@ -190,6 +199,7 @@ run_trail(){
   local NF; NF=$(ls "$DD/rgb"/*-left.png 2>/dev/null | wc -l)
   [ "$NF" -ge 2 ] || { echo "BLOCKED: <2 left frames in $DD/rgb" > "$OUT/status.txt"; echo "[$T] BLOCKED too few frames"; return 20; }
   ss_patch_harvest || { echo "FAILED reproj-harvest patch (utils.py anchor)" > "$OUT/status.txt"; return 1; }
+  ss_fix_versions
   local MN="ss_$T"
   echo "[$T] running upstream tracker (frames=$NF mesh_step=$(mesh_step "$T") gt=$gt)"
   ( cd "$SS_REPO" && PYTHONPATH= "$SS_ENV_PY" run_semantic_super.py \
