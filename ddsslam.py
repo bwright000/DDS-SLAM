@@ -436,6 +436,11 @@ class DDSSLAM():
             # Gates the field's Δx in this map forward so the map co-adapts to a TISSUE-ONLY warp (bg stays
             # sharp). None unless map_route.enable AND the causal buffer filled -> unrouted (base behaviour).
             route_w = self._route_map[indice_h, indice_w].view(-1, 1) if getattr(self, '_route_map', None) is not None else None
+            # inverse-flow MAP UP-WEIGHT: more DINO-flow residual (route_w high = deforming) -> up-weight THIS
+            # current-frame map's RGB+depth loss (1 + alpha*route) so it captures the deforming tissue -- the
+            # MIRROR of the tracking down-weight. None unless map_upweight>0 + the route exists -> base unchanged.
+            _uw = self.config['training'].get('map_upweight', 0.0)
+            map_ray_w = (1.0 + _uw * route_w).detach() if (_uw > 0 and route_w is not None) else None
             # ARM-2 Stage-1: per-ray baked deformation target Δx* [N,3] + trust [N,1] (None unless deformation_sup_weight>0).
             if 'deform_dx' in batch:
                 deform_dx = sample_dino_grid(batch['deform_dx'].squeeze(0), indice_h, indice_w, self.dataset.H, self.dataset.W).to(self.device)
@@ -463,7 +468,7 @@ class DDSSLAM():
                 loss = _ds_w * def_sup
                 ret = None                                                     # render forward skipped (teacher-only)
             else:
-                ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, target_seg=target_seg, route_w=route_w)
+                ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, target_seg=target_seg, route_w=route_w, map_ray_w=map_ray_w)
                 loss = self.get_loss_from_ret(ret)
                 if _teach:                                                     # joint: render loss + teacher
                     Xk = rays_o[..., :3] + rays_d * target_d

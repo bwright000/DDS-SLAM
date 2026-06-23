@@ -499,7 +499,7 @@ class JointEncoding(nn.Module):
 
         return ret
     
-    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None, track_ray_w=None, route_w=None):
+    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None, track_ray_w=None, route_w=None, map_ray_w=None):
         '''
         Params:
             rays_o: ray origins (Bs, 3)
@@ -598,6 +598,16 @@ class JointEncoding(nn.Module):
                 rgb_unc_w = track_ray_w if rgb_unc_w is None else rgb_unc_w * track_ray_w
                 _fw_d = track_ray_w.squeeze()[valid_depth_mask]
                 depth_unc_w = _fw_d if depth_unc_w is None else depth_unc_w * _fw_d
+
+            # --- inverse-flow MAP UP-WEIGHT (mapping ONLY, the MIRROR of the tracking down-weight above):
+            # per-ray weight >=1 on the RGB+depth MAP loss, LARGER where the DINO-flow residual is higher
+            # (more deformation) -> this current-frame map update weights the deforming tissue MORE, so the
+            # static map chases the current deforming state -> sharper LIVE render of the deformation. Same
+            # compute_loss(weights=) channel. None unless map_upweight => the base/tracking paths are unchanged.
+            if (not tracking) and (map_ray_w is not None):
+                rgb_unc_w = map_ray_w if rgb_unc_w is None else rgb_unc_w * map_ray_w
+                _mw_d = map_ray_w.squeeze()[valid_depth_mask]
+                depth_unc_w = _mw_d if depth_unc_w is None else depth_unc_w * _mw_d
 
             rgb_loss = compute_loss(rend_dict["rgb"]*rgb_weight, target_rgb*rgb_weight, weights=rgb_unc_w)
             psnr = mse2psnr(rgb_loss)

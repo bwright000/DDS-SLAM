@@ -1,0 +1,20 @@
+# INVERSE-FLOW MAP UP-WEIGHT on top of the tool mask (the mapping MIRROR of the tracking down-weight).
+# After masking the tool out of the (dominant, curmap100) current-frame map, UP-weight the RGB+depth map loss
+# on the DEFORMING tissue: more DINO-flow residual (route high) -> weight 1+alpha*route -> the static map chases
+# the current deforming state -> sharper LIVE render of the deformation. = toolmask + map_route(region=DINO) +
+# map_upweight. Field dead/untouched. CAVEAT: SDF (w=1000) dominates the map update, so this mainly sharpens
+# the deforming tissue's COLOR (the geometry already follows the current-frame depth target); for geometry
+# emphasis, up-weight SDF / over-sample (follow-up). A/B vs toolmask (isolates the up-weight).
+inherit_from: configs/CRCD/c1_001_canon_curmap100_decoder64_toolmask.yaml
+data:
+  output: output/CRCD/C1_001_canon_curmap100_decoder64_toolmask_upweight
+training:
+  map_upweight: 2.0      # map_ray_w = 1 + 2*route : static->1, deforming(route=1)->3x on RGB+depth map loss
+map_route:
+  enable: true
+  mode: region           # DINO k-means regions + Sampson residual = the "DINO-feature optical-flow" signal
+  ref_stride: 8          # causal flow t-8 -> t
+  deadband: 3.0          # per-region Sampson residual (px) above which the region is "moving/deforming"
+  n_groups: 12           # DINO k-means regions
+  ransac_thresh: 1.0
+  soft_scale: 2.0        # graded route (0->1) instead of hard binary -> graded up-weight
