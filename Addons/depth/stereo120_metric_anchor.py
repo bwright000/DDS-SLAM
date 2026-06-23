@@ -76,8 +76,12 @@ def main():
     ap.add_argument('--out_scale', type=float, default=10000.0, help='output PNG = metric_m * out_scale')
     ap.add_argument('--max_depth_m', type=float, default=5.0)
     ap.add_argument('--out_subdir', default='moge2_stereo120')
-    ap.add_argument('--max_ratio_spread', type=float, default=0.50,
-                    help='reject an anchor whose stereo/MoGe ratio IQR/median exceeds this (scattered=bad stereo)')
+    ap.add_argument('--max_ratio_spread', type=float, default=5.0,
+                    help='pathological-only sanity gate: reject an anchor whose per-pixel stereo/MoGe ratio '
+                         'IQR/median exceeds this. NOTE this is INHERENTLY ~1-2 for monocular MoGe vs stereo '
+                         '(their depth SHAPES differ pixel-to-pixel) and is NOT a scale-reliability signal -- the '
+                         'median sc is robust to it, and the CROSS-ANCHOR CONSENSUS (rel_tol) is the real gate. '
+                         'Kept loose (5.0) so only degenerate frames (no real stereo) are dropped.')
     ap.add_argument('--rel_tol', type=float, default=0.25,
                     help='cross-anchor: drop sc-outliers >this fraction from the robust median (needs >=3 anchors)')
     ap.add_argument('--min_inliers', type=int, default=1,
