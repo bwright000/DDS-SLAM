@@ -53,9 +53,11 @@ snip_src(){ local n=$1; local ep=${n%_*}; local sn=${n#*_}; echo "$DPUB/${ep:0:1
 stage_rect(){ local NAME=$1 SRC; local DD="$REPO/data/CRCD/$NAME"; SRC=$(snip_src "$NAME")
   [ -f "$DD/.STAGED" ] && { say "  $NAME already staged"; return 0; }
   [ -d "$SRC/rgb" ] || { say "  FATAL: snippet rgb missing at $SRC"; return 1; }
-  # RESUME: skip rectify / MoGe if already on disk (e.g. a re-run after an anchor-gate fix) -> straight to anchor.
-  if [ "$(ls "$DD/video_frames"/*l.png 2>/dev/null | wc -l)" -gt 0 ]; then
-    say "  rectify $NAME CACHED ($(ls "$DD/video_frames"/*l.png | wc -l) frames) -> skip"
+  # RESUME: skip rectify / MoGe if COMPLETELY on disk (e.g. a re-run after an anchor-gate fix) -> straight to
+  # anchor. Counts must match the source so a run stopped mid-rectify re-does it (no partial reuse).
+  _nsrc=$(ls "$SRC/rgb"/*.png 2>/dev/null | wc -l); _nvf=$(ls "$DD/video_frames"/*l.png 2>/dev/null | wc -l)
+  if [ "$_nvf" -gt 0 ] && [ "$_nvf" -eq "$_nsrc" ]; then
+    say "  rectify $NAME CACHED ($_nvf == $_nsrc frames) -> skip"
   else
     say "  rectify $NAME  ($SRC)"
     python Addons/preprocess/preprocess_crcd_published.py --snippet_dir "$SRC" --calib_pkl "$CALIB" --output_dir "$DD" || { say "  FATAL rectify"; return 1; }
