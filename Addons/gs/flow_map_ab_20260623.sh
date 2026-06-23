@@ -25,26 +25,23 @@ grep -q '>>> INC0 PARITY PASS' "$LOG/parity.log" || { echo "FATAL: parity FAIL -
 
 run_one(){   # scene tag "EXTRA_ENV" seed [dynamic_idx.npy]
   local sc="$1" tag="$2" extra="$3" seed="${4:-0}" dynidx="${5:-}"
-  local rn="${sc}_${tag}_s${seed}" out="experiments/CRCD_base/${rn}"
+  local rn out d                                          # declare BEFORE use (set -u safe)
+  rn="${sc}_${tag}_s${seed}"; out="experiments/CRCD_base/${rn}"
   mkdir -p "$out"; [ -f "$out/.DONE" ] && { echo "[$rn] .DONE skip"; return 0; }
-  banner "RUN $rn  env:[$BASE $extra]"
-  ( env RUN_TAG="$tag" SEED="$seed" SCENE_NUM=0 FM_HEARTBEAT=1 $BASE $extra \
-        python scripts/main.py "$CFG" > "$LOG/${rn}.slam.log" 2>&1 ) & local pid=$!
-  local t0; t0=$(date +%s)
-  while kill -0 $pid 2>/dev/null; do
-    sleep 20
-    local hb; hb=$(grep -a 'FM_HB' "$LOG/${rn}.slam.log" | tail -1); local el=$(( $(date +%s) - t0 ))
-    [ -n "$hb" ] && printf "  [%s] %s · elapsed %dm%02ds\n" "$rn" "${hb#*FM_HB }" $((el/60)) $((el%60))
-  done
-  wait $pid || { echo "[$rn] !! SLAM FAILED"; tail -8 "$LOG/${rn}.slam.log"; touch "$out/.FAILED"; return 1; }
-  banner "EVAL $rn"
-  env RUN_TAG="$tag" SEED="$seed" $BASE $extra python scripts/gs_eval.py --config "$CFG" --run "$out" \
-        --holdout_every "$HOLDOUT" ${dynidx:+--dynamic_idx "$dynidx"} \
-        > "$LOG/${rn}.eval.log" 2>&1 || { echo "[$rn] !! EVAL FAILED"; tail -8 "$LOG/${rn}.eval.log"; touch "$out/.FAILED"; return 1; }
+  banner "RUN $rn  env:[$BASE $extra]   (LIVE below; also tee'd -> $LOG/${rn}.slam.log)"
+  # foreground + tee = live terminal output. python -u (unbuffered) + TQDM_DISABLE=1 -> clean FM_HB
+  # heartbeat lines stream as they happen; pipefail makes the if-test see python's real exit code.
+  if ! env RUN_TAG="$tag" SEED="$seed" SCENE_NUM=0 FM_HEARTBEAT=1 $BASE $extra \
+        python -u scripts/main.py "$CFG" 2>&1 | tee "$LOG/${rn}.slam.log"; then
+    echo "[$rn] !! SLAM FAILED (see live output above)"; touch "$out/.FAILED"; return 1; fi
+  banner "EVAL $rn   (LIVE)"
+  if ! env RUN_TAG="$tag" SEED="$seed" $BASE $extra \
+        python -u scripts/gs_eval.py --config "$CFG" --run "$out" \
+        --holdout_every "$HOLDOUT" ${dynidx:+--dynamic_idx "$dynidx"} 2>&1 | tee "$LOG/${rn}.eval.log"; then
+    echo "[$rn] !! EVAL FAILED (see live output above)"; touch "$out/.FAILED"; return 1; fi
   [ -d /content/drive/MyDrive ] && { d="$DRIVE/$rn"; mkdir -p "$d"; \
      cp "$out"/metrics*.* "$out"/*_6panel.mp4 "$out"/est_c2w_data.txt "$LOG/${rn}".*.log "$d/" 2>/dev/null; }
-  touch "$out/.DONE"
-  echo "[$rn] DONE -> $(grep -hE 'HEADLINE|HELD-OUT|GUARD|dynPSNR' "$LOG/${rn}.eval.log" 2>/dev/null | tr -s ' \n' ' ')"
+  touch "$out/.DONE"; echo "[$rn] DONE ($rn)"
 }
 
 FM="FM_LAMBDA=${FM_LAMBDA:-1.0} FM_DEADBAND=${FM_DEADBAND:-3.0} FM_DEPTH_DB=${FM_DEPTH_DB:-2.0}"
