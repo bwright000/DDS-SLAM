@@ -26,6 +26,7 @@ install -D -m644 "$OV/datasets/gradslam_datasets/crcd.py" datasets/gradslam_data
 install -D -m644 "$OV/configs/data/crcd.yaml"             configs/data/crcd.yaml
 install -D -m644 "$OV/configs/crcd/crcd_base.py"          configs/crcd/crcd_base.py
 install -D -m644 "$OV/scripts/eval_sim3_crcd.py"          scripts/eval_sim3_crcd.py
+install -D -m644 "$OV/scripts/gs_eval.py"                 scripts/gs_eval.py
 
 echo ">>> apply in-place edits (patch, not vendor)"
 python3 "$SELF_DIR/apply_patches.py" "$ENDO_DIR"
