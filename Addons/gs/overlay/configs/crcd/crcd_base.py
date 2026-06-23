@@ -17,15 +17,16 @@ except KeyError:
     scene_name = "C1_001"
 
 map_every = 1
-keyframe_every = 8
+keyframe_every = int(os.environ.get("KEYFRAME_EVERY", 8))
 
-# --- overnight config-sweep knobs (env-driven; ALL defaults = base => bit-identical baseline) ---
+# --- env-driven config-sweep knobs (ALL defaults = base => bit-identical baseline) ---
 _TAG  = os.environ.get("RUN_TAG", "base")            # arm name -> run-dir suffix
 _LRT  = float(os.environ.get("LR_TRANS_MULT", 1.0))  # cam_trans LR x mult  (#0 proven lever: lower => less jitter)
 _LRR  = float(os.environ.get("LR_ROT_MULT", 1.0))    # cam_rot   LR x mult
 _SIL  = float(os.environ.get("SIL_THRES", 0.99))     # tracking silhouette mask threshold
 _FWD  = bool(int(os.environ.get("FWD_PROP", 1)))     # const-velocity init (0=off; CRCD is static-heavy)
 _DENS = bool(int(os.environ.get("DENSIFY", 0)))      # GS-gradient densification (coverage; costs runtime/VRAM)
+_SIMP = bool(int(os.environ.get("SIMPLIFY", 1)))     # 1=SH deg-0 flat color (base); 0=full SH deg-3 + anisotropic (render lever)
 tracking_iters = int(os.environ.get("TRK_ITERS", 15))
 mapping_iters  = int(os.environ.get("MAP_ITERS", 25))
 
@@ -55,6 +56,7 @@ config = dict(
     report_global_progress_every=2000,
     scene_radius_depth_ratio=3,
     mean_sq_dist_method="projective",
+    gaussian_simplification=_SIMP,                  # top-level flag main.py reads (SIMPLIFY=0 => full SH render lever)
     report_iter_progress=False,
     load_checkpoint=False,
     checkpoint_time_idx=0,
