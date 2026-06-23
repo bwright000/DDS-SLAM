@@ -243,6 +243,112 @@ aggregate(){
   cat "$DRIVE"/*/summary.txt 2>/dev/null || echo "no per-trail summaries yet under $DRIVE"
 }
 
+# ============================================================================
+# PHASE B — CRCD: run the UPSTREAM tracker on CRCD with SGS-comparable metrics.
+#   depth=MoGe (metric, loaded); resize 1280x720 -> IMG_WxIMG_H; seg=GT 4-class; NO green-pins
+#   (--tracking_gt_file omitted -> evaluate_tracking=False -> pin path off). STEP-1 metric =
+#   render PSNR/SSIM/LPIPS + video. STEP-2 (todo) = Sim3 ATE via exported global T_g + depth-L1.
+# ============================================================================
+DDS_PY=${DDS_PY:-python3}                          # system torch2 python for the DDS eval tools
+DRIVE_CRCD=${DRIVE_CRCD:-/content/drive/MyDrive/Datasets/CRCD-Published}
+DRIVE_CRCD_MOGE=${DRIVE_CRCD_MOGE:-/content/drive/MyDrive/Datasets/CRCD-Published-MoGe-2}
+CALIB_PKL=${CALIB_PKL:-$DRIVE_CRCD/cam_calib/ECM_STEREO_1280x720_L2R_calib_data_opencv.pkl}
+CRCD_DRIVE=${CRCD_DRIVE:-/content/drive/MyDrive/Outputs/SemanticSuPer_crcd_$DATE}
+BENCH5_CRCD="c1_001 c2_001 e3_005 c3_001 g3_001"
+IMG_W=${IMG_W:-640}; IMG_H=${IMG_H:-360}; CRCD_SEG=${CRCD_SEG:-GT}; CRCD_MESH_STEP=${CRCD_MESH_STEP:-32}
+crcd_ep_sid(){ local n; n=$(echo "$1"|tr 'a-z' 'A-Z'); [[ "$n" =~ ^[A-Z][0-9]_[0-9]{3}$ ]] || { echo ""; return; }; echo "${n:0:1}_${n:1:1} ${n:3}"; }
+
+# idempotent upstream patches for the CRCD path (3): get_K reads crcd_K.txt; get_depth treats the
+# loaded .npy as METRIC depth (skip disp_to_depth); render_img works without pins + dumps the clean
+# render to results/<model>/render/<t>.png for PSNR (the upstream only logs renders to TensorBoard).
+ss_patch_crcd(){
+  PYTHONPATH= "$SS_ENV_PY" - "$SS_REPO" <<'PY'
+import io, os, sys
+R = sys.argv[1]
+def edit(path, mark, anchor, ins=None, replace=None):
+    p = os.path.join(R, path); s = io.open(p, encoding='utf-8').read()
+    if mark in s: print(f"[patch-crcd] {path}: already ({mark})"); return
+    if anchor not in s: print(f"[patch-crcd] FATAL anchor missing in {path}: {anchor!r}"); sys.exit(1)
+    if replace is not None: s = s.replace(anchor, replace, 1)
+    else: i = s.find(anchor) + len(anchor); s = s[:i] + ins + s[i:]
+    io.open(p, 'w', encoding='utf-8').write(s); print(f"[patch-crcd] {path}: patched ({mark})")
+edit('utils/data_loader.py', '[DDS-crcd-K]', "    def get_K(self):\n",
+     ins=("        if self.opt.data == 'crcd':  # [DDS-crcd-K]\n"
+          "            _kv = {}\n"
+          "            for _l in open(os.path.join(self.opt.data_dir, 'crcd_K.txt')):\n"
+          "                _p = _l.split()\n"
+          "                if len(_p) >= 2 and _p[0] in ('fx','fy','cx','cy'): _kv[_p[0]] = float(_p[1])\n"
+          "            return np.array([[_kv['fx'],0,_kv['cx'],0],[0,_kv['fy'],_kv['cy'],0],[0,0,1,0],[0,0,0,1]], dtype=np.float32)\n"))
+edit('utils/data_loader.py', '[DDS-crcd-depth]',
+     "            disp, depth = disp_to_depth(disp, self.min_depth, self.max_depth)\n",
+     replace=("            if self.opt.data == 'crcd':  # [DDS-crcd-depth] loaded .npy is METRIC depth (metres)\n"
+              "                depth = disp.clone(); disp = 1.0 / (depth + 1e-6)\n"
+              "            else:\n"
+              "                disp, depth = disp_to_depth(disp, self.min_depth, self.max_depth)\n"))
+edit('super/nodes.py', '[DDS-crcd-render]',
+     "        render_img = (255*render_img).type(torch.uint8)\n",
+     ins=("        render_img_keypoints = render_img  # [DDS-crcd-render] default when no pins\n"
+          "        try:\n"
+          "            import os as _os, cv2 as _cv2\n"
+          "            _rd = _os.path.join(self.output_dir, 'render'); _os.makedirs(_rd, exist_ok=True)\n"
+          "            _cv2.imwrite(_os.path.join(_rd, '%06d.png' % self.time), render_img.permute(1,2,0).cpu().numpy()[:, :, ::-1])\n"
+          "        except Exception: pass\n"))
+print("[patch-crcd] done")
+PY
+}
+
+run_crcd_one(){
+  local NAME; NAME=$(echo "$1"|tr 'A-Z' 'a-z'); local UP; UP=$(echo "$NAME"|tr 'a-z' 'A-Z')
+  local EP SID; read -r EP SID <<< "$(crcd_ep_sid "$NAME")"; [ -n "$EP" ] || { echo "[$NAME] bad name"; return 1; }
+  local OUT="$CRCD_DRIVE/$UP"; mkdir -p "$OUT"
+  [ -f "$OUT/.DONE" ] && [ "${FORCE:-0}" != 1 ] && { echo "[$NAME] done -> skip"; return 0; }
+  local SRC="$DRIVE_CRCD/$EP/snippet_$SID" MOGE="$DRIVE_CRCD_MOGE/$EP/snippet_$SID/depth"
+  [ -d "$SRC/rgb" ] && [ -d "$SRC/rgbright" ] || { echo "BLOCKED: CRCD stereo missing ($SRC: rgb+rgbright)" > "$OUT/status.txt"; echo "[$NAME] BLOCKED no stereo"; return 20; }
+  [ "$(ls "$MOGE"/*.png 2>/dev/null|wc -l)" -gt 0 ] || { echo "BLOCKED: MoGe depth missing ($MOGE)" > "$OUT/status.txt"; echo "[$NAME] BLOCKED no MoGe"; return 20; }
+  local STAGED=/content/CRCD_staged/$UP SUPER=/content/Super_crcd/$UP; rm -rf "$STAGED" "$SUPER"
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/preprocess/preprocess_crcd_published.py" \
+     --snippet_dir "$SRC" --calib_pkl "$CALIB_PKL" --output_dir "$STAGED" \
+     || { echo "FAILED rectify/preprocess" > "$OUT/status.txt"; return 1; }
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/colab/crcd_assemble_super.py" \
+     --staged "$STAGED" --moge_depth "$MOGE" --calib "$STAGED/rectified_calib.txt" \
+     --out "$SUPER" --img_w "$IMG_W" --img_h "$IMG_H" --n_classes 4 --seg_src "$CRCD_SEG" \
+     || { echo "FAILED assemble-super" > "$OUT/status.txt"; return 1; }
+  ss_patch_crcd || { echo "FAILED crcd patches" > "$OUT/status.txt"; return 1; }
+  ss_fix_versions
+  local NF; NF=$(ls "$SUPER/rgb"/*-left.png 2>/dev/null|wc -l); local MN="ss_crcd_$UP"
+  echo "[$NAME] running upstream tracker on CRCD (frames=$NF res=${IMG_W}x${IMG_H} seg=$CRCD_SEG mesh_step=$CRCD_MESH_STEP, NO pins)"
+  ( cd "$SS_REPO" && PYTHONPATH= "$SS_ENV_PY" run_semantic_super.py \
+      --model_name "$MN" --data crcd --data_dir "$SUPER" --start_id 0 --end_id "$NF" \
+      --load_depth --depth_dir depth --depth_ext .npy \
+      --load_seg --seg_dir "seg/$CRCD_SEG" --seg_ext .npy --num_classes 4 \
+      --phase test --save_sample_freq 1 --mesh_step_size "$CRCD_MESH_STEP" \
+      --sf_soft_seg_point_plane --sf_bn_morph --mesh_rot --mesh_face --render_loss ) 2>&1 | tee "$OUT/run.log"
+  [ "${PIPESTATUS[0]}" -eq 0 ] || { echo "FAILED run_semantic_super.py (see run.log)" > "$OUT/status.txt"; return 1; }
+  local RD="$SS_REPO/results/$MN/render"
+  [ "$(ls "$RD"/*.png 2>/dev/null|wc -l)" -gt 0 ] || { echo "FAILED no renders in $RD (render-save patch?)" > "$OUT/status.txt"; return 1; }
+  PYTHONPATH= "$DDS_PY" - "$RD" "$SUPER/rgb" "$OUT" <<'PY'
+import sys, os, glob, re, shutil
+rd, rgb, out = sys.argv[1:4]
+n = 0
+for p in sorted(glob.glob(os.path.join(rd, '*.png')), key=lambda x: int(re.search(r'(\d+)', os.path.basename(x)).group(1))):
+    idx = int(re.search(r'(\d+)', os.path.basename(p)).group(1))
+    shutil.copy(p, os.path.join(out, f'{idx}.jpg'))
+    gt = os.path.join(rgb, f'{idx:06d}-left.png')
+    if os.path.exists(gt): shutil.copy(gt, os.path.join(out, f'{idx}_gt.png'))
+    n += 1
+print(f"[rename] {n} render/gt pairs -> {out}")
+PY
+  "$DDS_PY" -c "import lpips" 2>/dev/null || "$DDS_PY" -m pip install -q lpips 2>/dev/null
+  rm -f "$OUT/render_eval.txt" "$OUT/render_eval.csv"
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/eval_rendering.py" --gt_dir "$OUT" --render_dir "$OUT" \
+     --sequence "CRCD-SuPer ($UP)" --output_csv "$OUT/render_eval.csv" --summary_csv "$OUT/render_eval.txt" \
+     || echo "[$NAME] WARN eval_rendering"
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/viz/generate_video.py" --rgb_input_dir "$OUT" --rgb_output_dir "$OUT" \
+     --output "$OUT/video.mp4" 2>/dev/null || echo "[$NAME] WARN video"
+  echo "PASS" > "$OUT/status.txt"; sync; touch "$OUT/.DONE"; sync
+  echo "[$NAME] DONE -> $OUT (render_eval + video; ATE/depth-L1 = step-2 via T_g + rendered-depth)"
+}
+
 case "$PHASE" in
   env)   build_env ;;
   repro)
@@ -255,10 +361,13 @@ case "$PHASE" in
     aggregate
     echo "DONE repro (exit hint: $rc; 20=BLOCKED needs Drive data/ckpt)" ;;
   crcd)
-    echo "Phase-B (CRCD) is a STUB - DEFERRED. Open decisions: (Q2) ontology {tool,beef,chicken} absent on"
-    echo "CRCD {bg,Liver,Gallbladder,Tool}; (metric) CRCD has no green-pin reproj GT -> native reproj-err"
-    echo "cannot be reproduced on CRCD; a DDS render-PSNR/Sim3 adaptation would NOT be a Semantic-SuPer"
-    echo "reproduction. Resolve with the user before wiring. Exiting 0 (no-op)."; exit 0 ;;
+    [ -x "$SS_ENV_PY" ] || { echo "FATAL: ENV-SS not built ($SS_ENV_PY) - run 'env' first"; exit 30; }
+    [ -d "$SS_REPO/.git" ] || { echo "FATAL: Python-SuPer clone missing ($SS_REPO) - run 'env'"; exit 30; }
+    mkdir -p "$CRCD_DRIVE"
+    SN=${TRAIL_ARG:-bench5}; { [ "$SN" = bench5 ] || [ "$SN" = all ]; } && SN="$BENCH5_CRCD"
+    echo "=== Semantic-SuPer Phase-B CRCD: snippets='$SN' depth=MoGe seg=$CRCD_SEG res=${IMG_W}x${IMG_H} -> $CRCD_DRIVE"
+    rc=0; for s in $SN; do run_crcd_one "$s" || { c=$?; [ "$c" = 20 ] && rc=20 || rc=1; echo "[$s] -> $c (see $CRCD_DRIVE/$(echo "$s"|tr a-z A-Z)/status.txt)"; }; done
+    echo "DONE crcd (exit hint: $rc) -> $CRCD_DRIVE  (render PSNR/SSIM/LPIPS + video; ATE/depth-L1 = step-2)" ;;
   eval)  aggregate ;;
   all)   build_env && { TRAIL_ARG=${TRAIL_ARG:-trail_3} "$0" repro "${TRAIL_ARG:-trail_3}"; } ;;
   *) echo "usage: run_semanticsuper.sh env|repro [trail_3|trail_4|trail_8|trail_9|all4]|crcd|eval|all"; exit 2 ;;
