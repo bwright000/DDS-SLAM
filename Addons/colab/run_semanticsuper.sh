@@ -75,7 +75,9 @@ build_env(){
   "$CONDA_ROOT/bin/conda" env create -n "$SS_ENV" -f "$YAML" \
     || { echo "[env] FATAL conda env create from environment.yaml (see error above)"; return 30; }
   # MANDATORY Pulsar smoke (the >512-track crash + ABI check)
-  PYTHONPATH= "$SS_ENV_PY" -c "from pytorch3d.renderer.points.pulsar import Renderer; Renderer(64,64,n_channels=3,n_track=512); print('[env] Pulsar import OK')" \
+  # Pulsar Renderer signature (pytorch3d 0.6.2, per Python-SuPer/renderer/renderer.py:63-67):
+  # Renderer(width, height, max_num_balls, n_track=..., ...). 3rd positional is REQUIRED.
+  PYTHONPATH= "$SS_ENV_PY" -c "from pytorch3d.renderer.points.pulsar import Renderer; Renderer(64, 64, 512, n_track=64); print('[env] Pulsar import OK')" \
     || { echo "[env] FATAL Pulsar smoke (pytorch3d/torch ABI)"; return 30; }
   # run-time extras not pinned in the yaml (defensive; no-op if already present)
   PYTHONPATH= "$SS_ENV_PY" -m pip install -q tqdm pyyaml 2>/dev/null || true
