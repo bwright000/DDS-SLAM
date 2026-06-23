@@ -448,7 +448,7 @@ class DDSSLAM():
             else:
                 deform_dx = deform_w = None
 
-            rays_o = c2w_est[..., :3, -1].repeat(self.config['mapping']['sample'], 1)
+            rays_o = c2w_est[..., :3, -1].repeat(rays_d_cam.shape[0], 1)   # ACTUAL ray count -- tool_mask may have dropped tool px (1708<2048); == mapping.sample when unfiltered => base byte-identical
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[: ,:3, :3], -1)
             if self.config['dynamic']:
                 cur_id = (cur_frame_id*torch.ones(rays_o.shape[0]))
