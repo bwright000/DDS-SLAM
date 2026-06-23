@@ -155,6 +155,25 @@ ss_prep_ckpt(){
   return 1
 }
 
+# ---- detect the Monodepth2 encoder depth (resnet18/34/50) from the ckpt's encoder.fc.weight ----
+# (the authors' ckpt is resnet50; the DDS variant_a_stereo re-train is resnet18 -> must match
+# --num_layers or load_state_dict size-mismatches). Echoes 18/34/50; defaults 50 if unknown.
+ss_num_layers(){
+  PYTHONPATH= "$SS_ENV_PY" - "$1" <<'PY' 2>/dev/null || echo 50
+import torch, sys
+s = torch.load(sys.argv[1], map_location='cpu')
+enc = s.get('encoder', s) if isinstance(s, dict) else s
+fc = enc.get('encoder.fc.weight') if isinstance(enc, dict) else None
+if fc is None or fc.shape[1] == 2048:
+    print(50)
+elif fc.shape[1] == 512:
+    idx = [int(k.split('.')[2]) for k in enc if k.startswith('encoder.layer1.') and k.split('.')[2].isdigit()]
+    print(34 if (max(idx) if idx else 0) >= 2 else 18)
+else:
+    print(50)
+PY
+}
+
 # ---- run ONE trail end-to-end -> reproj_err.txt + report-only Table I gate ------------------
 run_trail(){
   local T=$1 OUT="$DRIVE/$1"; mkdir -p "$OUT"
@@ -164,6 +183,8 @@ run_trail(){
   [ -e "$MONO2_CKPT" ] || { echo "BLOCKED: Monodepth2 ckpt missing at $MONO2_CKPT" > "$OUT/status.txt"; echo "[$T] BLOCKED no MONO2_CKPT"; return 20; }
   local CKPT; CKPT=$(ss_prep_ckpt "$MONO2_CKPT") || { echo "BLOCKED: cannot prep Monodepth2 ckpt from $MONO2_CKPT (need a wrapped .pth with 'encoder' key, OR a Monodepth2 weights dir with encoder.pth+depth.pth)" > "$OUT/status.txt"; echo "[$T] BLOCKED ckpt-format"; return 20; }
   echo "[$T] Monodepth2 ckpt -> $CKPT  (NOTE: weights_N = a DDS re-train, not the authors' released ckpt -> faithful-except-depth)"
+  local NL=${NUM_LAYERS:-}; [ -n "$NL" ] || NL=$(ss_num_layers "$CKPT"); [ -n "$NL" ] || NL=50
+  echo "[$T] Monodepth2 encoder -> resnet$NL (auto-detected; authors'=50, DDS variant_a_stereo=18)"
   local gt; gt=$(cd "$DD" && ls rgb/*_l_pts.npy 2>/dev/null | head -1)
   [ -n "$gt" ] || { echo "BLOCKED: no rgb/*_l_pts.npy GT in $DD" > "$OUT/status.txt"; echo "[$T] BLOCKED no GT pts"; return 20; }
   local NF; NF=$(ls "$DD/rgb"/*-left.png 2>/dev/null | wc -l)
@@ -173,7 +194,7 @@ run_trail(){
   echo "[$T] running upstream tracker (frames=$NF mesh_step=$(mesh_step "$T") gt=$gt)"
   ( cd "$SS_REPO" && PYTHONPATH= "$SS_ENV_PY" run_semantic_super.py \
       --model_name "$MN" --data_dir "$DD" --data superv2 --start_id 0 --end_id "$NF" \
-      --tracking_gt_file "$gt" --num_layers 50 \
+      --tracking_gt_file "$gt" --num_layers "$NL" \
       --pretrained_encoder_checkpoint_dir "$CKPT" \
       --depth_model monodepth2_stereo --pretrained_depth_checkpoint_dir "$CKPT" --post_process \
       --load_seg --seg_dir seg/DeepLabV3+ --seg_ext .npy --num_classes 3 \
