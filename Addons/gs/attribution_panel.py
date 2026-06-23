@@ -93,18 +93,23 @@ def main():
     figs = os.path.join(a.out, 'figs')
     os.makedirs(figs, exist_ok=True)
 
-    frames = _ls(a.scene, 'frames', ('jpg', 'png'))
-    segs = _ls(a.scene, 'semantic_ids', ('png',))
-    depths = _ls(a.scene, 'depths', ('png',))
+    # auto-detect layout: EndoGSLAM (frames/ + semantic_ids/) OR rect-bench (video_frames/*l.png + semantic_class/)
+    frames = _ls(a.scene, 'frames', ('jpg', 'png')) \
+        or sorted(glob.glob(os.path.join(a.scene, 'video_frames', '*l.png')), key=_natkey)
+    segs = _ls(a.scene, 'semantic_ids', ('png',)) or _ls(a.scene, 'semantic_class', ('png',))
+    depths = _ls(a.scene, 'depths', ('png',)) or _ls(a.scene, 'depth', ('png',))
+    layout = 'EndoGSLAM' if _ls(a.scene, 'frames', ('jpg', 'png')) else 'rect-bench'
     n = len(frames)
-    assert n > 1 and len(segs) >= n, f"need frames+segs in {a.scene} (got {n} frames, {len(segs)} segs)"
+    assert n > 1 and len(segs) >= n, (
+        f"need frames+class-seg in {a.scene} (got {n} frames, {len(segs)} segs). "
+        f"Expected frames/+semantic_ids/ (EndoGSLAM) or video_frames/*l.png+semantic_class/ (rect-bench).")
     if a.max_frames:
         n = min(n, a.max_frames)
     H, W = cv2.imread(frames[0]).shape[:2]
 
     log("=" * 64)
     log(f">>> [attribution] scene={a.scene}")
-    log(f">>> [attribution] {n} frames @ {W}x{H} · stride={a.stride} · RAFT={'small' if a.small else 'large'} · dev={dev}")
+    log(f">>> [attribution] {n} frames @ {W}x{H} · layout={layout} · stride={a.stride} · RAFT={'small' if a.small else 'large'} · dev={dev}")
     log("=" * 64)
     log(">>> [attribution] loading RAFT ...")
     model, tf = ft.load_raft(dev, small=a.small)
