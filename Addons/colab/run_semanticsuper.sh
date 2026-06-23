@@ -263,7 +263,7 @@ crcd_ep_sid(){ local n; n=$(echo "$1"|tr 'a-z' 'A-Z'); [[ "$n" =~ ^[A-Z][0-9]_[0
 # loaded .npy as METRIC depth (skip disp_to_depth); render_img works without pins + dumps the clean
 # render to results/<model>/render/<t>.png for PSNR (the upstream only logs renders to TensorBoard).
 ss_patch_crcd(){
-  ( cd "$SS_REPO" && git checkout -- utils/data_loader.py super/nodes.py 2>/dev/null ) || true  # clean slate -> idempotent
+  ( cd "$SS_REPO" && git checkout -- utils/data_loader.py super/nodes.py super/deform_mesh.py 2>/dev/null ) || true  # clean slate -> idempotent
   PYTHONPATH= "$SS_ENV_PY" - "$SS_REPO" <<'PY'
 import io, os, sys
 R = sys.argv[1]
@@ -300,6 +300,13 @@ edit('super/nodes.py', '[DDS-crcd-render]',
           "            _rd = _os.path.join(self.output_dir, 'render'); _os.makedirs(_rd, exist_ok=True)\n"
           "            _cv2.imwrite(_os.path.join(_rd, '%06d.png' % self.time), render_img.permute(1,2,0).cpu().numpy()[:, :, ::-1])\n"
           "        except Exception: pass\n"))
+# per-class kernel lists are hardcoded for 3 classes ([3,3,3]) but indexed by range(num_classes) ->
+# overflow at CRCD's 4 classes. Size them to num_classes.
+edit('utils/data_loader.py', '[DDS-crcd-kernels]', "            kernels = [3, 3, 3]\n",
+     replace="            kernels = [3] * opt.num_classes  # [DDS-crcd-kernels]\n")
+edit('super/deform_mesh.py', '[DDS-crcd-kernels]', "                        kernels = [3, 3, 3]\n",
+     replace="                        kernels = [3] * self.opt.num_classes  # [DDS-crcd-kernels]\n")
+
 # alias the GENERIC superv2 opt.data branches to also accept crcd (depth_preprocessing invalid
 # mask etc.) so crcd reuses superv2 logic. get_K's crcd branch is FIRST -> still returns crcd_K.
 sP = os.path.join(R, 'utils/data_loader.py'); s = io.open(sP, encoding='utf-8').read()
