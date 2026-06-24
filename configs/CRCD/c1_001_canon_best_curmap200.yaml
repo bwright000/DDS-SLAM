@@ -1,0 +1,6 @@
+# CONTROL for the deform-scaled idea: UNIFORM more iters (cur_frame_iters 100 -> 200, every frame). If this ~=
+# best, more iters PLATEAUS (the map converges at 100) -> the deform-scaled version's TARGETING is the value;
+# if this > best, more iters helps everywhere and deform-scaled is just the efficient way to get it. config-only.
+inherit_from: configs/CRCD/c1_001_canon_best_combine.yaml
+data: {output: output/CRCD/C1_001_canon_best_curmap200}
+mapping: {cur_frame_iters: 200}

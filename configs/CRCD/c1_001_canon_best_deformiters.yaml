@@ -1,0 +1,17 @@
+# THE DEFORM-SCALED MAP-OPT idea (user): the proven mapping lever is the NUMBER of current-frame map iters
+# (curmap 0->100 = +4 PSNR). Scale it by the scene deformation: n_iters = 100 + deform_iters_scale * moving-frac.
+# Static frames stay at 100 (already mapped); deforming frames get MORE optimisation to re-fit the new geometry.
+# Uses the PER-PIXEL route (mode pixel: homography residual, no DINO, fixes the forward/zoom false-positive) as
+# the moving-frac. UNLIKE the dead map-loss re-weights, this scales the optimisation AMOUNT, not its weight.
+inherit_from: configs/CRCD/c1_001_canon_best_combine.yaml
+data: {output: output/CRCD/C1_001_canon_best_deformiters}
+mapping:
+  deform_iters_scale: 200      # n_iters = 100 + 200*moving_frac : static 100, mf 0.5 -> 200, mf 0.6 -> 220
+map_route:
+  enable: true
+  mode: pixel                  # per-pixel homography reprojection residual -> moving-frac (no DINO, no zoom FP)
+  ref_stride: 8
+  deadband: 3.0
+  smooth: 5
+  soft_scale: 2.0
+  ransac_thresh: 1.0

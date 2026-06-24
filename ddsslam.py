@@ -408,8 +408,17 @@ class DDSSLAM():
 
         self.model.train()
         cur_rot, cur_trans, pose_optimizer = self.get_pose_param_optim(c2w[None, ...], mapping=True)
+        # DEFORM-SCALED map optimisation (the AMOUNT lever, made adaptive): the proven mapping lever is the NUMBER
+        # of map iters (curmap 0->100 = +4 PSNR) -- spend MORE of it on DEFORMING frames (high moving-frac) and the
+        # base on static ones that are already mapped. n_iters = cur_frame_iters + deform_iters_scale * frame
+        # moving-frac (from the causal route, ready at run() line ~1132). Default scale 0 => n_iters = base =>
+        # byte-identical. Unlike the dead map-loss RE-weights, this scales the optimisation AMOUNT, not its weight.
+        _n_iters = self.config['mapping']['cur_frame_iters']
+        _dis = self.config['mapping'].get('deform_iters_scale', 0)
+        if _dis > 0 and getattr(self, '_route_map', None) is not None:
+            _n_iters = _n_iters + int(_dis * float(self._route_map.mean()))
         # Training
-        for i in range(self.config['mapping']['cur_frame_iters']):
+        for i in range(_n_iters):
             pose_optimizer.zero_grad()
             self.cur_map_optimizer.zero_grad()
             c2w_est = self.matrix_from_tensor(cur_rot, cur_trans)
