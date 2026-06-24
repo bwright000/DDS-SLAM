@@ -5,6 +5,9 @@
 # data.png_depth_scale. RECTIFIED pipeline: depth is REGENERATED on the rectified left frames (NOT reused from
 # the raw-left corpus) -> rectified RGB + rectified intrinsics + rectified depth are all consistent.
 inherit_from: configs/CRCD/crcd_basecanon.yaml
+data:
+  trainskip: 1      # the StereoMIS loader requires data.trainskip (dataset.py:77); the c1_001 configs add it,
+                    # crcd_basecanon does not, and mk_cfg only injects datadir/output/exp_name -> add it here.
 mapping:
   cur_frame_iters: 100
 decoder:
