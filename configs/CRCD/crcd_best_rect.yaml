@@ -32,10 +32,12 @@ map_route:
   enable: true
   mode: pixel                  # per-pixel homography residual -> moving-frac for the deform-iter scale
   ref_stride: 8
-  deadband: 3.0
+  deadband: 1.0                # E0-VALIDATED mapping-route value (project_combine_routing_model: 3.0 UNDER-routed
+                               # subtle deformation -> lowered to 1.0, field alive +52.5% + render up). The tracking
+                               # gate stays at 3 (flow_track.deadband); best_deformiters wrongly used 3 here too.
   n_groups: 12                 # inert in pixel mode; carried for fidelity with best_deformiters
   smooth: 5
-  soft_scale: 2.0
+  soft_scale: 2.0              # SOFT routing (E0 v0.4): w = clip((resid-deadband)/soft_scale, 0, 1)
   ransac_thresh: 1.0
 mapping:
   deform_iters_scale: 200      # n_iters = cur_frame_iters(100) + 200*moving_frac
