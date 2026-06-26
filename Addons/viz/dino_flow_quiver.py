@@ -78,7 +78,7 @@ def main():
     ap.add_argument('--stride', type=int, default=8, help='causal reference = t - stride')
     ap.add_argument('--n_groups', type=int, default=12)
     ap.add_argument('--deadband', type=float, default=3.0)
-    ap.add_argument('--target_len', type=float, default=70.0, help='median arrow length in px (auto-scaled)')
+    ap.add_argument('--target_len', type=float, default=95.0, help='median arrow length in px (auto-scaled)')
     ap.add_argument('--out', required=True)
     ap.add_argument('--cpu', action='store_true')
     a = ap.parse_args()
@@ -105,14 +105,15 @@ def main():
         sc = a.target_len / (med + 1e-6)
 
         ax.imshow(rgb)
-        ax.imshow(lab, cmap='tab20', alpha=0.18)        # faint DINO regions
+        ax.imshow(lab, cmap='tab20', alpha=0.30)        # DINO regions (visible tint)
         nd = 0
         for cx, cy, u, v, rmed in regions:
             agree = rmed <= a.deadband
             nd += 0 if agree else 1
+            ax.scatter(cx, cy, s=22, color='white', edgecolors='black', lw=0.8, zorder=6)  # region anchor
             ax.arrow(cx, cy, u * sc, v * sc, color=('lime' if agree else 'red'),
-                     width=2.2, head_width=14, head_length=12, length_includes_head=True,
-                     zorder=5, ec='black', lw=0.4)
+                     width=4.0, head_width=26, head_length=20, length_includes_head=True,
+                     zorder=5, ec='black', lw=1.2)
         ax.set_title(f"{name} (idx {t}/{N})  --  {nd}/{len(regions)} regions disagree", fontsize=10)
         ax.set_xticks([]); ax.set_yticks([])
 
