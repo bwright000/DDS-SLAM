@@ -13,9 +13,10 @@
 #   -> train -> Sim3 ATE (sim3_ate.py) + render PSNR/SSIM/LPIPS (eval_rendering) + Depth-L1 + 6-panel video
 #   -> aggregate across the snippets.
 # RUN FROM A FRESH CLONE (T4 ok): git clone -b diagnosis-live ... /content/DDS-SLAM-rect && cd it && bash this.
-#   knobs: SNIPPETS="C1_001"  SEEDS="0 1 2"  PARALLEL=1
-# Resume-safe (.DONE per snippet x seed). Headline tracking only on C2_001 (others sub-SNR -> render-only).
-# !! FIRST RUN VALIDATES the rectified pipeline (rectify+MoGe+bound+intrinsics) on snippet 1 before all 5.
+#   knobs: SNIPPETS="C1_001"  SEEDS="0 1 2"  ARMS="best"
+# ORDER: ONE SNIPPET AT A TIME, SHORTEST-FIRST (by source frame count) -> stage once, run BOTH arms, next snippet.
+#   => the short snippets land first (fast feedback) and resume granularity is a WHOLE snippet.
+# Resume-safe (.DONE per snippet x arm x seed on Drive). Headline tracking only on C2_001 (others sub-SNR).
 # ============================================================================
 set -uo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd); cd "$REPO"
@@ -151,12 +152,18 @@ PY
   say "  $CELL -> $(grep -h PSNR "$DST/render_eval.txt" 2>/dev/null|head -1) | $(grep -hE 'rmse/mean' "$DST/sim3_metrics.txt" 2>/dev/null|head -1)"
 }
 
-# ---------- drive ----------
-for NAME in $SNIPPETS; do stage_rect "$NAME" || say "  $NAME stage FAILED -> skipped"; done
-JOBS=(); for NAME in $SNIPPETS; do [ -f "$REPO/data/CRCD/$NAME/.STAGED" ] && for ARM in $ARMS; do for S in $SEEDS; do JOBS+=("$NAME|$ARM|$S"); done; done; done
-say "########## RUN ${#JOBS[@]} (snippet x arm x seed), arms=$ARMS PARALLEL=$PARALLEL ##########"
-r=0; for j in "${JOBS[@]}"; do IFS='|' read -r n arm s <<< "$j"; run_one "$n" "$arm" "$s" &
-  r=$((r+1)); [ "$r" -ge "$PARALLEL" ] && { wait -n; r=$((r-1)); }; sleep 2; done; wait
+# ---------- drive: ONE SNIPPET AT A TIME, SHORTEST-FIRST ----------
+# Order snippets by source frame count (shortest first) so the small ones finish first (fast feedback) and
+# resume granularity is a WHOLE snippet. Per snippet: stage ONCE -> run BOTH arms sequentially -> next snippet.
+ORDERED=$(for NAME in $SNIPPETS; do
+  printf '%s %s\n' "$(ls "$(snip_src "$NAME")/rgb"/*.png 2>/dev/null | wc -l)" "$NAME"
+done | sort -n | awk '{print $2}')
+say "########## RUN one-at-a-time (shortest-first): $(echo $ORDERED | tr '\n' ' ')  arms=$ARMS seeds=${SEEDS// /,} ##########"
+for NAME in $ORDERED; do
+  say ">>> SNIPPET $NAME ($(ls "$(snip_src "$NAME")/rgb"/*.png 2>/dev/null | wc -l) src frames)"
+  stage_rect "$NAME" || { say "  $NAME stage FAILED -> skipped"; continue; }
+  for ARM in $ARMS; do for S in $SEEDS; do run_one "$NAME" "$ARM" "$S"; done; done
+done
 
 say "########## AGGREGATE ##########"
 NAMES=""; for n in $SNIPPETS; do for arm in $ARMS; do for s in $SEEDS; do NAMES="$NAMES ${n}_${arm}_s${s}"; done; done; done
