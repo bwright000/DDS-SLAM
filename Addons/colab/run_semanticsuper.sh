@@ -263,7 +263,7 @@ crcd_ep_sid(){ local n; n=$(echo "$1"|tr 'a-z' 'A-Z'); [[ "$n" =~ ^[A-Z][0-9]_[0
 # loaded .npy as METRIC depth (skip disp_to_depth); render_img works without pins + dumps the clean
 # render to results/<model>/render/<t>.png for PSNR (the upstream only logs renders to TensorBoard).
 ss_patch_crcd(){
-  ( cd "$SS_REPO" && git checkout -- utils/data_loader.py super/nodes.py super/deform_mesh.py utils/labels.py 2>/dev/null ) || true  # clean slate -> idempotent
+  ( cd "$SS_REPO" && git checkout -- utils/data_loader.py super/nodes.py super/deform_mesh.py utils/labels.py utils/utils.py 2>/dev/null ) || true  # clean slate -> idempotent
   PYTHONPATH= "$SS_ENV_PY" - "$SS_REPO" <<'PY'
 import io, os, sys
 R = sys.argv[1]
@@ -300,6 +300,16 @@ edit('super/nodes.py', '[DDS-crcd-render]',
           "            _rd = _os.path.join(self.output_dir, 'render'); _os.makedirs(_rd, exist_ok=True)\n"
           "            _cv2.imwrite(_os.path.join(_rd, '%06d.png' % self.time), render_img.permute(1,2,0).cpu().numpy()[:, :, ::-1])\n"
           "        except Exception: pass\n"))
+# plot_pcd() (TensorBoard surfel viz, utils/utils.py:327) opens a matplotlib figure every viz frame
+# and NEVER closes it — BOTH the filename=None branch (returns pcd_image @353 then `return`) AND the
+# savefig branch (@358). At --save_sample_freq 1 the figures accumulate -> system-RAM OOM (the prior
+# CRCD run was Killed ~195 frames in). Close the figure on both paths.
+edit('utils/utils.py', '[DDS-crcd-pltclose-a]',
+     "        pcd_image = pcd_image.reshape(fig.canvas.get_width_height()[::-1] + (3,))\n",
+     ins="        plt.close(fig)  # [DDS-crcd-pltclose-a] release figure before return (None branch) -> no OOM\n")
+edit('utils/utils.py', '[DDS-crcd-pltclose-b]',
+     "        fig.savefig(filename, bbox_inches='tight', pad_inches=0)\n",
+     ins="\n        plt.close(fig)  # [DDS-crcd-pltclose-b] release figure after savefig (filename branch)\n")
 # evaluate() (the reproj-err eval) is called unconditionally (super.py:81) but accesses pin-only
 # attrs (track_rsts @775); with no green-pins (evaluate_tracking=False) -> AttributeError. Early-return.
 edit('super/nodes.py', '[DDS-crcd-noeval]',
