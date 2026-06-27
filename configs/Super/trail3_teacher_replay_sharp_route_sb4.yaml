@@ -1,5 +1,0 @@
-# E0 overnight campaign arm: sb4  (inherits the v0.4 soft-route base + the fix flags).
-inherit_from: configs/Super/trail3_teacher_replay_sharp_route.yaml
-data:
-  output: output/trail3_teacher_replay_sharp_route_sb4
-deform_surface_bind: 4.0

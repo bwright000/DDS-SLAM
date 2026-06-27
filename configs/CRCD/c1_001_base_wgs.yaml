@@ -1,8 +1,0 @@
-# Baseline matched to c1_001_dino_wgs: SAME cur_frame_iters regime, uncertainty OFF.
-# This is the clean A/B partner for the WildGS-faithful DINO run (isolates the DINO effect).
-inherit_from: configs/CRCD/c1_001_canon_base.yaml
-data:
-  output: output/CRCD/c1_001_base_wgs
-  exp_name: demo
-mapping:
-  cur_frame_iters: 10

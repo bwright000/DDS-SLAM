@@ -1,6 +1,0 @@
-# E0 overnight campaign arm: ba  (inherits the v0.4 soft-route base + the fix flags).
-inherit_from: configs/Super/trail3_teacher_replay_sharp_route.yaml
-data:
-  output: output/trail3_teacher_replay_sharp_route_ba
-map_route:
-  route_ba: true
