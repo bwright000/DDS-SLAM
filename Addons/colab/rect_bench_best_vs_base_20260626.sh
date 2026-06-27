@@ -20,10 +20,10 @@
 # ============================================================================
 set -uo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd); cd "$REPO"
-DATE=$(date +%Y%m%d)
+DATE="${DATE:-$(date +%Y%m%d)}"   # override (e.g. DATE=20260627) to resume into an existing output dir on a later day
 SNIPPETS="${SNIPPETS:-C1_001 C2_001 E3_005 C3_001 G3_001}"; SEEDS="${SEEDS:-0}"
 ARMS="${ARMS:-base best}"   # base=crcd_improved_rect (DDS-SLAM) ; best=crcd_best_rect (champion=best_deformiters+charbonnier)
-declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=configs/CRCD/crcd_best_rect.yaml )
+declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=${BEST_CFG:-configs/CRCD/crcd_best_rect.yaml} )   # BEST_CFG= override (T4: configs/CRCD/crcd_best_rect_t4.yaml)
 PARALLEL="${PARALLEL:-1}"; NPROC=$(nproc 2>/dev/null||echo 8); THREADS=$(( NPROC/PARALLEL>0 ? NPROC/PARALLEL : 1 ))
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256 LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
