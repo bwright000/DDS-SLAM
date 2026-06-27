@@ -6,9 +6,8 @@
 #     current-frame map iterations/frame -> 26 s/it AND the OOM that killed C1_001_best at frame 128 on a 15GB T4.
 #     Claim #4 was CONDITIONAL and already did NOT beat the uniform-iters control on c1_001, so it is reported as
 #     that standalone result, not carried across the (resource-limited) 5-snippet benchmark.
-#  2. RAFT-small (raft_small: true) instead of RAFT-large -> frees ~2-3GB GPU so the gate's baseline doesn't tip
-#     the keyframe-buffer growth over the T4 ceiling. Caveat: slightly changes the gate's disagree vs RAFT-large
-#     (note it when comparing to the c1_001 raw-left flow_agree numbers).
+#  2. Keeps RAFT-large (same as every measured run) -- RAFT is NOT the OOM cause (C1_001 ran fine on RAFT-large),
+#     so we do not contaminate the gate's disagree.
 #
 # So this run isolates exactly claims 1-3 (uncertainty + label-free flow gate + robust loss) vs base.
 inherit_from: configs/CRCD/crcd_improved_rect.yaml
@@ -30,7 +29,7 @@ flow_track:
   deadband: 3.0
   n_groups: 12
   ransac_thresh: 1.0
-  raft_small: true        # T4 fix: RAFT-small (~5x lighter GPU) so the gate baseline doesn't OOM at ~frame 128
+  raft_small: false       # RAFT-large (same as the measured runs; RAFT is NOT the OOM cause)
   freeze_ba: true
 training:
   rgb_loss_type: charbonnier
