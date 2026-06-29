@@ -177,4 +177,4 @@ say "########## AGGREGATE ##########"
 NAMES=""; for n in $SNIPPETS; do for arm in $ARMS; do for s in $SEEDS; do NAMES="$NAMES ${n}_${arm}_s${s}"; done; done; done
 python Addons/eval/aggregate_crcd_generic.py --root "$DRIVE" --names $NAMES --out "$DRIVE/SUMMARY.txt" 2>&1 | tail -40 || say "(aggregator best-effort: per-cell metrics are in $DRIVE/<snippet>_s<seed>/{sim3_metrics,render_eval,depth_l1}.txt)"
 say "=== RECTIFIED 5-snippet bench DONE. Headline tracking = C2_001 only; render+Depth-L1 = all snippets. ==="
-python3 -c "from google.colab import runtime; runtime.unassign()" 2>/dev/null || true
+if [ -n "${NO_UNASSIGN:-}" ]; then say "NO_UNASSIGN set -> keeping runtime alive (chained run)"; else python3 -c "from google.colab import runtime; runtime.unassign()" 2>/dev/null || true; fi
