@@ -384,6 +384,10 @@ def main():
                         help='Directory of the E0 field-route PNGs (single-channel {0,255}, 255=moving; '
                              'ddsslam output/<exp>/route). Adds a "Field Route" panel overlaying the '
                              'routed (moving) regions in magenta on the rendered RGB. Empty/missing -> omitted.')
+    parser.add_argument('--trust_dir', type=str, default=None,
+                        help='Directory of the depth-supervisor per-pixel TRUST weight uint16 PNGs '
+                             '(ddsslam output/<exp>/trust; 1.0=moves-with-camera/trusted -> 0=down-weighted/'
+                             'deforming). Adds a "Trust Weight" panel (scalar colormap). Empty/missing -> omitted.')
     args = parser.parse_args()
 
     panel_size = (args.panel_height, args.panel_width)
@@ -457,6 +461,14 @@ def main():
             panels.append('Uncertainty')
             panel_data['Uncertainty'] = paths
             print(f"Uncertainty: {len(paths)} frames")
+
+    if args.trust_dir:
+        paths = sorted(glob.glob(os.path.join(args.trust_dir, '*.png')), key=_natkey)
+        paths = _slice(paths, args.input_frame_slice)
+        if paths:
+            panels.append('Trust Weight')
+            panel_data['Trust Weight'] = paths
+            print(f"Trust Weight: {len(paths)} frames")
 
     if args.whatkind_dir:
         paths = sorted(glob.glob(os.path.join(args.whatkind_dir, '*.png')))
@@ -609,6 +621,10 @@ def main():
                 img = colorize_classmap(load_image(paths[idx], None))
                 img = cv2.resize(img, (panel_size[1], panel_size[0]), interpolation=cv2.INTER_NEAREST)
             elif panel_name == 'Uncertainty':
+                paths = panel_data[panel_name]
+                idx = pmap(frame_idx, len(paths))
+                img = colormap_scalar(paths[idx], panel_size)
+            elif panel_name == 'Trust Weight':
                 paths = panel_data[panel_name]
                 idx = pmap(frame_idx, len(paths))
                 img = colormap_scalar(paths[idx], panel_size)
