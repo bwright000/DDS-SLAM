@@ -79,6 +79,7 @@ class DDSSLAM():
         # (which snapshots the model) is unaffected.
         self.flow_track_on = bool(self.config.get('flow_track', {}).get('enable', False))
         self._flow_buf = None
+        self._trust_map = None   # [H,W] depth-supervisor per-pixel trust weight (for the trust/ diagnostic dump)
         if self.flow_track_on:
             from collections import deque
             from Addons.motion.flow_track import load_raft
@@ -86,7 +87,7 @@ class DDSSLAM():
             self._dino = None
             with torch.random.fork_rng(devices=(list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [])):
                 self._raft, self._raft_tf = load_raft(self.device, bool(_ft.get('raft_small', False)))
-                if _ft.get('agreement', False):   # per-region agreement gate also needs DINO (also fork_rng -> parity-safe)
+                if _ft.get('agreement', False) or _ft.get('residual', 'sampson') == 'rigid':   # agreement gate AND the depth-supervisor region-pool need DINO (fork_rng -> parity-safe)
                     from Addons.motion.flow_track import load_dino
                     self._dino = load_dino(self.device)
             self._flow_buf = deque(maxlen=int(_ft.get('ref_stride', 8)))
@@ -777,6 +778,7 @@ class DDSSLAM():
         '''
 
         c2w_gt = batch['c2w'][0].to(self.device)
+        self._trust_map = None   # reset per frame; the depth supervisor (gate=false, residual=rigid) sets it below if it runs
 
         # Initialize current pose
         if self.config['tracking']['iter_point'] > 0:
@@ -801,10 +803,11 @@ class DDSSLAM():
         if getattr(self, 'flow_track_on', False):
             _ft = self.config['flow_track']
             cur_bgr = self._rgb_to_bgr_u8(batch['rgb'])
+            _cur_depth = batch['depth'].squeeze(0).detach().cpu().numpy().astype(np.float32)   # buffered for the depth supervisor (ref-frame Z-depth)
             ref = self._flow_buf[0] if (len(self._flow_buf) == self._flow_buf.maxlen) else None
-            self._flow_buf.append((frame_id, cur_bgr))   # ref captured above; append for FUTURE frames
+            self._flow_buf.append((frame_id, cur_bgr, _cur_depth))   # ref captured above; append for FUTURE frames
             if ref is not None:
-                ref_id, ref_bgr = ref
+                ref_id, ref_bgr, ref_depth = ref
                 if ref_id >= frame_id:   # CAUSALITY: raise (NOT assert -> not stripped by python -O)
                     raise RuntimeError(f"flow_track NON-CAUSAL: ref {ref_id} >= cur {frame_id}")
                 if _ft.get('gate', False):
@@ -835,6 +838,43 @@ class DDSSLAM():
                         print(f"[flow_gate] f{frame_id}: {_reason} -> FIX pose, skip tracking")
                         return
                     # else: camera moving + features agree -> fall through to normal tracking
+                elif _ft.get('residual', 'sampson') == 'rigid':
+                    # DEPTH SUPERVISOR (L0): depth-predicted rigid-flow residual -> per-DINO-region
+                    # adaptive soft weight. No F-matrix, no deadband, no semantic labels. gate=false ->
+                    # ALWAYS track (soft down-weight), so the Inc-2 1/sigma^2 weight (scene_rep:597) also fires.
+                    from Addons.motion.flow_track import rigid_flow_residual, region_soft_weight, dino_grid
+                    _c2w_ref = self.est_c2w_data[ref_id].detach().cpu().numpy().astype(np.float32)
+                    _c2w_cur = cur_c2w.detach().cpu().numpy().astype(np.float32)   # const-velocity prior (line 783/785)
+                    _T_rel = (np.linalg.inv(_c2w_cur) @ _c2w_ref).astype(np.float32)   # ref-cam point -> cur-cam point
+                    _dirs = batch['direction'].squeeze(0).detach().cpu().numpy().astype(np.float32)
+                    _resid = rigid_flow_residual(ref_bgr, cur_bgr, ref_depth, _dirs, _T_rel,
+                                                 float(self.dataset.fx), float(self.dataset.fy),
+                                                 float(self.dataset.cx), float(self.dataset.cy),
+                                                 self._raft, self._raft_tf, self.device)
+                    _dg = dino_grid(cur_bgr, self._dino, self.device)
+                    _wfull, _med, _mad, _scale = region_soft_weight(
+                        _resid, _dg, n_groups=int(_ft.get('n_groups', 12)),
+                        mad_c=float(_ft.get('mad_c', 2.0)), w_floor_px=float(_ft.get('w_floor_px', 1.0)),
+                        w_min=float(_ft.get('w_min', 0.1)))
+                    self._trust_map = _wfull   # full-res [H,W] for the trust/ diagnostic panel
+                    track_w_map = torch.from_numpy(_wfull[iH:-iH, iW:-iW])   # CPU [H-2iH, W-2iW]
+                    _wc = _wfull[iH:-iH, iW:-iW]
+                    print(f"[depth_sup] f{frame_id}: resid med={_med:.2f} mad={_mad:.2f} scale={_scale:.2f} "
+                          f"w_mean={float(_wc.mean()):.3f} w_min={float(_wc.min()):.3f} "
+                          f"frac_dn={float((_wc < 0.5).mean()):.3f} (ref {ref_id})")
+                    try:
+                        import csv as _csv
+                        _tl = os.path.join(self.config['data']['output'], 'trust_log.csv')
+                        _new = not os.path.exists(_tl)
+                        with open(_tl, 'a', newline='') as _f:
+                            _wr = _csv.writer(_f)
+                            if _new:
+                                _wr.writerow(['frame', 'resid_med', 'resid_mad', 'scale', 'w_mean', 'w_min', 'frac_dn'])
+                            _wr.writerow([frame_id, round(_med, 4), round(_mad, 4), round(_scale, 4),
+                                          round(float(_wc.mean()), 4), round(float(_wc.min()), 4),
+                                          round(float((_wc < 0.5).mean()), 4)])
+                    except Exception as _e:
+                        print(f"[depth_sup] trust_log.csv write skipped: {_e}")
                 else:
                     from Addons.motion.flow_track import flow_residual, residual_to_weight
                     _resid = flow_residual(ref_bgr, cur_bgr, self._raft, self._raft_tf, self.device,
@@ -1268,6 +1308,16 @@ class DDSSLAM():
             _rt = (self._route_map.detach().cpu().numpy() if getattr(self, '_route_map', None) is not None
                    else np.zeros((H, W), np.float32))
             cv2.imwrite(os.path.join(_rt_dir, '{:0>4d}.png'.format(frame_id)), (_rt * 255).astype(np.uint8))
+
+        # Depth-supervisor: save the per-pixel TRUST weight map (1.0=moves-with-camera/trusted ->
+        # 0=down-weighted/deforming) as uint16 for the video "Trust Weight" panel + offline diagnosis.
+        # Gated on the depth supervisor having run this frame (_trust_map set in tracking_render); base -> nothing.
+        if getattr(self, '_trust_map', None) is not None:
+            _tr_dir = os.path.join(self.config['data']['output'], 'trust'); os.makedirs(_tr_dir, exist_ok=True)
+            _tw = self._trust_map
+            if _tw.shape != (H, W):
+                _tw = cv2.resize(_tw, (W, H), interpolation=cv2.INTER_NEAREST)
+            cv2.imwrite(os.path.join(_tr_dir, '{:0>4d}.png'.format(frame_id)), np.clip(_tw * 65535.0, 0, 65535).astype(np.uint16))
 
         # Save the model's rendered DEPTH as uint16 PNG for visualization.
         # IMPORTANT: this uses cam.output_depth_scale (NOT png_depth_scale).
