@@ -23,7 +23,9 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd); cd "$REPO"
 DATE="${DATE:-$(date +%Y%m%d)}"   # override (e.g. DATE=20260627) to resume into an existing output dir on a later day
 SNIPPETS="${SNIPPETS:-C1_001 C2_001 E3_005 C3_001 G3_001}"; SEEDS="${SEEDS:-0}"
 ARMS="${ARMS:-base best}"   # base=crcd_improved_rect (DDS-SLAM) ; best=crcd_best_rect (champion=best_deformiters+charbonnier)
-declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=${BEST_CFG:-configs/CRCD/crcd_best_rect.yaml} )   # BEST_CFG= override (T4: configs/CRCD/crcd_best_rect_t4.yaml)
+declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=${BEST_CFG:-configs/CRCD/crcd_best_rect.yaml} \
+  [abl_base]=configs/CRCD/crcd_abl_base_rect.yaml [l0]=configs/CRCD/crcd_abl_l0_rect.yaml [l0aggr]=configs/CRCD/crcd_abl_l0aggr_rect.yaml \
+  [l0sig]=configs/CRCD/crcd_abl_l0sig_rect.yaml [l0sigaggr]=configs/CRCD/crcd_abl_l0sigaggr_rect.yaml )   # BEST_CFG= override (T4); abl_*/l0* = depth-supervisor ablation arms
 PARALLEL="${PARALLEL:-1}"; NPROC=$(nproc 2>/dev/null||echo 8); THREADS=$(( NPROC/PARALLEL>0 ? NPROC/PARALLEL : 1 ))
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256 LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
@@ -142,11 +144,17 @@ PY
     python Addons/eval/sim3_ate.py --est "$RUN/est_c2w_data.txt" --gt "$DD/groundtruth.txt" --name "$CELL" --out "$DST/sim3_metrics.txt" || echo WARN-sim3
     CUDA_VISIBLE_DEVICES="" python -u Addons/eval/eval_rendering.py --gt_dir "$DD/video_frames" --render_dir "$OUT" --name "$CELL" --sequence "CRCD ($NAME)" > "$DST/render_eval.txt" 2>&1 || echo WARN-render
     python Addons/eval/depth_l1.py --render_depth_dir "$OUT/depth" --input_depth_dir "$DD/depth" --render_scale $DEPTH_SCALE --input_scale $DEPTH_SCALE --sc_factor 1.0 --out "$DST/depth_l1.txt" || echo WARN-depthl1
+    # seg panel: 4-class semantic_class colorizes; the binary masks/ -> all-black (issue-1 fix). uncert/route/
+    # trust panels are auto-added ONLY when the arm wrote them (base -> just the seg fix; depth-sup -> trust).
+    _SEGDIR="$DD/masks"; [ -d "$DD/semantic_class" ] && _SEGDIR="$DD/semantic_class"
+    _UNC=""; [ -d "$OUT/uncert" ] && _UNC="--uncert_dir $OUT/uncert"
+    _RT="";  [ -d "$OUT/route" ]  && _RT="--route_dir $OUT/route"
+    _TR="";  [ -d "$OUT/trust" ]  && _TR="--trust_dir $OUT/trust"
     python Addons/viz/generate_video.py --rgb_input_dir "$DD/video_frames" --rgb_input_pattern '*l.png' \
       --rgb_output_dir "$OUT" --rgb_output_pattern '[0-9]*.jpg' --depth_input_dir "$DD/depth" --depth_output_dir "$OUT/depth" \
-      --seg_dir "$DD/masks" --seg_classmap --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DD/groundtruth.txt" \
+      --seg_dir "$_SEGDIR" --seg_classmap $_UNC $_RT $_TR --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DD/groundtruth.txt" \
       --output "$DST/panels.mp4" --fps 15 || echo WARN-video
-    cp "$RUN/est_c2w_data.txt" "$DD/.anchor_quality" "$DST/" 2>/dev/null
+    cp "$RUN/est_c2w_data.txt" "$DD/.anchor_quality" "$OUT/trust_log.csv" "$DST/" 2>/dev/null
   } > "$DST/run.log" 2>&1
   local N; N=$(grep -cvE '^\s*#|^\s*$' "$RUN/est_c2w_data.txt" 2>/dev/null); [ "${N:-0}" -ge 1 ] && touch "$DST/.DONE" || echo "FAILED" >"$DST/.FAILED"
   say "  $CELL -> $(grep -h PSNR "$DST/render_eval.txt" 2>/dev/null|head -1) | $(grep -hE 'rmse/mean' "$DST/sim3_metrics.txt" 2>/dev/null|head -1)"
