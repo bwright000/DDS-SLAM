@@ -1,0 +1,5 @@
+# L0 + sigma^2 with the AGGRESSIVE trust knee (mad_c 1.5). Tests the L0-aggressiveness x sigma^2
+# interaction (the 2x2 corner). Deep-merges over l0sig -> only flow_track.mad_c changes.
+inherit_from: configs/CRCD/crcd_abl_l0sig_rect.yaml
+flow_track:
+  mad_c: 1.5

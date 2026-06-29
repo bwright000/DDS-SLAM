@@ -1,0 +1,10 @@
+# DEPTH-SUPERVISOR ABLATION -- shared BASE (tracking control).
+# = authors' improved canon (crcd_improved_rect: lr1e-4 + curmap100 + decoder64/3) + the charbonnier
+#   render loss (kept per the render decision). NO flow_track, NO uncertainty, NO map_route.
+# Every ablation arm inherits THIS, so charbonnier + the improved base are CONSTANT across the ladder
+# and only the TRACKING attachment varies -> a clean isolation of the depth supervisor (L0) and sigma^2.
+# The rect-bench runbook injects per-snippet datadir/timesteps/bound/rectified-intrinsics over the top.
+inherit_from: configs/CRCD/crcd_improved_rect.yaml
+training:
+  rgb_loss_type: charbonnier
+  charbonnier_eps: 0.01

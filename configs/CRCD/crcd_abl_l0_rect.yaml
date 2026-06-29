@@ -1,0 +1,18 @@
+# L0 = the DEPTH SUPERVISOR (the new base model).
+# Per frame: back-project each ref pixel by its depth, push through the candidate relative pose,
+# re-project -> the rigid flow the camera alone would produce (parallax-correct); ||observed RAFT flow
+# - rigid flow|| is the non-rigid motion. Pooled over DINO k-means regions -> adaptive soft trust
+# weight (no fixed deadband) -> down-weights regions that move independently of the camera in the
+# tracking pose solve. gate=false => ALWAYS track (no binary freeze), so the Inc-2 1/sigma^2 weight
+# (scene_rep) also fires when uncertainty is on. No fundamental matrix, no semantic labels.
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+flow_track:
+  enable: true
+  gate: false          # NO binary freeze gate -- always track, soft per-region down-weight
+  residual: rigid      # depth-predicted rigid-flow residual (NOT the 2D fundamental-matrix Sampson)
+  ref_stride: 8        # causal reference frame offset (flow ref->cur)
+  n_groups: 12         # DINO k-means regions to pool the residual over
+  mad_c: 2.0           # robust trust knee: scale = max(mad_c*1.4826*MAD, w_floor_px); outlier regions down-weighted
+  w_floor_px: 1.0      # sub-pixel flow-noise floor for the scale (keeps near-still frames a NOP)
+  w_min: 0.1           # minimum trust weight (never fully drop a region)
+  raft_small: false

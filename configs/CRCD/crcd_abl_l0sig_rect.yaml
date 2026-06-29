@@ -1,0 +1,14 @@
+# L0 + Inc-1/2 uncertainty (sigma^2 aleatoric head + 1/sigma^2 tracking down-weight, geo v1 = the canon).
+# Because L0 sets gate=false, tracking runs EVERY frame, so the 1/sigma^2 weight FIRES -- it was masked
+# in the old flow-gate champion (the freeze early-returned before the tracking solve). scene_rep
+# MULTIPLIES the L0 region weight by 1/sigma^2, so the two trust signals combine: geometry (L0, hard
+# current-frame evidence) x learned aleatoric (sigma^2). Tests whether the learned head ADDS on top of L0.
+inherit_from: configs/CRCD/crcd_abl_l0_rect.yaml
+uncertainty:
+  enable: true
+  hidden_dim: 32
+  num_layers: 2
+  nll_weight: 0.1
+  w_min: 0.1
+  w_max: 10.0
+  detach_pose_weight: true

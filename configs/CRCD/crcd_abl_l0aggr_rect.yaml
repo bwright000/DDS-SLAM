@@ -1,0 +1,7 @@
+# L0 with a MORE AGGRESSIVE trust knee (mad_c 2.0 -> 1.5): regions are down-weighted at a lower
+# outlier threshold, so the tool/deforming tissue is suppressed harder (at the risk of also damping
+# borderline-rigid regions). Sensitivity arm for the depth supervisor's single key hyperparameter.
+# Deep-merges over L0 -> only mad_c changes.
+inherit_from: configs/CRCD/crcd_abl_l0_rect.yaml
+flow_track:
+  mad_c: 1.5
