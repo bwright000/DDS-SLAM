@@ -198,3 +198,63 @@ def residual_to_weight(resid, alpha=0.5, w_min=0.1, w_max=1.0, deadband=0.0):
     excess = np.maximum(resid - deadband, 0.0)
     w = 1.0 / (1.0 + alpha * excess)
     return np.clip(w, w_min, w_max).astype(np.float32)
+
+
+def rigid_flow_residual(ref_bgr, cur_bgr, ref_depth, dirs, T_rel, fx, fy, cx, cy, model, tf, device):
+    """DEPTH-ANCHORED per-pixel rigid-flow residual [H,W] (the depth-supervisor; replaces the 2D
+    fundamental-matrix Sampson of flow_residual). For each REF pixel: back-project by its depth ->
+    ref-camera 3D point, push through the candidate relative pose T_rel (ref-cam -> cur-cam, 4x4),
+    re-project -> the RIGID flow the camera ALONE would produce at that pixel's distance (parallax:
+    big near, small far). Compare to the observed RAFT flow; ||observed - rigid|| is ~0 where the
+    region moves WITH the camera (any depth), high where it moves INDEPENDENTLY (tool / deforming
+    tissue). No F-matrix -> no forward/planar degeneracy, not hijacked by a large moving object;
+    depth disambiguates 'near static thing with big parallax' from 'thing moving on its own'.
+      ref_depth : [H,W] Z-depth, SAME metric scale as the poses (DDS tracks in the scaled-depth frame).
+      dirs      : [H,W,3] camera-frame ray dirs ((u-cx)/fx,(v-cy)/fy,1)  (batch['direction']).
+      T_rel     : [4,4] = inv(c2w_cur) @ c2w_ref  (ref-cam point -> cur-cam point).
+    Invalid-depth / behind-camera pixels -> 0 residual (neutral; no spurious down-weight)."""
+    f_obs = _raft_flow(model, tf, ref_bgr, cur_bgr, device)               # [H,W,2] observed ref->cur
+    H, W = f_obs.shape[:2]
+    X = ref_depth[..., None].astype(np.float32) * dirs.astype(np.float32)  # [H,W,3] ref-cam 3D
+    R = T_rel[:3, :3].astype(np.float32); t = T_rel[:3, 3].astype(np.float32)
+    Xc = X @ R.T + t                                                       # [H,W,3] cur-cam 3D
+    Z = Xc[..., 2]
+    Zc = np.where(np.abs(Z) < 1e-6, 1e-6, Z)
+    u = fx * Xc[..., 0] / Zc + cx; v = fy * Xc[..., 1] / Zc + cy           # predicted cur pixel
+    uu, vv = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    f_rig = np.stack([u - uu, v - vv], -1).astype(np.float32)              # predicted RIGID flow
+    resid = np.linalg.norm(f_obs - f_rig, axis=-1).astype(np.float32)      # [H,W]
+    bad = (ref_depth <= 0) | (Z <= 1e-6) | ~np.isfinite(resid)
+    resid[bad] = 0.0
+    return resid
+
+
+def region_soft_weight(resid, dino_g, n_groups=12, mad_c=2.0, w_floor_px=1.0,
+                       w_min=0.1, min_px=50, seed=0):
+    """Pool the rigid-flow residual into DINO k-means regions and map each region's MEDIAN residual to
+    a soft trust weight [H,W] in [w_min,1]: 1 = moves-with-camera (trust for the pose solve), ->0 =
+    moves independently (down-weight). NO fixed deadband -- the knee is set ADAPTIVELY from robust
+    residual stats: scale = max(mad_c*1.4826*MAD, w_floor_px), and the weight uses the region's EXCESS
+    OVER the rigid median, so a region is down-weighted only when it is an OUTLIER vs the rigid
+    majority. A fully-rigid / near-still frame -> excess~0 -> w~1 everywhere (true NOP), independent of
+    scene / dataset. Returns (w[H,W] float32, med, mad, scale)."""
+    import cv2
+    from sklearn.cluster import KMeans
+    H, W = resid.shape
+    r = resid.reshape(-1).astype(np.float32); r = r[np.isfinite(r)]
+    med = float(np.median(r)) if r.size else 0.0
+    mad = float(np.median(np.abs(r - med))) if r.size else 0.0
+    scale = max(mad_c * 1.4826 * mad, float(w_floor_px))
+    gh, gw, C = dino_g.shape
+    X = dino_g.reshape(-1, C); X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
+    lab = KMeans(n_groups, n_init=4, random_state=seed).fit_predict(X).reshape(gh, gw).astype(np.uint8)
+    lab = cv2.resize(lab, (W, H), interpolation=cv2.INTER_NEAREST)
+    w = np.ones((H, W), np.float32)
+    for k in range(n_groups):
+        m = lab == k
+        if int(m.sum()) < min_px:
+            continue
+        r_k = float(np.median(resid[m]))
+        excess = max(0.0, r_k - med)
+        w[m] = 1.0 / (1.0 + (excess / scale) ** 2)
+    return np.clip(w, w_min, 1.0).astype(np.float32), med, mad, scale
