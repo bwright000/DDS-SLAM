@@ -80,13 +80,19 @@ def evaluate(est, gt):
     err_s = np.linalg.norm(al_s - g, axis=1) * 1000.0
     err_r = np.linalg.norm(al_r - g, axis=1) * 1000.0
     dom = int(np.argmax(g.max(0) - g.min(0)))
-    pear = float(abs(np.corrcoef(e[:, dom], g[:, dom])[0, 1]))
+    # Pearson on the SIM3-ALIGNED est (al_s), NOT the raw est. Sim3 alignment includes a ROTATION, so the
+    # raw est axis e[:,dom] is a DIFFERENT physical axis than g[:,dom] -> the raw correlation is rotation-
+    # confounded and reads ~0 even when the aligned shape tracks GT well (the E3_005 'Pearson 0.023' artefact;
+    # the aligned value was 0.60). al_s is in GT's frame, so per-axis correlation is meaningful. Also report
+    # the mean over x,y,z (more robust than betting on one axis).
+    pear = float(abs(np.corrcoef(al_s[:, dom], g[:, dom])[0, 1]))
+    pear_xyz = float(np.mean([abs(np.corrcoef(al_s[:, k], g[:, k])[0, 1]) for k in range(3)]))
     return {
         "paired": paired, "n": len(e), "scale": float(s),
         "gt_path_mm": pathlen(g) * 1000.0, "path_ratio": pathlen(e) * s / (pathlen(g) + 1e-12),
         "sim3_rmse": float(np.sqrt((err_s ** 2).mean())), "sim3_mean": float(err_s.mean()),
         "sim3_median": float(np.median(err_s)), "sim3_max": float(err_s.max()),
-        "pearson_dom": pear, "rigid_rmse": float(np.sqrt((err_r ** 2).mean())),
+        "pearson_dom": pear, "pearson_xyz": pear_xyz, "rigid_rmse": float(np.sqrt((err_r ** 2).mean())),
         "rigid_mean": float(err_r.mean()),
     }
 
@@ -107,7 +113,8 @@ def main():
         f"  est/GT path ratio  : {r['path_ratio']:.2f}",
         f"  Sim3 ATE  rmse/mean/median/max : "
         f"{r['sim3_rmse']:.2f} / {r['sim3_mean']:.2f} / {r['sim3_median']:.2f} / {r['sim3_max']:.2f} mm",
-        f"  |Pearson| dom axis : {r['pearson_dom']:.3f}   (scale-free shape tracking)",
+        f"  |Pearson| dom axis : {r['pearson_dom']:.3f}   (Sim3-ALIGNED dom axis; scale-free shape tracking)",
+        f"  |Pearson| mean xyz : {r['pearson_xyz']:.3f}   (Sim3-aligned, mean over x,y,z)",
         f"  [pipeline RIGID ATE rmse/mean : {r['rigid_rmse']:.1f} / {r['rigid_mean']:.1f} mm  "
         f"<- scale-confounded, do NOT headline]",
     ]
