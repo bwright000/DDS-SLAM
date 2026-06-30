@@ -34,6 +34,6 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 export SNIPPETS="${SNIPPETS:-E3_005}"
 export ARMS="${ARMS:-abl_base l0 l0aggr l0sig l0sigaggr}"
 export SEEDS="${SEEDS:-0}"
-export DATE="${DATE:-e3abl_20260629}"
+export DATE="${DATE:-e3abl2_20260630}"   # v2: the v1 (e3abl_20260629) run was VOID -- L0 was a no-op (OpenGL/OpenCV bug, fixed @186b307); new dir so the .DONE-resume-safe runbook re-runs all 5 arms with L0 actually firing
 echo "[e3-depthsup-ablation] snippets='$SNIPPETS' arms='$ARMS' seeds='$SEEDS' -> Outputs/rect_bestbase_${DATE}"
 exec bash "$HERE/rect_bench_best_vs_base_20260626.sh"
