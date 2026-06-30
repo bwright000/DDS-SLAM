@@ -200,7 +200,7 @@ def residual_to_weight(resid, alpha=0.5, w_min=0.1, w_max=1.0, deadband=0.0):
     return np.clip(w, w_min, w_max).astype(np.float32)
 
 
-def rigid_flow_residual(ref_bgr, cur_bgr, ref_depth, dirs, T_rel, fx, fy, cx, cy, model, tf, device):
+def rigid_flow_residual(ref_bgr, cur_bgr, ref_depth, T_rel, fx, fy, cx, cy, model, tf, device):
     """DEPTH-ANCHORED per-pixel rigid-flow residual [H,W] (the depth-supervisor; replaces the 2D
     fundamental-matrix Sampson of flow_residual). For each REF pixel: back-project by its depth ->
     ref-camera 3D point, push through the candidate relative pose T_rel (ref-cam -> cur-cam, 4x4),
@@ -210,18 +210,22 @@ def rigid_flow_residual(ref_bgr, cur_bgr, ref_depth, dirs, T_rel, fx, fy, cx, cy
     tissue). No F-matrix -> no forward/planar degeneracy, not hijacked by a large moving object;
     depth disambiguates 'near static thing with big parallax' from 'thing moving on its own'.
       ref_depth : [H,W] Z-depth, SAME metric scale as the poses (DDS tracks in the scaled-depth frame).
-      dirs      : [H,W,3] camera-frame ray dirs ((u-cx)/fx,(v-cy)/fy,1)  (batch['direction']).
-      T_rel     : [4,4] = inv(c2w_cur) @ c2w_ref  (ref-cam point -> cur-cam point).
+      T_rel     : [4,4] = inv(c2w_cur) @ c2w_ref in the OPENCV convention (ref-cam -> cur-cam). DDS stores
+                  poses + batch['direction'] in OPENGL (z=-1, y-flipped), so the CALLER must convert the
+                  c2w's GL->CV (c2w @ diag(1,-1,-1,1)) BEFORE forming T_rel -- this function builds OpenCV
+                  ray dirs internally (z=+1) and projects with z>0, so an OpenGL T_rel would push every
+                  point behind the camera (Z<0) and the bad-mask would zero the whole residual (a no-op).
     Invalid-depth / behind-camera pixels -> 0 residual (neutral; no spurious down-weight)."""
     f_obs = _raft_flow(model, tf, ref_bgr, cur_bgr, device)               # [H,W,2] observed ref->cur
     H, W = f_obs.shape[:2]
-    X = ref_depth[..., None].astype(np.float32) * dirs.astype(np.float32)  # [H,W,3] ref-cam 3D
+    uu, vv = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    dirs = np.stack([(uu - cx) / fx, (vv - cy) / fy, np.ones_like(uu)], -1).astype(np.float32)  # OpenCV (z=+1)
+    X = ref_depth[..., None].astype(np.float32) * dirs                     # [H,W,3] ref-cam 3D (Z=+depth)
     R = T_rel[:3, :3].astype(np.float32); t = T_rel[:3, 3].astype(np.float32)
     Xc = X @ R.T + t                                                       # [H,W,3] cur-cam 3D
     Z = Xc[..., 2]
     Zc = np.where(np.abs(Z) < 1e-6, 1e-6, Z)
-    u = fx * Xc[..., 0] / Zc + cx; v = fy * Xc[..., 1] / Zc + cy           # predicted cur pixel
-    uu, vv = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    u = fx * Xc[..., 0] / Zc + cx; v = fy * Xc[..., 1] / Zc + cy           # predicted cur pixel (OpenCV)
     f_rig = np.stack([u - uu, v - vv], -1).astype(np.float32)              # predicted RIGID flow
     resid = np.linalg.norm(f_obs - f_rig, axis=-1).astype(np.float32)      # [H,W]
     bad = (ref_depth <= 0) | (Z <= 1e-6) | ~np.isfinite(resid)

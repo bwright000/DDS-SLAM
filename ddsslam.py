@@ -843,11 +843,16 @@ class DDSSLAM():
                     # adaptive soft weight. No F-matrix, no deadband, no semantic labels. gate=false ->
                     # ALWAYS track (soft down-weight), so the Inc-2 1/sigma^2 weight (scene_rep:597) also fires.
                     from Addons.motion.flow_track import rigid_flow_residual, region_soft_weight, dino_grid
-                    _c2w_ref = self.est_c2w_data[ref_id].detach().cpu().numpy().astype(np.float32)
-                    _c2w_cur = cur_c2w.detach().cpu().numpy().astype(np.float32)   # const-velocity prior (line 783/785)
-                    _T_rel = (np.linalg.inv(_c2w_cur) @ _c2w_ref).astype(np.float32)   # ref-cam point -> cur-cam point
-                    _dirs = batch['direction'].squeeze(0).detach().cpu().numpy().astype(np.float32)
-                    _resid = rigid_flow_residual(ref_bgr, cur_bgr, ref_depth, _dirs, _T_rel,
+                    # DDS stores poses + batch['direction'] in OPENGL (load_poses negates the y,z axes;
+                    # get_camera_rays default type='OpenGL', z=-1). rigid_flow_residual builds OpenCV dirs
+                    # (z=+1) + projects with z>0, so convert the c2w's GL->CV (c2w @ diag(1,-1,-1,1)) before
+                    # forming T_rel -- else every point lands behind the camera (Z<0) and the bad-mask zeros
+                    # the whole residual (the f9 resid=0 no-op seen in the first E3 ablation).
+                    _GL2CV = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)
+                    _c2w_ref = self.est_c2w_data[ref_id].detach().cpu().numpy().astype(np.float32) @ _GL2CV
+                    _c2w_cur = cur_c2w.detach().cpu().numpy().astype(np.float32) @ _GL2CV   # const-velocity prior (line 783/785)
+                    _T_rel = (np.linalg.inv(_c2w_cur) @ _c2w_ref).astype(np.float32)   # OpenCV ref-cam -> cur-cam
+                    _resid = rigid_flow_residual(ref_bgr, cur_bgr, ref_depth, _T_rel,
                                                  float(self.dataset.fx), float(self.dataset.fy),
                                                  float(self.dataset.cx), float(self.dataset.cy),
                                                  self._raft, self._raft_tf, self.device)
