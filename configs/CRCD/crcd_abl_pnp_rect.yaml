@@ -3,9 +3,10 @@
 # -> camera motion T_rel (up-to-scale, NOT a metric anchor). Used INIT-ONLY to seed the SDF tracker (which can
 # overrule it; never a freeze/prior). Reprojection residual -> per-DINO-region trust weight -> the pose loss.
 # flow_advance_px gates out below-noise-floor frames (fall back to const-velocity).
-# NOTE (v1): the seg tool-mask (seg==2) hard-exclusion is a NO-OP on CRCD until semantic_class is staged +
-# data.seg_label_subdir is set (CRCD semantic_paths glob the BINARY masks/); v1 relies on RANSAC's reprojection
-# outlier-rejection for the tool. If the tool hijacks (watch the diagnostics), enable the decoupled seg label.
+# TOOL-EXCLUSION: data.seg_label_subdir=semantic_class (below) points the tool label at the 4-class map (staged
+# by preprocess_crcd_published) so batch['seg']==2 = the tool -> HARD-excluded from the PnP solve AND forced to
+# w_min in the trust map (ddsslam). CRCD's default semantic_paths glob the BINARY masks/ (tool->2 remap fails),
+# hence the decoupled label; if semantic_class is absent the dataset falls back to masks/ (RANSAC-only reject).
 inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
 flow_track:
   enable: true
@@ -19,5 +20,5 @@ flow_track:
   w_floor_px: 1.0
   w_min: 0.1
   raft_small: false
-# data:
-#   seg_label_subdir: semantic_class   # (v2) decouple the 4-class tool label from the binary edge masks -> real tool-exclusion
+data:
+  seg_label_subdir: semantic_class   # 4-class tool label (decoupled from the binary edge masks) -> real tool-exclusion

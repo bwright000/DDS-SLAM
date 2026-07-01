@@ -248,7 +248,7 @@ def region_soft_weight(resid, dino_g, n_groups=12, mad_c=2.0, w_floor_px=1.0,
     r = resid.reshape(-1).astype(np.float32); r = r[np.isfinite(r)]
     med = float(np.median(r)) if r.size else 0.0
     mad = float(np.median(np.abs(r - med))) if r.size else 0.0
-    scale = max(mad_c * 1.4826 * mad, float(w_floor_px))
+    scale = max(mad_c * 1.4826 * mad, float(w_floor_px), 1e-6)   # 1e-6 floor: never divide by 0 if w_floor_px=0 & MAD=0
     gh, gw, C = dino_g.shape
     X = dino_g.reshape(-1, C); X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
     lab = KMeans(n_groups, n_init=4, random_state=seed).fit_predict(X).reshape(gh, gw).astype(np.uint8)
@@ -299,7 +299,7 @@ def depth_pooled_weight(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
     cons = np.median(vK[ok], axis=0)                                       # camera-translation consensus
     dev = np.linalg.norm(vK - cons[None, :], axis=1)                       # per-region deviation [n_groups]
     med = float(np.median(dev[ok])); mad = float(np.median(np.abs(dev[ok] - med)))
-    scale = max(mad_c * 1.4826 * mad, float(w_floor_px) * dmed)            # floor = ~1px of flow at median depth
+    scale = max(mad_c * 1.4826 * mad, float(w_floor_px) * dmed, 1e-6)      # floor = ~1px of flow at median depth (+1e-6 guard)
     w = np.ones((H, W), np.float32)
     for k in range(n_groups):
         if not ok[k]:
@@ -351,10 +351,14 @@ def rigid_solve_pnp(ref_bgr, cur_bgr, ref_depth, fx, fy, cx, cy, model, tf, devi
     R, _ = cv2.Rodrigues(rvec)
     T = np.eye(4, dtype=np.float32); T[:3, :3] = R.astype(np.float32); T[:3, 3] = tvec.reshape(3).astype(np.float32)
     proj = (R @ Xr.reshape(-1, 3).T.astype(np.float64) + tvec).T           # [HW,3]
-    z = np.clip(proj[:, 2], 1e-6, None)
+    zraw = proj[:, 2]
+    z = np.where(zraw <= 1e-6, 1e-6, zraw)
     pe = np.stack([fx * proj[:, 0] / z + cx, fy * proj[:, 1] / z + cy], -1)
     resid = np.linalg.norm(pe - p2.reshape(-1, 2), axis=1).reshape(H, W).astype(np.float32)
-    resid[~valid] = 0.0
+    # neutral-out (resid 0) no-depth / out-of-bounds / tool AND BEHIND-CAMERA points: a behind-cam point has z
+    # clipped to 1e-6 -> huge reprojection residual that would poison the region median/MAD -> the trust weights.
+    bad = (~valid) | (zraw.reshape(H, W) <= 1e-6)
+    resid[bad] = 0.0
     info = dict(inlier_frac=float(len(inl) / max(len(idx), 1)), n=int(len(idx)),
                 t_norm=float(np.linalg.norm(tvec)),
                 rot_deg=float(np.degrees(np.linalg.norm(rvec))),

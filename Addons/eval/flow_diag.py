@@ -3,8 +3,9 @@
   D-1 CAMERA-ACTIVATION TIMING: does the estimated camera move WHEN GT moves and hold still WHEN GT is still?
       Spearman rho(est per-frame step, GT per-frame step) over Sim3-aligned trajectories + a moving/still ratio.
       PASS: rho >= 0.5 AND moving/still ratio >= 2.0  (lag-tolerant; ranks -> scale-free, robust on sub-SNR GT).
-  D-2 OVER-TRAVEL / JITTER: does the est stop exaggerating motion? path-ratio (est*s / GT) toward 1, and no
-      phantom motion on GT-still frames.  PASS: path-ratio in [0.7,1.4] AND still-frame est step <= 3x GT-still.
+  D-2 OVER-TRAVEL / JITTER: does the est stop exaggerating motion? path-ratio (est*s / GT) toward 1, and the est
+      goes quiet when the camera stops.  PASS: path-ratio in [0.7,1.4] AND est-still-step <= 0.5*est-moving-step
+      (GT-still ~= 0 so the jitter is gated est-still vs est-moving, not vs GT).
 Works for ANY arm (needs only est_c2w_data.txt + groundtruth.txt); optionally overlays the solved motion from
 trust_log.csv (solve_pnp t_norm). Writes <out>.json (pass flags + numbers) and <plot>.png.
   python Addons/eval/flow_diag.py --est RUN/est_c2w_data.txt --gt DD/groundtruth.txt [--trust OUT/trust_log.csv] \
@@ -65,13 +66,18 @@ def main():
     pathr = pl(est) * s / (pl(gt) + 1e-12)
     est_still_mm = float(np.median(es[st])) if st.any() else 0.0
     gt_still_mm = float(np.median(gs[st])) if st.any() else 0.0
-    d2 = bool(0.7 <= pathr <= 1.4)
+    est_moving_mm = float(np.median(es[mv])) if mv.any() else 0.0
+    # D2 = over-travel (path-ratio) AND a still-frame JITTER guard: the est must be >=2x quieter on GT-still than
+    # on GT-moving frames (est_still <= 0.5*est_moving). NB a ratio to GT-still is ill-defined (GT-still ~= 0), so
+    # we gate est_still-vs-est_moving -- the meaningful "does the camera go quiet when it actually stops".
+    d2 = bool(0.7 <= pathr <= 1.4 and est_still_mm <= 0.5 * est_moving_mm)
     res = dict(name=a.name, n=int(n), sim3_scale=round(float(s), 4), activation_rho=round(rho, 3),
                moving_still_ratio=round(r_act, 2), path_ratio=round(float(pathr), 2),
-               est_still_step_mm=round(est_still_mm, 3), gt_still_step_mm=round(gt_still_mm, 3),
-               D1_timing_pass=d1, D2_overtravel_pass=d2, flow_ok=bool(d1 and d2))
+               est_still_step_mm=round(est_still_mm, 3), est_moving_step_mm=round(est_moving_mm, 3),
+               gt_still_step_mm=round(gt_still_mm, 3), D1_timing_pass=d1, D2_overtravel_pass=d2,
+               flow_ok=bool(d1 and d2))
     print(f"[flow_diag] {a.name}: activation rho={rho:.2f} moving/still={r_act:.1f} (D1 {'PASS' if d1 else 'FAIL'}) | "
-          f"path-ratio={pathr:.2f} est-still-jitter={est_still_mm:.3f}mm (GT-still {gt_still_mm:.3f}mm) (D2 {'PASS' if d2 else 'FAIL'})")
+          f"path-ratio={pathr:.2f} still/moving jitter={est_still_mm:.3f}/{est_moving_mm:.3f}mm (D2 {'PASS' if d2 else 'FAIL'})")
     if a.out:
         json.dump(res, open(a.out, 'w'), indent=2)
     if a.plot:
@@ -81,7 +87,7 @@ def main():
             ax[0].plot(gs, 'k-', lw=2, label='GT step'); ax[0].plot(es, 'C1-', lw=1, alpha=.8, label='est step (aligned)')
             ax[0].set_ylabel('per-frame step (mm)'); ax[0].legend(fontsize=8)
             ax[0].set_title(f"{a.name}  D1 timing rho={rho:.2f} mv/st={r_act:.1f} [{'PASS' if d1 else 'FAIL'}]  |  "
-                            f"D2 path-ratio={pathr:.2f} phantom={phantom:.1f}x [{'PASS' if d2 else 'FAIL'}]")
+                            f"D2 path-ratio={pathr:.2f} still-jitter={est_still_mm:.2f}mm [{'PASS' if d2 else 'FAIL'}]")
             if a.trust and os.path.exists(a.trust):
                 import csv
                 rows = list(csv.DictReader(open(a.trust)))

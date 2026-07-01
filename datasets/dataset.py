@@ -215,13 +215,21 @@ class StereoMISDataset(BaseDataset):
         # the SAME ratio rule as __getitem__ (1:1 CRCD vs half-rate StereoMIS) so seg_label_paths[index]
         # pairs correctly. None => no 'seg' key => base/per-pixel-dino bit-identical.
         self.seg_label_paths = None
-        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0 or self.config.get('training', {}).get('tool_mask', False) or self.config.get('training', {}).get('tool_mask_track', False) or self.config.get('flow_track', {}).get('mode', '') == 'solve_pnp':
-            if len(self.semantic_paths) >= len(self.img_files):
-                self.seg_label_paths = [self.semantic_paths[min(i, len(self.semantic_paths) - 1)]
-                                        for i in range(len(self.img_files))]
-            else:
-                self.seg_label_paths = [self.semantic_paths[min(i // 2, len(self.semantic_paths) - 1)]
-                                        for i in range(len(self.img_files))]
+        _ftc = self.config.get('flow_track', {})
+        _pnp = bool(_ftc.get('enable', False)) and _ftc.get('mode', '') == 'solve_pnp'   # gate on enable AND mode (parity)
+        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0 or self.config.get('training', {}).get('tool_mask', False) or self.config.get('training', {}).get('tool_mask_track', False) or _pnp:
+            # seg-LABEL source: default = the same masks the edge field uses (semantic_paths). data.seg_label_subdir
+            # (e.g. 'semantic_class') DECOUPLES the 4-class tool label from the binary edge masks -- CRCD masks/ is
+            # binary {0,255} so _attach_seg's tool(3)->canonical-2 remap fails -> tool_mask empty. Empty glob (dir
+            # not staged) -> fall back to semantic_paths (no silent success as no-mask, just the old behaviour).
+            _sub = self.config.get('data', {}).get('seg_label_subdir', None)
+            _src = sorted(glob.glob(f'{self.basedir}/{_sub}/*.png')) if _sub else []
+            if not _src:
+                _src = self.semantic_paths
+            if len(_src) >= len(self.img_files):
+                self.seg_label_paths = [_src[min(i, len(_src) - 1)] for i in range(len(self.img_files))]
+            elif _src:
+                self.seg_label_paths = [_src[min(i // 2, len(_src) - 1)] for i in range(len(self.img_files))]
 
         self.load_poses(self.basedir)
 
@@ -415,7 +423,9 @@ class SuperDataset(BaseDataset):
         # 1:1 (one mask per frame). Read via cv2.IMREAD_UNCHANGED in _attach_seg. None => no 'seg' key
         # => base/per-pixel-dino bit-identical.
         self.seg_label_paths = None
-        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0 or self.config.get('training', {}).get('tool_mask', False) or self.config.get('training', {}).get('tool_mask_track', False):
+        _ftc = self.config.get('flow_track', {})
+        _pnp = bool(_ftc.get('enable', False)) and _ftc.get('mode', '') == 'solve_pnp'   # gate on enable AND mode (parity; consistency with StereoMISDataset)
+        if self.config.get('uncertainty', {}).get('whatkind_weight', 0) > 0 or self.config.get('training', {}).get('tool_mask', False) or self.config.get('training', {}).get('tool_mask_track', False) or _pnp:
             self.seg_label_paths = [self.semantic_paths[min(i, len(self.semantic_paths) - 1)]
                                     for i in range(len(self.img_files))]
 

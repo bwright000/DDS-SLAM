@@ -854,6 +854,8 @@ class DDSSLAM():
                             _resid, _dg, n_groups=int(_ft.get('n_groups', 12)),
                             mad_c=float(_ft.get('mad_c', 2.0)), w_floor_px=float(_ft.get('w_floor_px', 1.0)),
                             w_min=float(_ft.get('w_min', 0.1)))
+                        if _tool is not None and bool(_tool.any()):
+                            _wfull[_tool] = float(_ft.get('w_min', 0.1))   # tool excluded from the SOLVE -> also force it LOW-trust in the weight (its resid is 0 -> would otherwise give w=1, re-opening the hijack in refinement)
                         self._trust_map = _wfull
                         track_w_map = torch.from_numpy(_wfull[iH:-iH, iW:-iW])
                         _wc = _wfull[iH:-iH, iW:-iW]
