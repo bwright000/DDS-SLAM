@@ -1,0 +1,23 @@
+# MODE A ablation -- robust 2D-3D PnP camera-motion solve (the hardened new flow, per the internal review).
+# RAFT flow + REF depth only (no D_cur double-noise; forward motion from radial looming) -> cv2.solvePnPRansac
+# -> camera motion T_rel (up-to-scale, NOT a metric anchor). Used INIT-ONLY to seed the SDF tracker (which can
+# overrule it; never a freeze/prior). Reprojection residual -> per-DINO-region trust weight -> the pose loss.
+# flow_advance_px gates out below-noise-floor frames (fall back to const-velocity).
+# NOTE (v1): the seg tool-mask (seg==2) hard-exclusion is a NO-OP on CRCD until semantic_class is staged +
+# data.seg_label_subdir is set (CRCD semantic_paths glob the BINARY masks/); v1 relies on RANSAC's reprojection
+# outlier-rejection for the tool. If the tool hijacks (watch the diagnostics), enable the decoupled seg label.
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+flow_track:
+  enable: true
+  mode: solve_pnp
+  ref_stride: 8
+  flow_advance_px: 1.5
+  reproj_px: 2.0
+  min_inliers: 200
+  n_groups: 12
+  mad_c: 2.0
+  w_floor_px: 1.0
+  w_min: 0.1
+  raft_small: false
+# data:
+#   seg_label_subdir: semantic_class   # (v2) decouple the 4-class tool label from the binary edge masks -> real tool-exclusion

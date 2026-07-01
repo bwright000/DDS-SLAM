@@ -25,7 +25,8 @@ SNIPPETS="${SNIPPETS:-C1_001 C2_001 E3_005 C3_001 G3_001}"; SEEDS="${SEEDS:-0}"
 ARMS="${ARMS:-base best}"   # base=crcd_improved_rect (DDS-SLAM) ; best=crcd_best_rect (champion=best_deformiters+charbonnier)
 declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=${BEST_CFG:-configs/CRCD/crcd_best_rect.yaml} \
   [abl_base]=configs/CRCD/crcd_abl_base_rect.yaml [l0]=configs/CRCD/crcd_abl_l0_rect.yaml [l0aggr]=configs/CRCD/crcd_abl_l0aggr_rect.yaml \
-  [l0sig]=configs/CRCD/crcd_abl_l0sig_rect.yaml [l0sigaggr]=configs/CRCD/crcd_abl_l0sigaggr_rect.yaml )   # BEST_CFG= override (T4); abl_*/l0* = depth-supervisor ablation arms
+  [l0sig]=configs/CRCD/crcd_abl_l0sig_rect.yaml [l0sigaggr]=configs/CRCD/crcd_abl_l0sigaggr_rect.yaml \
+  [dpool]=configs/CRCD/crcd_abl_dpool_rect.yaml [pnp]=configs/CRCD/crcd_abl_pnp_rect.yaml )   # BEST_CFG= override (T4); abl_*/l0*/dpool/pnp = flow-supervisor ablation arms
 PARALLEL="${PARALLEL:-1}"; NPROC=$(nproc 2>/dev/null||echo 8); THREADS=$(( NPROC/PARALLEL>0 ? NPROC/PARALLEL : 1 ))
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256 LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
@@ -142,6 +143,7 @@ torch.set_num_threads(int(os.environ.get('OMP_NUM_THREADS','2')))
 sys.argv=['ddsslam.py','--config',sys.argv[1]]; runpy.run_path('ddsslam.py',run_name='__main__')
 PY
     python Addons/eval/sim3_ate.py --est "$RUN/est_c2w_data.txt" --gt "$DD/groundtruth.txt" --name "$CELL" --out "$DST/sim3_metrics.txt" || echo WARN-sim3
+    python Addons/eval/flow_diag.py --est "$RUN/est_c2w_data.txt" --gt "$DD/groundtruth.txt" --trust "$OUT/trust_log.csv" --name "$CELL" --out "$DST/flow_diag.json" --plot "$DST/flow_diag.png" || echo WARN-flowdiag
     CUDA_VISIBLE_DEVICES="" python -u Addons/eval/eval_rendering.py --gt_dir "$DD/video_frames" --render_dir "$OUT" --name "$CELL" --sequence "CRCD ($NAME)" > "$DST/render_eval.txt" 2>&1 || echo WARN-render
     python Addons/eval/depth_l1.py --render_depth_dir "$OUT/depth" --input_depth_dir "$DD/depth" --render_scale $DEPTH_SCALE --input_scale $DEPTH_SCALE --sc_factor 1.0 --out "$DST/depth_l1.txt" || echo WARN-depthl1
     # seg panel: 4-class semantic_class colorizes; the binary masks/ -> all-black (issue-1 fix). uncert/route/

@@ -1,0 +1,16 @@
+# MODE B ablation -- depth-pooled region flow gate (POSE-FREE, the user's simple idea).
+# Pool flow AND depth into the DINO k-means regions; multiply each region's median flow by its median depth
+# to bring every region to a common plane (translation parallax f*t/Z * Z = f*t -> distance-invariant), then
+# soft-threshold each region's deviation from the robust median consensus. Always-on down-weight (no gate, no
+# freeze). Sidesteps L0's const-velocity-prior noise floor; median consensus is tool-robust. Caveat: exact
+# only for translation (camera rotation flow is depth-independent so *depth mis-scales it).
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+flow_track:
+  enable: true
+  mode: depth_pool
+  ref_stride: 8
+  n_groups: 12
+  mad_c: 2.0
+  w_floor_px: 1.0
+  w_min: 0.1
+  raft_small: false
