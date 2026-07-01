@@ -87,7 +87,7 @@ class DDSSLAM():
             self._dino = None
             with torch.random.fork_rng(devices=(list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [])):
                 self._raft, self._raft_tf = load_raft(self.device, bool(_ft.get('raft_small', False)))
-                if _ft.get('agreement', False) or _ft.get('residual', 'sampson') == 'rigid':   # agreement gate AND the depth-supervisor region-pool need DINO (fork_rng -> parity-safe)
+                if _ft.get('agreement', False) or _ft.get('residual', 'sampson') == 'rigid' or _ft.get('mode', '') in ('depth_pool', 'solve_pnp'):   # agreement gate, L0 region-pool, and the new depth_pool/solve_pnp modes all need DINO (fork_rng -> parity-safe)
                     from Addons.motion.flow_track import load_dino
                     self._dino = load_dino(self.device)
             self._flow_buf = deque(maxlen=int(_ft.get('ref_stride', 8)))
@@ -766,6 +766,21 @@ class DDSSLAM():
         if frame_id <= 3 or frame_id % 30 == 0:
             print(f'[map_route] frame {frame_id}: moving-frac={float(route.mean()):.3f} (causal ref {ref_id})')
 
+    def _flowlog(self, header, row):
+        """Append one per-frame diagnostic row to output/trust_log.csv (header written once). Used by the
+        flow_track modes (solve_pnp / depth_pool). Best-effort; never breaks tracking."""
+        try:
+            import csv as _csv
+            _p = os.path.join(self.config['data']['output'], 'trust_log.csv')
+            _new = not os.path.exists(_p)
+            with open(_p, 'a', newline='') as _f:
+                _w = _csv.writer(_f)
+                if _new:
+                    _w.writerow(header)
+                _w.writerow(row)
+        except Exception as _e:
+            print(f"[flowlog] skipped: {_e}")
+
     def tracking_render(self, batch, frame_id):
         '''
         Tracking camera pose using of the current frame
@@ -810,7 +825,65 @@ class DDSSLAM():
                 ref_id, ref_bgr, ref_depth = ref
                 if ref_id >= frame_id:   # CAUSALITY: raise (NOT assert -> not stripped by python -O)
                     raise RuntimeError(f"flow_track NON-CAUSAL: ref {ref_id} >= cur {frame_id}")
-                if _ft.get('gate', False):
+                _mode = _ft.get('mode', '')
+                if _mode == 'solve_pnp':
+                    # MODE A: robust 2D-3D PnP camera-motion solve (replaces the F-gate). Ref depth only; tool
+                    # HARD-excluded (seg==2); flow-floor gated -> None = fall back to const-velocity. T_rel used
+                    # INIT-ONLY (SDF tracker can overrule, never freeze); reproj residual -> per-ray trust weight.
+                    # Up-to-scale (relative depth) -> NOT a metric anchor (per the internal review).
+                    from Addons.motion.flow_track import rigid_solve_pnp, region_soft_weight, dino_grid
+                    _tool = (batch['seg'].squeeze(0).detach().cpu().numpy() == 2) if 'seg' in batch else None
+                    _out = rigid_solve_pnp(ref_bgr, cur_bgr, ref_depth,
+                                           float(self.dataset.fx), float(self.dataset.fy),
+                                           float(self.dataset.cx), float(self.dataset.cy),
+                                           self._raft, self._raft_tf, self.device, tool_mask=_tool,
+                                           flow_advance_px=float(_ft.get('flow_advance_px', 1.5)),
+                                           reproj_px=float(_ft.get('reproj_px', 2.0)),
+                                           min_inliers=int(_ft.get('min_inliers', 200)))
+                    _cols = ['frame', 'applied', 't_norm', 'rot_deg', 'inlier_frac', 'reproj_med', 'w_mean', 'w_min', 'frac_dn']
+                    if _out is not None:
+                        _Trel, _resid, _info = _out
+                        # INIT-ONLY: seed the tracker pose at c2w_ref @ inv(T_rel). T_rel maps ref-cam(CV)->cur-cam(CV),
+                        # so c2w_cur_cv = c2w_ref_cv @ inv(T_rel); poses are OpenGL so wrap in GL<->CV (diag(1,-1,-1,1)).
+                        _GL2CV = np.diag([1.0, -1.0, -1.0, 1.0]).astype(np.float32)
+                        _cr = self.est_c2w_data[ref_id].detach().cpu().numpy().astype(np.float32)
+                        _cur_gl = _cr @ _GL2CV @ np.linalg.inv(_Trel).astype(np.float32) @ _GL2CV
+                        cur_c2w = torch.from_numpy(np.ascontiguousarray(_cur_gl, dtype=np.float32)).to(self.device)  # init-only override
+                        _dg = dino_grid(cur_bgr, self._dino, self.device)
+                        _wfull, _wm, _wa, _ws = region_soft_weight(
+                            _resid, _dg, n_groups=int(_ft.get('n_groups', 12)),
+                            mad_c=float(_ft.get('mad_c', 2.0)), w_floor_px=float(_ft.get('w_floor_px', 1.0)),
+                            w_min=float(_ft.get('w_min', 0.1)))
+                        self._trust_map = _wfull
+                        track_w_map = torch.from_numpy(_wfull[iH:-iH, iW:-iW])
+                        _wc = _wfull[iH:-iH, iW:-iW]
+                        print(f"[solve_pnp] f{frame_id}: |t|={_info['t_norm']:.4f} rot={_info['rot_deg']:.2f}deg "
+                              f"inl={_info['inlier_frac']:.2f} reproj_med={_info['reproj_med']:.2f}px "
+                              f"w_mean={float(_wc.mean()):.3f} frac_dn={float((_wc < 0.5).mean()):.3f} (ref {ref_id})")
+                        self._flowlog(_cols, [frame_id, 1, round(_info['t_norm'], 5), round(_info['rot_deg'], 3),
+                                      round(_info['inlier_frac'], 3), round(_info['reproj_med'], 3),
+                                      round(float(_wc.mean()), 4), round(float(_wc.min()), 4), round(float((_wc < 0.5).mean()), 4)])
+                    else:
+                        print(f"[solve_pnp] f{frame_id}: below-floor / no-solve -> const-velocity fallback (ref {ref_id})")
+                        self._flowlog(_cols, [frame_id, 0, '', '', '', '', '', '', ''])
+                elif _mode == 'depth_pool':
+                    # MODE B (pose-free): pool flow+depth into DINO regions, *depth to a common plane, threshold the
+                    # deviation from the robust consensus. Always-on soft down-weight (no gate, no freeze).
+                    from Addons.motion.flow_track import depth_pooled_weight, dino_grid
+                    _dg = dino_grid(cur_bgr, self._dino, self.device)
+                    _wfull, _med, _mad, _scale = depth_pooled_weight(
+                        ref_bgr, cur_bgr, ref_depth, _dg, self._raft, self._raft_tf, self.device,
+                        n_groups=int(_ft.get('n_groups', 12)), mad_c=float(_ft.get('mad_c', 2.0)),
+                        w_floor_px=float(_ft.get('w_floor_px', 1.0)), w_min=float(_ft.get('w_min', 0.1)))
+                    self._trust_map = _wfull
+                    track_w_map = torch.from_numpy(_wfull[iH:-iH, iW:-iW])
+                    _wc = _wfull[iH:-iH, iW:-iW]
+                    print(f"[depth_pool] f{frame_id}: dev_med={_med:.3f} mad={_mad:.3f} scale={_scale:.3f} "
+                          f"w_mean={float(_wc.mean()):.3f} frac_dn={float((_wc < 0.5).mean()):.3f} (ref {ref_id})")
+                    self._flowlog(['frame', 'dev_med', 'dev_mad', 'scale', 'w_mean', 'w_min', 'frac_dn'],
+                                  [frame_id, round(_med, 4), round(_mad, 4), round(_scale, 4),
+                                   round(float(_wc.mean()), 4), round(float(_wc.min()), 4), round(float((_wc < 0.5).mean()), 4)])
+                elif _ft.get('gate', False):
                     if _ft.get('agreement', False):
                         # PER-REGION AGREEMENT (the probe in the loop): pool flow into DINO regions, do the
                         # per-region motion vectors AGREE with one rigid motion? TRACK iff the consensus is
