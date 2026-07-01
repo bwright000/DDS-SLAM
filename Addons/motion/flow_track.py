@@ -262,3 +262,101 @@ def region_soft_weight(resid, dino_g, n_groups=12, mad_c=2.0, w_floor_px=1.0,
         excess = max(0.0, r_k - med)
         w[m] = 1.0 / (1.0 + (excess / scale) ** 2)
     return np.clip(w, w_min, 1.0).astype(np.float32), med, mad, scale
+
+
+def depth_pooled_weight(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
+                        n_groups=12, mad_c=2.0, w_floor_px=1.0, w_min=0.1, min_px=50, seed=0):
+    """MODE B (SIMPLE, pose-free) -- pool BOTH flow AND depth into the DINO k-means regions, then bring every
+    region to a COMMON PLANE by multiplying its median flow by its median depth: v_k = median_flow_k *
+    median_depth_k. Camera TRANSLATION parallax is f*t/Z, so v_k = f*t (distance-INVARIANT) -> all static
+    regions collapse onto one camera-consensus vector regardless of distance ('universal motion'); a region
+    moving independently of the camera (tool/deformer) lands off the consensus. Weight = soft threshold on
+    each region's DEVIATION from the robust (median) consensus, MAD-scaled with a sub-pixel floor -> NO fixed
+    deadband. Pose-free: no rigid-flow prediction, so it sidesteps L0's const-velocity-prior noise floor; the
+    median consensus is robust to a large tool. CAVEAT: exact only for translation -- camera ROTATION flow is
+    depth-independent, so *depth mis-scales it (contaminates on rotation-heavy frames). depth may be up-to-
+    scale (relative); the consensus + deviations are all in the same units so the absolute scale cancels.
+    Returns (w[H,W] float32, med, mad, scale)."""
+    import cv2
+    from sklearn.cluster import KMeans
+    flow = _raft_flow(model, tf, ref_bgr, cur_bgr, device)                 # [H,W,2]
+    H, W = flow.shape[:2]
+    gh, gw, C = dino_g.shape
+    X = dino_g.reshape(-1, C); X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
+    lab = KMeans(n_groups, n_init=4, random_state=seed).fit_predict(X).reshape(gh, gw).astype(np.uint8)
+    lab = cv2.resize(lab, (W, H), interpolation=cv2.INTER_NEAREST)
+    dvalid = (depth > 0) & np.isfinite(depth)
+    dmed = float(np.median(depth[dvalid])) if dvalid.any() else 1.0        # median depth (relative unit)
+    vK = np.zeros((n_groups, 2), np.float32); ok = np.zeros(n_groups, bool)
+    for k in range(n_groups):
+        m = (lab == k) & dvalid
+        if int(m.sum()) < min_px:
+            continue
+        vK[k] = np.median(flow[m], axis=0) * float(np.median(depth[m]))    # depth-normalised region flow
+        ok[k] = True
+    if int(ok.sum()) < 2:
+        return np.ones((H, W), np.float32), 0.0, 0.0, 0.0
+    cons = np.median(vK[ok], axis=0)                                       # camera-translation consensus
+    dev = np.linalg.norm(vK - cons[None, :], axis=1)                       # per-region deviation [n_groups]
+    med = float(np.median(dev[ok])); mad = float(np.median(np.abs(dev[ok] - med)))
+    scale = max(mad_c * 1.4826 * mad, float(w_floor_px) * dmed)            # floor = ~1px of flow at median depth
+    w = np.ones((H, W), np.float32)
+    for k in range(n_groups):
+        if not ok[k]:
+            continue
+        excess = max(0.0, dev[k] - med)
+        w[lab == k] = 1.0 / (1.0 + (excess / scale) ** 2)
+    return np.clip(w, w_min, 1.0).astype(np.float32), med, mad, scale
+
+
+def rigid_solve_pnp(ref_bgr, cur_bgr, ref_depth, fx, fy, cx, cy, model, tf, device,
+                    tool_mask=None, flow_advance_px=1.5, reproj_px=2.0, min_inliers=200, max_fit=6000):
+    """MODE A (the hardened estimator; replaces the F-matrix gate). Robust 2D-3D PnP camera-motion solve:
+    RAFT flow ref->cur gives matches p <-> p'=p+flow; back-project the REF pixels only (X_r = D_r*Kinv*p) and
+    solve the cur-camera pose that reprojects X_r onto p' via cv2.solvePnPRansac. REF DEPTH ONLY -- D_cur is
+    never used, so no double depth-noise; forward motion is observable from radial pixel looming, not noisy
+    z-differencing. Tool pixels (tool_mask True) are HARD-EXCLUDED before solving (a rigidly-moving tool is a
+    valid SE3 and would hijack a robust fit). Returns None (caller falls back to const-velocity) if below the
+    flow-noise floor / too few valid px / RANSAC fails / too few inliers. Else (T_rel_cv [4,4] OpenCV
+    ref-cam->cur-cam, resid_px [H,W] per-pixel reprojection residual, info). Up-to-scale (relative ref depth)
+    -> NOT a metric anchor; the caller uses T_rel INIT-ONLY (the SDF tracker can overrule it) and pools
+    resid_px -> the per-ray trust weight."""
+    import cv2
+    flow = _raft_flow(model, tf, ref_bgr, cur_bgr, device)                 # [H,W,2]
+    H, W = flow.shape[:2]
+    if float(np.median(np.linalg.norm(flow.reshape(-1, 2), axis=1))) < float(flow_advance_px):
+        return None                                                        # below the flow-noise floor -> don't solve
+    uu, vv = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    dirs = np.stack([(uu - cx) / fx, (vv - cy) / fy, np.ones_like(uu)], -1).astype(np.float32)  # OpenCV z=+1
+    Xr = ref_depth[..., None].astype(np.float32) * dirs                    # [H,W,3] ref-cam 3D
+    p2 = np.stack([uu + flow[..., 0], vv + flow[..., 1]], -1).astype(np.float32)  # [H,W,2] cur pixels
+    valid = ((ref_depth > 0) & np.isfinite(ref_depth) &
+             (p2[..., 0] >= 0) & (p2[..., 0] < W) & (p2[..., 1] >= 0) & (p2[..., 1] < H))
+    if tool_mask is not None:
+        valid &= ~tool_mask
+    obj = Xr[valid].reshape(-1, 3); img = p2[valid].reshape(-1, 2)
+    if len(obj) < min_inliers:
+        return None
+    idx = np.linspace(0, len(obj) - 1, min(int(max_fit), len(obj))).astype(np.int64)   # deterministic subsample
+    K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], np.float64)
+    try:
+        ok, rvec, tvec, inl = cv2.solvePnPRansac(
+            obj[idx].astype(np.float64), img[idx].astype(np.float64), K, None,
+            reprojectionError=float(reproj_px), iterationsCount=200, confidence=0.999,
+            flags=cv2.SOLVEPNP_ITERATIVE)
+    except cv2.error:
+        return None
+    if (not ok) or inl is None or len(inl) < min_inliers:
+        return None
+    R, _ = cv2.Rodrigues(rvec)
+    T = np.eye(4, dtype=np.float32); T[:3, :3] = R.astype(np.float32); T[:3, 3] = tvec.reshape(3).astype(np.float32)
+    proj = (R @ Xr.reshape(-1, 3).T.astype(np.float64) + tvec).T           # [HW,3]
+    z = np.clip(proj[:, 2], 1e-6, None)
+    pe = np.stack([fx * proj[:, 0] / z + cx, fy * proj[:, 1] / z + cy], -1)
+    resid = np.linalg.norm(pe - p2.reshape(-1, 2), axis=1).reshape(H, W).astype(np.float32)
+    resid[~valid] = 0.0
+    info = dict(inlier_frac=float(len(inl) / max(len(idx), 1)), n=int(len(idx)),
+                t_norm=float(np.linalg.norm(tvec)),
+                rot_deg=float(np.degrees(np.linalg.norm(rvec))),
+                reproj_med=float(np.median(resid[valid])) if valid.any() else 0.0)
+    return T, resid, info
