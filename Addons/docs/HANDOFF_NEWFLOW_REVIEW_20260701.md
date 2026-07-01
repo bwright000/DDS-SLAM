@@ -2,6 +2,15 @@
 
 **Branch:** `diagnosis-live` (remote `bwright000/DDS-SLAM`). **Repo root under review:** `DDS-SLAM/`.
 **Date:** 2026-07-01. **Status:** built, CPU-smoke-passing, committed + pushed, NOT yet run on GPU.
+**Review round 1 APPLIED (commit `db0a44f`)** — all 5 mechanical fixes in: flow_diag `--plot` NameError crash
+(#1), D2 now guards still-frame jitter (#2, `est_still ≤ 0.5·est_moving` — a ratio to GT-still≈0 is ill-defined),
+PnP behind-camera reproj poison-guard (#3), region/depth-pool scale floor 1e-6 (#5), seg-load parity gate on
+`enable AND mode` + SuperDataset gate (#6). PLUS the tool-exclusion is now **REAL, not deferred**:
+`data.seg_label_subdir=semantic_class` (staged by preprocess_crcd_published; falls back to `masks/` if absent) →
+`seg==2`=tool → hard-excluded from the PnP solve AND forced to `w_min` in the trust map (#4). The PnP
+convention/override math (§4) was reviewer-**confirmed correct** by hand + verify. STILL DEFERRED: the
+photometric-not-worse gate + accumulated-flow ref-advance (§8.3) — the review recommends doing the photometric
+gate first, before trusting a null result.
 **Governing rule:** METRICS are the only arbiter (render PSNR/SSIM/LPIPS + tracking Sim3-ATE). `DDS-SLAM-Base/`
 is the pristine reference; every addition is flag-gated default-off so `flow_track.enable=false` == pristine.
 
