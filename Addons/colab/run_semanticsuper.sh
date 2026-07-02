@@ -247,7 +247,7 @@ aggregate(){
 # PHASE B — CRCD: run the UPSTREAM tracker on CRCD with SGS-comparable metrics.
 #   depth=MoGe (metric, loaded); resize 1280x720 -> IMG_WxIMG_H; seg=GT 4-class; NO green-pins
 #   (--tracking_gt_file omitted -> evaluate_tracking=False -> pin path off). STEP-1 metric =
-#   render PSNR/SSIM/LPIPS + video. STEP-2 (todo) = Sim3 ATE via exported global T_g + depth-L1.
+#   render PSNR/SSIM/LPIPS + video + STEP-2: Sim3 ATE (T_g camera-proxy) + Depth-L1 (surfel depth).
 # ============================================================================
 DDS_PY=${DDS_PY:-python3}                          # system torch2 python for the DDS eval tools
 DRIVE_CRCD=${DRIVE_CRCD:-/content/drive/MyDrive/Datasets/CRCD-Published}
@@ -315,6 +315,31 @@ edit('utils/utils.py', '[DDS-crcd-pltclose-b]',
 edit('super/nodes.py', '[DDS-crcd-noeval]',
      "    def evaluate(self):\n",
      ins="        if not getattr(self, 'evaluate_tracking', False): return  # [DDS-crcd-noeval] no green-pins on CRCD\n")
+
+# ---- STEP-2 (Sim3 ATE proxy + Depth-L1) ----------------------------------------------------
+# [DDS-crcd-tg] log the per-frame GLOBAL rigid component T_g = deform[-1] = [qw qx qy qz; tx ty tz]
+# (w-first quat, tv=R(q)v+b per super/utils.py:transformQuatT). It is the incremental rigid motion
+# of the WHOLE scene in the camera frame -> its cumulative inverse = a camera-equivalent trajectory
+# (SemSup assumes a static camera, so this is a PROXY, judged Sim3 like everything else).
+# One line per frame (update() runs once per frame); anchor is the surfel T_g apply (nodes.py:205).
+edit('super/nodes.py', '[DDS-crcd-tg]',
+     "            self.points += deform[-1:, 4:] # T_g\n",
+     ins=("            with open(__import__('os').path.join(self.output_dir, 'tg_log.txt'), 'a') as _tgf:  # [DDS-crcd-tg]\n"
+          "                _tgf.write(' '.join('%.9g' % float(_x) for _x in deform[-1].detach().cpu().numpy().tolist()) + '\\n')\n"))
+# [DDS-crcd-depthdump] surfel-projected depth map (uint16 png, metres*10000) per frame -> results/
+# <model>/depth/%06d.png, via the upstream pcd2depth projection (depth-sorted: far first, near wins).
+edit('super/nodes.py', '[DDS-crcd-depthdump]',
+     "        self.summary_writer.add_image('visualization/render', render_img_keypoints, self.time)\n",
+     ins=("        _os3 = __import__('os'); _np3 = __import__('numpy'); _cv3 = __import__('cv2'); _t3 = __import__('torch')  # [DDS-crcd-depthdump]\n"
+          "        _yD, _xD, _, _vD = pcd2depth(inputs, self.points)\n"
+          "        _zD = self.points[:, 2]\n"
+          "        _oD = _t3.argsort(_zD, descending=True)\n"
+          "        _yD, _xD, _zD, _vD = _yD[_oD], _xD[_oD], _zD[_oD], _vD[_oD]\n"
+          "        _HD, _WD = inputs[(\"color\", 0)][0, 0].size()\n"
+          "        _dmD = _t3.zeros((_HD, _WD), device=_zD.device)\n"
+          "        _dmD[_yD[_vD], _xD[_vD]] = _zD[_vD]\n"
+          "        _ddD = _os3.path.join(self.output_dir, 'depth'); _os3.makedirs(_ddD, exist_ok=True)\n"
+          "        _cv3.imwrite(_os3.path.join(_ddD, '%06d.png' % self.time), (_dmD.clamp(0, 6.5).cpu().numpy() * 10000).astype(_np3.uint16))\n"))
 
 # per-class kernel lists are hardcoded for 3 classes ([3,3,3]) but indexed by range(num_classes) ->
 # overflow at CRCD's 4 classes. Size them to num_classes.
@@ -411,8 +436,49 @@ PY
      || echo "[$NAME] WARN eval_rendering"
   PYTHONPATH= "$DDS_PY" "$REPO/Addons/viz/generate_video.py" --rgb_input_dir "$OUT" --rgb_output_dir "$OUT" \
      --output "$OUT/video.mp4" 2>/dev/null || echo "[$NAME] WARN video"
+  # ---- STEP-2a: Depth-L1 (surfel-projected depth vs the MoGe depth the model consumed) ----
+  if [ "$(ls "$SS_REPO/results/$MN/depth"/*.png 2>/dev/null|wc -l)" -gt 0 ]; then
+    rm -rf "$OUT/depth"; cp -rn "$SS_REPO/results/$MN/depth" "$OUT/depth"
+    PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/depth_l1.py" \
+       --render_depth_dir "$OUT/depth" --render_scale 10000 \
+       --input_depth_dir "$SUPER/depth" --input_pattern '*.npy' --input_scale 1.0 --sc_factor 1.0 \
+       --out "$OUT/depth_l1.txt" --csv "$OUT/depth_l1_curve.csv" || echo "[$NAME] WARN depth_l1"
+  else
+    echo "[$NAME] WARN no rendered depth (depthdump patch?) -> depth_l1 skipped"
+  fi
+  # ---- STEP-2b: Sim3 ATE via the exported T_g (camera-PROXY: cumulative inverse of the global
+  # scene-rigid motion; SemSup itself assumes a static camera). Judged with the canonical sim3_ate.
+  if [ -f "$SS_REPO/results/$MN/tg_log.txt" ]; then
+    cp -f "$SS_REPO/results/$MN/tg_log.txt" "$OUT/"
+    PYTHONPATH= "$DDS_PY" - "$OUT/tg_log.txt" "$OUT/est_c2w_data.txt" <<'PY'
+import sys, numpy as np
+tg, outp = sys.argv[1:3]
+def Rq(q):
+    w, x, y, z = q
+    return np.array([[1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y)],
+                     [2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x)],
+                     [2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y)]])
+G = np.eye(4); rows = [np.eye(4)]          # frame 0 = identity (no deform on the first frame)
+for ln in open(tg):
+    v = [float(x) for x in ln.split()]
+    if len(v) < 7: continue
+    q = np.array(v[0:4]); q /= (np.linalg.norm(q) + 1e-12); t = np.array(v[4:7])
+    T = np.eye(4); T[:3, :3] = Rq(q); T[:3, 3] = t
+    G = T @ G                              # compose incremental global scene motion
+    rows.append(np.linalg.inv(G))          # camera-equivalent c2w
+with open(outp, 'w') as f:
+    for M in rows:
+        f.write(' '.join('%.9g' % x for x in M.reshape(-1)[:16]) + '\n')
+print(f"[tg2traj] {len(rows)} camera-proxy poses -> {outp}")
+PY
+    PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/sim3_ate.py" --est "$OUT/est_c2w_data.txt" \
+       --gt "$SRC/groundtruth.txt" --name "SemSup-Tg $UP (camera-proxy)" \
+       --out "$OUT/sim3_metrics.txt" || echo "[$NAME] WARN sim3_ate"
+  else
+    echo "[$NAME] WARN no tg_log.txt (tg patch?) -> Sim3 proxy skipped"
+  fi
   echo "PASS" > "$OUT/status.txt"; sync; touch "$OUT/.DONE"; sync
-  echo "[$NAME] DONE -> $OUT (render_eval + video; ATE/depth-L1 = step-2 via T_g + rendered-depth)"
+  echo "[$NAME] DONE -> $OUT (render_eval + video + depth_l1 + sim3(T_g proxy))"
 }
 
 case "$PHASE" in
