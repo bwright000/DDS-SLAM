@@ -309,6 +309,26 @@ def depth_pooled_weight(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
     return np.clip(w, w_min, 1.0).astype(np.float32), med, mad, scale
 
 
+def zero_motion_prior(c2w_est, prev_c2w, lam_r, lam_t):
+    """[TRACKING, LEAN CORE] Constant-strength zero-motion prior on the per-frame RELATIVE pose (cur vs prev),
+    added to the SDF tracking loss to kill noise-driven over-travel/jitter while letting real motion through.
+    Penalise rotation (camera-frame axis-angle, rad) by lam_r and translation by lam_t:
+        prior = lam_r * |Delta_rot|^2 + lam_t * |Delta_t|^2
+    The OBSERVABILITY anisotropy (which DOF gets pinned) EMERGES from the data term's own per-DOF curvature
+    (H_data ~ J_flow^2): a poorly-observed DOF -- translation on a rotation-dominant frame, anything on a still
+    frame, t at large depth (H_t ~ (f/Z)^2) -- has low H_data, so the constant prior wins and pins it; a
+    well-observed DOF (high H_data) overrules it. Do NOT scale the prior by J_i: H_data is already ~J^2, so an
+    explicit J^2 prior cancels (J-independent ratio) and yields no anisotropy. lam_r, lam_t = the ONE balance,
+    calibrated once on a still segment (path-ratio->1, moving-rho unharmed) and frozen. Torch, differentiable
+    wrt c2w_est; small-angle vee(skew) for Delta_rot (stable near identity = our regime).
+      c2w_est : [4,4] torch, current differentiable pose.   prev_c2w : [4,4] torch, previous fixed pose."""
+    import torch
+    d = torch.inverse(prev_c2w.float()) @ c2w_est.float()          # relative motion, prev-camera frame
+    dR = d[:3, :3]; dt = d[:3, 3]
+    drot = 0.5 * torch.stack([dR[2, 1] - dR[1, 2], dR[0, 2] - dR[2, 0], dR[1, 0] - dR[0, 1]])  # vee(skew) ~ axis-angle
+    return lam_r * (drot ** 2).sum() + lam_t * (dt ** 2).sum()
+
+
 def rigid_solve_pnp(ref_bgr, cur_bgr, ref_depth, fx, fy, cx, cy, model, tf, device,
                     tool_mask=None, flow_advance_px=1.5, reproj_px=2.0, min_inliers=200, max_fit=6000):
     """MODE A (the hardened estimator; replaces the F-matrix gate). Robust 2D-3D PnP camera-motion solve:
