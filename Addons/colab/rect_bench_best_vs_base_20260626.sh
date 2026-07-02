@@ -22,7 +22,7 @@ set -uo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd); cd "$REPO"
 DATE="${DATE:-$(date +%Y%m%d)}"   # override (e.g. DATE=20260627) to resume into an existing output dir on a later day
 SNIPPETS="${SNIPPETS:-C1_001 C2_001 E3_005 C3_001 G3_001}"; SEEDS="${SEEDS:-0}"
-ARMS="${ARMS:-base best}"   # base=crcd_improved_rect (DDS-SLAM) ; best=crcd_best_rect (champion=best_deformiters+charbonnier)
+ARMS="${ARMS-base best}"   # base=crcd_improved_rect ; best=crcd_best_rect (champion). NB '-' not ':-' -- an EXPLICITLY EMPTY ARMS="" means STAGE-ONLY (vote_scan uses it); only an UNSET ARMS gets the default
 declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=${BEST_CFG:-configs/CRCD/crcd_best_rect.yaml} \
   [abl_base]=configs/CRCD/crcd_abl_base_rect.yaml [l0]=configs/CRCD/crcd_abl_l0_rect.yaml [l0aggr]=configs/CRCD/crcd_abl_l0aggr_rect.yaml \
   [l0sig]=configs/CRCD/crcd_abl_l0sig_rect.yaml [l0sigaggr]=configs/CRCD/crcd_abl_l0sigaggr_rect.yaml \
