@@ -16,9 +16,15 @@ set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 LAMS="${LAMS:-1e4 1e5 1e6 1e7}"     # lambda_t grid
 RATIO="${RATIO:-0.1}"               # lambda_r : lambda_t
+# CRITICAL: keep the Colab runtime ALIVE across all lambdas -- rect_bench calls runtime.unassign() at its end
+# unless NO_UNASSIGN is set, so without this only lambda #1 would run and the session would die.
+export NO_UNASSIGN=1
 for LT in $LAMS; do
   LR=$(python -c "print(${LT}*${RATIO})")
   echo "[prior-sweep] ===== lambda_t=$LT  lambda_r=$LR ====="
+  # each lambda reuses the SAME local cell dir (only the Drive DST is per-lambda via DATE); clear stale
+  # renders so a crashed lambda cannot poison the next lambda's eval.
+  rm -rf output/E3_005_prior_s0
   SNIPPETS=E3_005 ARMS=prior SEEDS=0 DATE="prior_lamT${LT}" \
     DDS_MP_LAM_T="$LT" DDS_MP_LAM_R="$LR" bash "$HERE/rect_bench_best_vs_base_20260626.sh"
 done
