@@ -1,0 +1,217 @@
+% ===========================================================================
+% Evaluation Metrics — grounded in the repo implementations:
+%   Addons/eval/sim3_ate.py, eval_rendering.py, depth_l1.py, flow_diag.py,
+%   Addons/seg/train_dinov2_crcd.py (mIoU).
+% ===========================================================================
+\subsection{Evaluation Metrics}
+\label{sec:eval_metrics}
+
+Evaluation covers the two halves of a SLAM system --- \emph{tracking} (camera-pose
+accuracy) and \emph{mapping} (reconstruction quality, judged through rendering) ---
+plus behavioural diagnostics designed for the specific failure modes of monocular
+surgical sequences, and segmentation accuracy for the semantic components. All
+quantitative claims are reported as the mean over $n{=}3$ random seeds: the
+seed-to-seed standard deviation of the baseline defines the noise floor, and an
+improvement is only claimed where it clears that floor.
+
+\subsubsection{Tracking: Sim(3) Absolute Trajectory Error}
+\label{sec:eval_ate}
+
+The primary tracking metric is the Absolute Trajectory Error (ATE) after a
+\emph{similarity} (Sim(3)) alignment. Given estimated camera centres
+$\{\mathbf{x}_i\}_{i=1}^{N}$ and ground-truth centres $\{\mathbf{y}_i\}_{i=1}^{N}$,
+paired one-to-one by frame index, the Umeyama closed-form solution
+\cite{umeyama1991} recovers the scale $s$, rotation $R$ and translation
+$\mathbf{t}$ minimising
+\begin{equation}
+  (s^\ast, R^\ast, \mathbf{t}^\ast)
+  \;=\; \argmin_{s,R,\mathbf{t}} \sum_{i=1}^{N}
+  \bigl\lVert \mathbf{y}_i - \left( sR\,\mathbf{x}_i + \mathbf{t} \right) \bigr\rVert^2 ,
+  \label{eq:umeyama}
+\end{equation}
+via the SVD of the centred cross-covariance $H = \sum_i
+(\mathbf{x}_i - \bar{\mathbf{x}})(\mathbf{y}_i - \bar{\mathbf{y}})^{\!\top} = U S V^{\!\top}$,
+with $R^\ast = V \operatorname{diag}(1,1,\det(VU^{\!\top}))\, U^{\!\top}$ and the scale
+$s^\ast$ given by the ratio of the (sign-corrected) singular-value sum to the
+estimate's centred variance. The per-frame error and its summary are then
+\begin{equation}
+  e_i = \bigl\lVert \mathbf{y}_i - \left( s^\ast R^\ast \mathbf{x}_i + \mathbf{t}^\ast \right)\bigr\rVert,
+  \qquad
+  \mathrm{ATE}_{\mathrm{RMSE}} = \sqrt{\tfrac{1}{N}\textstyle\sum_i e_i^2},
+\end{equation}
+reported in millimetres alongside the mean, median and maximum.
+
+\paragraph{Why Sim(3) and not SE(3).}
+The depth supplied to the system is monocular (MoGe-2) and therefore
+\emph{up-to-scale}: the estimated trajectory lives at an arbitrary global scale
+(empirically up to ${\sim}8\times$ the metric ground truth). A rigid (SE(3),
+scale-fixed) Horn alignment --- the default in the inherited evaluation code ---
+conflates this global scale offset with tracking error: on CRCD it inflates the
+reported ATE by an order of magnitude and, critically, can \emph{invert} A/B
+comparisons, ranking a better tracker as worse because its recovered scale happens
+to sit further from unity. The Sim(3) alignment removes exactly one global scale
+degree of freedom --- which the sensor genuinely cannot observe --- and no more.
+The recovered scale $s^\ast$ is reported explicitly so that scale behaviour remains
+visible rather than silently absorbed. Rigid ATE values are printed for reference
+but never used for comparison.
+
+\subsubsection{Tracking: scale-free shape diagnostics}
+\label{sec:eval_shape}
+
+CRCD ground-truth camera motion is small (path lengths of ${\sim}20$--$60$\,mm,
+i.e.\ ${\sim}0.05$--$0.4$\,mm/frame), placing it near or below the tracker's noise
+floor (\emph{sub-SNR}). In this regime a small ATE can be achieved by a trajectory
+that is merely \emph{compact} rather than \emph{correct}, so ATE alone is
+insufficient and two complementary, scale-free diagnostics are always reported
+with it:
+
+\paragraph{Path-length ratio.} With $L(\mathbf{z}) = \sum_i \lVert \mathbf{z}_{i+1}
+- \mathbf{z}_i \rVert$ the trajectory arc length,
+\begin{equation}
+  \rho_{\mathrm{path}} \;=\; \frac{s^\ast \, L(\mathbf{x})}{L(\mathbf{y})}
+\end{equation}
+measures over- or under-travel after scale correction. $\rho_{\mathrm{path}} > 1$
+indicates the estimate accumulates excess motion (jitter or exaggerated steps);
+$\rho_{\mathrm{path}} \to 0$ exposes a degenerate ``frozen'' trajectory that ATE
+alone would reward on near-static sequences.
+
+\paragraph{Aligned per-axis correlation.} The absolute Pearson correlation
+$|r|$ between the \emph{Sim(3)-aligned} estimate and the ground truth along the
+dominant motion axis (the axis of largest ground-truth extent), together with the
+mean over all three axes. Correlation is invariant to affine rescaling, so this
+isolates \emph{shape} tracking from any residual scale artefact. The alignment
+step is essential: because Sim(3) alignment includes a rotation, correlating the
+\emph{raw} estimate against the ground truth compares physically different axes
+and can read near zero even when the aligned trajectory tracks well --- an
+artefact observed and corrected during this work.
+
+\subsubsection{Rendering: PSNR, SSIM, LPIPS}
+\label{sec:eval_render}
+
+Mapping quality is judged by re-rendering every training view from the final model
+and comparing against the input frames, using the standard triplet.
+
+\paragraph{PSNR} (peak signal-to-noise ratio), on images in $[0,1]$:
+\begin{equation}
+  \mathrm{PSNR} = 20 \log_{10}\!\left( \frac{1}{\sqrt{\mathrm{MSE}}} \right),
+  \qquad
+  \mathrm{MSE} = \tfrac{1}{|\Omega|}\textstyle\sum_{p \in \Omega}
+  \bigl( I(p) - \hat{I}(p) \bigr)^2 ,
+\end{equation}
+a purely pixel-wise fidelity measure (higher is better).
+
+\paragraph{SSIM} (structural similarity \cite{wang2004ssim}) compares local
+luminance, contrast and structure statistics computed under an $11{\times}11$
+Gaussian window ($\sigma{=}1.5$):
+\begin{equation}
+  \mathrm{SSIM}(p) =
+  \frac{(2\mu_1\mu_2 + C_1)(2\sigma_{12} + C_2)}
+       {(\mu_1^2 + \mu_2^2 + C_1)(\sigma_1^2 + \sigma_2^2 + C_2)},
+\end{equation}
+with $C_1 = 0.01^2$, $C_2 = 0.03^2$, averaged over the image (higher is better).
+SSIM is less sensitive than PSNR to uniform brightness shifts and more sensitive
+to structural degradation (blur, ghosting).
+
+\paragraph{LPIPS} (learned perceptual image patch similarity \cite{zhang2018lpips})
+embeds both images with a fixed pre-trained CNN and measures the weighted
+$\ell_2$ distance between normalised deep features across layers $l$:
+\begin{equation}
+  \mathrm{LPIPS}(I, \hat{I}) = \sum_l \frac{1}{H_l W_l} \sum_{h,w}
+  \bigl\lVert w_l \odot \bigl( \phi_l(I)_{hw} - \phi_l(\hat{I})_{hw} \bigr) \bigr\rVert_2^2
+\end{equation}
+(lower is better). LPIPS correlates with human judgement where PSNR/SSIM fail:
+a render can be blurry-but-average (good PSNR, poor LPIPS) or sharp with small
+misalignments (poor PSNR, good LPIPS); reporting all three disambiguates which
+regime a change lives in.
+
+On SemanticSuPer sequences the supplied ``ground-truth'' poses are fictional
+(identity), so tracking metrics are meaningless there and rendering metrics are
+the sole arbiter; conversely CRCD provides kinematic camera poses, so both halves
+are evaluated.
+
+\subsubsection{Depth-$L_1$ (self-consistency)}
+\label{sec:eval_depth}
+
+CRCD ships no measured ground-truth depth --- the depth input is itself generated
+(MoGe-2, stereo-anchored). The Depth-$L_1$ metric is therefore defined as
+\emph{input-versus-output, per model}: the mean absolute difference (in mm)
+between the depth a model \emph{renders} and the depth that same model was
+\emph{given} on that frame,
+\begin{equation}
+  \mathrm{Depth}\text{-}L_1 = \tfrac{1}{|\mathcal{V}|} \sum_{p \in \mathcal{V}}
+  \bigl| \hat{D}(p) - c\,D_{\mathrm{in}}(p) \bigr| ,
+\end{equation}
+where $\mathcal{V}$ masks invalid pixels ($\leq 0$ or outside a plausible metric
+range in either map) and $c$ is the model's own depth pre-scaling factor, so both
+maps live in the frame the model actually consumed. This is explicitly a
+\emph{self-consistency} measure --- how faithfully the reconstruction absorbed its
+geometric supervision --- not an accuracy-versus-reality measure, and it is stated
+as such wherever quoted.
+
+\subsubsection{Behavioural diagnostics: activation timing and over-travel}
+\label{sec:eval_flowdiag}
+
+Because the dominant CRCD failure modes are \emph{behavioural} --- moving when the
+camera is still, freezing when it moves --- two purpose-built pass/fail
+diagnostics supplement the scalar metrics. Both operate on per-frame step sizes
+of the Sim(3)-aligned estimate, $e_i = \lVert \Delta \hat{\mathbf{x}}_i \rVert$,
+and the ground truth, $g_i = \lVert \Delta \mathbf{y}_i \rVert$; frames are
+partitioned into \emph{moving} and \emph{still} by the median of $g$.
+
+\paragraph{D1 — camera-activation timing.} Does the estimate move \emph{when} the
+ground truth moves? Measured by the Spearman rank correlation
+$\rho_s(e, g)$ --- rank-based, hence robust to the heavy-tailed step
+distributions of sub-SNR data --- together with the activation contrast
+$\operatorname{med}(e \,|\, \mathrm{moving}) / \operatorname{med}(e \,|\, \mathrm{still})$.
+Pass requires $\rho_s \geq 0.5$ and a contrast $\geq 2$.
+
+\paragraph{D2 — over-travel and still-frame jitter.} Does the estimate stop
+exaggerating motion? Pass requires the scale-corrected path ratio
+$\rho_{\mathrm{path}} \in [0.7, 1.4]$ \emph{and} the still-frame step to be at
+most half the moving-frame step,
+$\operatorname{med}(e \,|\, \mathrm{still}) \leq 0.5 \operatorname{med}(e \,|\, \mathrm{moving})$
+--- i.e.\ the camera must genuinely go quiet when it stops. The jitter guard is
+expressed relative to the estimate's own moving steps rather than to the
+ground-truth still steps, because the latter are ${\approx}0$ and would make the
+ratio ill-defined.
+
+The two checks are constructed to be jointly ungameable by the known degenerate
+strategies: a frozen tracker passes neither ($\rho_{\mathrm{path}} \to 0$ fails
+D2; $\rho_s \approx 0$ fails D1), and a jittering tracker that happens to
+accumulate the correct total path length is caught by the D2 jitter guard.
+
+\subsubsection{Segmentation: mean Intersection-over-Union}
+\label{sec:eval_miou}
+
+Semantic components (the DINO-based segmentation heads used by the
+benchmarked semantic-SLAM baselines) are evaluated by class-wise
+Intersection-over-Union over the four CRCD classes
+$\{$background, liver, gallbladder, tool$\}$,
+\begin{equation}
+  \mathrm{IoU}_c = \frac{|P_c \cap G_c|}{|P_c \cup G_c|},
+  \qquad
+  \mathrm{mIoU} = \tfrac{1}{4} \textstyle\sum_c \mathrm{IoU}_c ,
+\end{equation}
+accumulated over all pixels of the evaluation set. Generalisation is judged
+under a leave-one-snippet-out protocol: for each benchmark snippet the head is
+trained on the remaining snippets (with two training snippets held out as an
+inner validation set for model selection, avoiding the leakage of a random
+frame-level split), and tested on the never-seen snippet. For the four
+single-snippet episodes this equals leave-one-\emph{episode}-out and yields a
+true cross-patient number; the one snippet sharing an episode with training data
+is in-domain under this protocol and is reported separately from the
+cross-episode headline mean.
+
+\subsubsection{Protocol summary}
+\label{sec:eval_protocol}
+
+For every experimental cell the full battery is reported:
+$\{$Sim(3) ATE (RMSE/mean/median/max), recovered scale $s$, path ratio,
+aligned $|r|$, PSNR, SSIM, LPIPS, Depth-$L_1$, D1/D2$\}$, at $n{=}3$ seeds, on
+sequences held fixed across all arms of a comparison, with every arm launched
+from the same pristine base configuration so that a single change is measured in
+isolation. Alongside the numerical battery, every run produces a standard
+six-panel diagnostic video (input/render/depth/uncertainty/trajectory panels)
+--- qualitative, but mandatory: several of the failure modes documented in this
+work (scale inversion, gate freezing, uncertainty collapse) were first visible
+there before any scalar moved.
