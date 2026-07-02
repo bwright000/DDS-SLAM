@@ -88,13 +88,24 @@ def main():
     # on GT-moving frames (est_still <= 0.5*est_moving). NB a ratio to GT-still is ill-defined (GT-still ~= 0), so
     # we gate est_still-vs-est_moving -- the meaningful "does the camera go quiet when it actually stops".
     d2 = bool(0.7 <= pathr <= 1.4 and est_still_mm <= 0.5 * est_moving_mm)
+    # FREEZE CONFUSION (the metric that vindicated the C1 gate): frozen frame = est step ~ 0 (pose
+    # copied). precision = P(GT-still | frozen)  [C1 old gate: 93.4% = right freezes; E3: 28.2% =
+    # inverted]. recall = coverage of the GT-still frames. Zeroes for arms that never freeze.
+    frz = es < 1e-6
+    gstill = gs <= 1e-4
+    n_frz = int(frz.sum())
+    frz_prec = round(100.0 * float((frz & gstill).sum()) / n_frz, 1) if n_frz else None
+    frz_rec = round(100.0 * float((frz & gstill).sum()) / max(int(gstill.sum()), 1), 1) if n_frz else None
     res = dict(name=a.name, n=int(n), sim3_scale=round(float(s), 4), activation_rho=round(rho, 3),
                moving_still_ratio=round(r_act, 2), path_ratio=round(float(pathr), 2),
                est_still_step_mm=round(est_still_mm, 3), est_moving_step_mm=round(est_moving_mm, 3),
-               gt_still_step_mm=round(gt_still_mm, 3), D1_timing_pass=d1, D2_overtravel_pass=d2,
+               gt_still_step_mm=round(gt_still_mm, 3), n_frozen=n_frz,
+               freeze_precision=frz_prec, freeze_still_recall=frz_rec,
+               D1_timing_pass=d1, D2_overtravel_pass=d2,
                flow_ok=bool(d1 and d2))
     print(f"[flow_diag] {a.name}: activation rho={rho:.2f} moving/still={r_act:.1f} (D1 {'PASS' if d1 else 'FAIL'}) | "
-          f"path-ratio={pathr:.2f} still/moving jitter={est_still_mm:.3f}/{est_moving_mm:.3f}mm (D2 {'PASS' if d2 else 'FAIL'})")
+          f"path-ratio={pathr:.2f} still/moving jitter={est_still_mm:.3f}/{est_moving_mm:.3f}mm (D2 {'PASS' if d2 else 'FAIL'})"
+          + (f" | frozen={n_frz} prec={frz_prec}% recall={frz_rec}%" if n_frz else ""))
     if a.out:
         json.dump(res, open(a.out, 'w'), indent=2)
     if a.plot:

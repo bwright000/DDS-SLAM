@@ -309,6 +309,110 @@ def depth_pooled_weight(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
     return np.clip(w, w_min, 1.0).astype(np.float32), med, mad, scale
 
 
+def region_vote(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
+                n_groups=12, still_floor_px=0.5, mad_c=2.5, min_px=50, min_regions=5, seed=0):
+    """GATE v2 -- the DINO-region VOTE egomotion detector ('bring every region onto the same plane, ask
+    what it's doing, compare the votes, decide'). Supersedes agreement_gate (raw-px deadband, no depth,
+    F degenerate at endo baselines) and depth_pooled_weight (x-depth breaks on ROTATION, the E3 regime).
+
+    Per DINO region k: pooled median flow f_k [px], median depth Z_k, centroid p_k. ONE tiny egomotion
+    model is robust-fit ACROSS regions, separating motion types by their DEPTH SIGNATURE:
+        f_k  ~=  u  +  v * Zn_k  +  d * r_k * Zn_k
+    u = uniform slide  (camera TURNING: depth-blind -- every region slides equally),
+    v = depth-scaled slide (LATERAL translation: near regions slide more),
+    d = depth-scaled radial (ZOOM / forward translation: regions expand, near ones faster),
+    with Zn_k = Zmed/Z_k (dimensionless -> MoGe's unknown scale cancels; params live in px at the
+    median-depth plane) and r_k = (p_k - center)/r_norm. Depth-blind vs depth-scaled regressors do the
+    de-rotation IMPLICITLY -- no const-velocity pose needed. NB with near-flat depth (Zn_k ~= 1) u and v
+    are colinear: the turn/slide ATTRIBUTION degrades but the total consensus (u+v) -- and therefore the
+    DECISION and the trust -- are unaffected (lstsq min-norm handles the rank deficiency).
+
+    Robust fit: lstsq -> per-region residual -> MAD -> refit on inliers. Independent movers (tool,
+    deforming tissue) don't fit any egomotion pattern -> large residual -> EXCLUDED from the vote and
+    down-weighted -- label-free, no seg mask. Trust = 1/(1+ (excess/MAD-scale)^2), adaptive (no deadband).
+
+    DECISION: camera MOVING iff the consensus explained-flow magnitude (median |f_hat_k| over inliers, px
+    at the median plane) clears still_floor_px. still_floor_px is the ONE calibrated constant (RAFT noise
+    floor ~0.3px; calibrate on the vote_scan bench, freeze). confidence = magnitude / floor.
+
+    Returns (info dict, w [H,W] float32 trust map, lab [H,W] uint8 region labels); info=None if fewer
+    than min_regions valid regions (caller: track normally)."""
+    import cv2
+    from sklearn.cluster import KMeans
+    flow = _raft_flow(model, tf, ref_bgr, cur_bgr, device)                  # [H,W,2]
+    H, W = flow.shape[:2]
+    gh, gw, C = dino_g.shape
+    X = dino_g.reshape(-1, C); X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
+    lab = KMeans(n_groups, n_init=4, random_state=seed).fit_predict(X).reshape(gh, gw).astype(np.uint8)
+    lab = cv2.resize(lab, (W, H), interpolation=cv2.INTER_NEAREST)
+    dvalid = (depth > 0) & np.isfinite(depth)
+    fK = np.zeros((n_groups, 2), np.float32); zK = np.zeros(n_groups, np.float32)
+    pK = np.zeros((n_groups, 2), np.float32); ok = np.zeros(n_groups, bool)
+    ys, xs = np.mgrid[0:H, 0:W]
+    for k in range(n_groups):
+        m = (lab == k) & dvalid
+        if int(m.sum()) < min_px:
+            continue
+        fK[k] = np.median(flow[m], axis=0)
+        zK[k] = float(np.median(depth[m]))
+        pK[k] = [float(xs[m].mean()), float(ys[m].mean())]
+        ok[k] = True
+    if int(ok.sum()) < min_regions:
+        return None, np.ones((H, W), np.float32), lab
+    info, wk = _vote_fit(fK, zK, pK, ok, W, H, still_floor_px=still_floor_px,
+                         mad_c=mad_c, min_regions=min_regions)
+    w = np.ones((H, W), np.float32)
+    for k in range(n_groups):
+        if ok[k]:
+            w[lab == k] = wk[k]
+    return info, w.astype(np.float32), lab
+
+
+def _vote_fit(fK, zK, pK, ok, W, H, still_floor_px=0.5, mad_c=2.5, min_regions=5):
+    """The vote core (pure numpy, testable): robust egomotion fit over pooled region votes.
+    fK [n,2] median flow px | zK [n] median depth | pK [n,2] centroid px | ok [n] valid mask.
+    Returns (info dict, wk [n] per-region trust). See region_vote for the model."""
+    n = len(fK)
+    zmed = float(np.median(zK[ok]))
+    Zn = np.where(zK > 0, zmed / np.maximum(zK, 1e-9), 1.0)                 # depth signature (dimensionless)
+    ctr = np.array([W / 2.0, H / 2.0], np.float32)
+    rad = pK - ctr[None, :]
+    rnorm = float(np.median(np.linalg.norm(rad[ok], axis=1))) or 1.0
+    rad = rad / rnorm
+
+    def _fit(sel):
+        # rows: f_k = u + v*Zn_k + d*rad_k*Zn_k   (params theta = [ux,uy,vx,vy,d])
+        A, b = [], []
+        for k in np.where(sel)[0]:
+            A.append([1, 0, Zn[k], 0, rad[k, 0] * Zn[k]]); b.append(fK[k, 0])
+            A.append([0, 1, 0, Zn[k], rad[k, 1] * Zn[k]]); b.append(fK[k, 1])
+        th = np.linalg.lstsq(np.asarray(A, np.float64), np.asarray(b, np.float64), rcond=None)[0]
+        pred = np.stack([th[0] + th[2] * Zn + th[4] * rad[:, 0] * Zn,
+                         th[1] + th[3] * Zn + th[4] * rad[:, 1] * Zn], axis=1)
+        return th, pred
+
+    th, pred = _fit(ok)
+    resid = np.linalg.norm(fK - pred, axis=1); resid[~ok] = 0.0
+    med = float(np.median(resid[ok])); mad = float(np.median(np.abs(resid[ok] - med)))
+    inl = ok & (resid <= med + mad_c * 1.4826 * max(mad, 1e-6))
+    if int(inl.sum()) >= min_regions:
+        th, pred = _fit(inl)                                                # refit without the outliers
+        resid = np.linalg.norm(fK - pred, axis=1); resid[~ok] = 0.0
+        med = float(np.median(resid[inl])); mad = float(np.median(np.abs(resid[inl] - med)))
+    scale = max(mad_c * 1.4826 * mad, 0.3, 1e-6)                            # adaptive, floored at the RAFT noise floor
+    wk = np.ones(n, np.float32)
+    for k in range(n):
+        if ok[k]:
+            wk[k] = 1.0 / (1.0 + (max(0.0, resid[k] - med) / scale) ** 2)
+    mag = float(np.median(np.linalg.norm(pred[inl], axis=1))) if inl.any() else 0.0
+    info = dict(moving=bool(mag > still_floor_px), confidence=float(mag / max(still_floor_px, 1e-9)),
+                mag=mag, turn=float(np.hypot(th[0], th[1])), slide=float(np.hypot(th[2], th[3])),
+                zoom=float(abs(th[4])), resid_med=med, resid_mad=mad,
+                n_valid=int(ok.sum()), n_inliers=int(inl.sum()),
+                region_trust=wk.tolist(), region_resid=resid.tolist())
+    return info, wk
+
+
 def zero_motion_prior(c2w_est, prev_c2w, lam_r, lam_t):
     """[TRACKING, LEAN CORE] Constant-strength zero-motion prior on the per-frame RELATIVE pose (cur vs prev),
     added to the SDF tracking loss to kill noise-driven over-travel/jitter while letting real motion through.
