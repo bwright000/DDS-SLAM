@@ -34,7 +34,18 @@ def umeyama(src, dst):
 
 
 def _rank(x):
-    o = np.argsort(x, kind='mergesort'); r = np.empty(len(x)); r[o] = np.arange(len(x)); return r
+    # AVERAGE ranks for ties: CRCD GT is 44-58% bit-identical frames (step exactly 0); arbitrary distinct
+    # ranks on those ties made rho index-order-dependent. Average-rank = the standard Spearman treatment.
+    o = np.argsort(x, kind='mergesort'); r = np.empty(len(x)); r[o] = np.arange(len(x))
+    xs = np.asarray(x)[o]; i = 0
+    while i < len(xs):
+        j = i
+        while j + 1 < len(xs) and xs[j + 1] == xs[i]:
+            j += 1
+        if j > i:
+            r[o[i:j + 1]] = (i + j) / 2.0
+        i = j + 1
+    return r
 
 
 def spearman(a, b):
@@ -51,13 +62,19 @@ def main():
     ap.add_argument('--out', default=None); ap.add_argument('--plot', default=None)
     a = ap.parse_args()
     est, gt = load_est(a.est), load_gt(a.gt)
+    if len(est) != len(gt):
+        print(f"[flow_diag] WARN: length mismatch est={len(est)} gt={len(gt)} -> head-truncating to min; "
+              f"if the difference is not a trailing crop the D1/D2 verdicts are judging MISPAIRED frames")
     n = min(len(est), len(gt)); est, gt = est[:n], gt[:n]
     s, R, t = umeyama(est, gt); ea = (s * (R @ est.T).T + t)
     es = np.linalg.norm(np.diff(ea, axis=0), axis=1) * 1000.0   # est per-frame step (mm, aligned)
     gs = np.linalg.norm(np.diff(gt, axis=0), axis=1) * 1000.0   # GT per-frame step (mm)
     # D-1 activation timing
     rho = abs(spearman(es, gs))
-    thr = np.median(gs); mv, st = gs > thr, gs <= thr
+    # still/moving split: median floor at 0.1um -- CRCD GT is >50% bit-identical (step exactly 0), where
+    # thr=median=0 made the split degenerate (mv = every nonzero frame incl. sub-noise ones). With the
+    # floor, exact-still frames (gs<=eps) are 'still' and the split survives majority-static sequences.
+    thr = max(float(np.median(gs)), 1e-4); mv, st = gs > thr, gs <= thr
     r_act = float(np.median(es[mv]) / (np.median(es[st]) + 1e-9)) if mv.any() and st.any() else 0.0
     d1 = bool(rho >= 0.5 and r_act >= 2.0)
     # D-2 over-travel: path-ratio is the robust (scale-corrected) disease measure; est still-frame jitter (mm)

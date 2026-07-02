@@ -243,6 +243,20 @@ def render_trajectory_frame(est_xyz, gt_xyz, current_frame, panel_size, azim_off
     # Horn-align estimated to GT if requested and GT is available
     if align and gt_xyz is not None and len(gt_xyz) == len(est_xyz):
         est_aligned = horn_align(est_xyz.T, gt_xyz.T)
+    elif align and gt_xyz is not None and len(gt_xyz) > 3:
+        # LENGTH MISMATCH (est longer than GT after the loader's truncation): align on the paired
+        # head and apply that Sim3 to the FULL est. Previously this fell through to the RAW est
+        # (~9x GT scale on MoGe runs) still under the 'Sim3-aligned' label -- a healthy run read
+        # as catastrophic divergence (the 360-est-vs-271-stale-GT class of trap).
+        m = min(len(gt_xyz), len(est_xyz))
+        head, gh = est_xyz[:m], gt_xyz[:m]
+        hc, gc = head.mean(0), gh.mean(0)
+        hm, gm = head - hc, gh - gc
+        U, S, Vt = np.linalg.svd(hm.T @ gm)
+        sgn = np.sign(np.linalg.det(Vt.T @ U.T))
+        R = Vt.T @ np.diag([1, 1, sgn]) @ U.T
+        sc = (S * np.array([1, 1, sgn])).sum() / (hm * hm).sum()
+        est_aligned = (sc * (R @ est_xyz.T)).T + (gc - sc * R @ hc)
     else:
         est_aligned = est_xyz
 
