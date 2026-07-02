@@ -1314,10 +1314,23 @@ class DDSSLAM():
         pose_evaluation(self.pose_gt, pose_relative, 1, out_dir, i, img='pose_r', name='output_relative.txt')
         pose_evaluation(self.pose_gt_identity, self.est_c2w_data, 1, out_dir, i, img='pose_id', name='output_identity.txt')
         est_c2w_data_path = os.path.join(self.config['data']['output'], self.config['data']['exp_name'], 'est_c2w_data.txt')
+        # est_c2w_data.txt = the CONSISTENT trajectory: non-keyframes REBASED onto their post-BA keyframe
+        # (delta @ kf_now, same as convert_relative_pose / upstream Co-SLAM's own final eval). The raw dict
+        # mixes post-BA keyframe entries with tracking-time interiors (anchored on PRE-BA keyframes) -> a
+        # period=keyframe_every sawtooth in the saved path (E3_005: boundary steps 0.77/0.81mm vs 0.23-0.28
+        # interior; path-ratio 2.84 -> 1.34 on keyframe-only subsample). Raw kept as _raw.txt for A/B.
+        kf_every = self.config['mapping']['keyframe_every']
         with open(est_c2w_data_path, 'w') as f:
-            for key, value in self.est_c2w_data.items():
+            for key in sorted(self.est_c2w_data.keys()):
+                value = self.est_c2w_data[key]
+                if key % kf_every != 0 and key in self.est_c2w_data_rel:
+                    kf_frame_id = (key // kf_every) * kf_every
+                    value = self.est_c2w_data_rel[key] @ self.est_c2w_data[kf_frame_id].float()
                 f.write(" ".join(map(str, value.cpu().numpy().reshape(16)[:12].tolist())) + "\n")
-        print('Saved estimated camera poses to {}'.format(est_c2w_data_path))
+        with open(est_c2w_data_path.replace('.txt', '_raw.txt'), 'w') as f:
+            for key in sorted(self.est_c2w_data.keys()):
+                f.write(" ".join(map(str, self.est_c2w_data[key].cpu().numpy().reshape(16)[:12].tolist())) + "\n")
+        print('Saved estimated camera poses to {} (rebased; raw kept alongside)'.format(est_c2w_data_path))
         #TODO: Evaluation of reconstruction
 
     def rendering(self, batch, frame_id):

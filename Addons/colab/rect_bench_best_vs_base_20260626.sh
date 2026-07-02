@@ -157,7 +157,7 @@ PY
       --rgb_output_dir "$OUT" --rgb_output_pattern '[0-9]*.jpg' --depth_input_dir "$DD/depth" --depth_output_dir "$OUT/depth" \
       --seg_dir "$_SEGDIR" --seg_classmap $_UNC $_RT $_TR --trajectory_est "$RUN/est_c2w_data.txt" --trajectory_gt "$DD/groundtruth.txt" \
       --output "$DST/panels.mp4" --fps 15 || echo WARN-video
-    cp "$RUN/est_c2w_data.txt" "$DD/.anchor_quality" "$OUT/trust_log.csv" "$DST/" 2>/dev/null
+    cp "$RUN/est_c2w_data.txt" "$RUN/est_c2w_data_raw.txt" "$DD/.anchor_quality" "$OUT/trust_log.csv" "$DST/" 2>/dev/null
   } > "$DST/run.log" 2>&1
   local N; N=$(grep -cvE '^\s*#|^\s*$' "$RUN/est_c2w_data.txt" 2>/dev/null); [ "${N:-0}" -ge 1 ] && touch "$DST/.DONE" || echo "FAILED" >"$DST/.FAILED"
   say "  $CELL -> $(grep -h PSNR "$DST/render_eval.txt" 2>/dev/null|head -1) | $(grep -hE 'rmse/mean' "$DST/sim3_metrics.txt" 2>/dev/null|head -1)"
