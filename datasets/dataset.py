@@ -348,10 +348,17 @@ class StereoMISDataset(BaseDataset):
             print(f"Loaded {len(data)} GT poses from {gt_file}")
             self.gt_poses = []
 
+            # GT row index = filename number MINUS the first file's number. The old hardcode
+            # (`frame_num - 1`, "filenames are 1-indexed") was calibrated to the stale local staging;
+            # preprocess_crcd_published writes 000000-based names -> every runbook-staged run had
+            # pose_gt lagged one row AND frame 0 falling to the identity fallback (a ~0.8 m outlier)
+            # -> corrupted output*.txt + every gt/trans-err column in debug_log.csv (sim3_ate was
+            # unaffected: it pairs est rows to GT rows positionally). Offset-based = right on both.
+            _first_num = int(re.sub(r'[^0-9]', '', os.path.splitext(os.path.basename(self.img_files[0]))[0]))
             for img_path in self.img_files:
                 basename = os.path.splitext(os.path.basename(img_path))[0]
                 frame_num = int(re.sub(r'[^0-9]', '', basename))
-                gt_idx = frame_num - 1  # filenames are 1-indexed
+                gt_idx = frame_num - _first_num
 
                 if 0 <= gt_idx < len(data):
                     tx, ty, tz = data[gt_idx, 1:4]

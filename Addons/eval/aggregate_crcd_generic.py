@@ -93,7 +93,10 @@ def render_vals(snip_dir):
     txt = _read_loose_or_tar(snip_dir, 'render_eval.txt')
     if txt:
         def g(key):
-            m = re.search(key + r'[^0-9-]*([0-9][0-9.]*)', txt)
+            # 'KEY: <digit>' — colon+space+digit REQUIRED, else 'LPIPS' first matches the availability
+            # banner 'LPIPS: available' and greedily eats to the next digit -> LPIPS column ~1.0 garbage
+            # in every SUMMARY table (same bug aggregate_ab.py:36 already fixed; this regressed it).
+            m = re.search(key + r':\s+([0-9][0-9.]*)', txt)
             return float(m.group(1)) if m else None
         nf = g('Rendered') or g('frames')
         return (g('PSNR'), g('SSIM'), g('LPIPS'), int(nf) if nf else None)
