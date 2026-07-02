@@ -1,0 +1,12 @@
+# Inc-1/2 uncertainty on the CLEAN ablation base (geo v1 head, NO flow_track / L0) -- the canon
+# configuration re-expressed as a rect-bench arm, for re-judging the -23% claim on the rebased
+# trajectories and as the control for the track_w_fix A/B (crcd_abl_uncfix_rect.yaml).
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+uncertainty:
+  enable: true
+  hidden_dim: 32
+  num_layers: 2
+  nll_weight: 0.1
+  w_min: 0.1
+  w_max: 10.0
+  detach_pose_weight: true

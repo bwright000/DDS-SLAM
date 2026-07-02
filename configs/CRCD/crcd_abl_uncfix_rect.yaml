@@ -1,0 +1,10 @@
+# Inc-1/2 uncertainty + track_w_fix -- the CANON-CONFOUND A/B arm (model review N1).
+# Two corrections to the 1/sigma^2 tracking weight, judged against crcd_abl_unc_rect (identical
+# otherwise): (a) empty rays (acc~0, sigma2 at the clamp floor) neutralised to w=1 instead of
+# receiving MAX pose trust; (b) the weight vector mean-normalised so it REDISTRIBUTES trust across
+# rays instead of silently running rgb/depth ~10x their configured weights vs sdf/fs.
+# If unc ~= uncfix: the canon win really is per-ray uncertainty. If uncfix loses the win: part of
+# the -23% was plain loss-rebalance, and the thesis claim must be restated accordingly.
+inherit_from: configs/CRCD/crcd_abl_unc_rect.yaml
+uncertainty:
+  track_w_fix: true

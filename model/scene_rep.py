@@ -586,6 +586,19 @@ class JointEncoding(nn.Module):
                 _wmin = self.config.get('uncertainty', {}).get('w_min', 0.1)
                 _wmax = self.config.get('uncertainty', {}).get('w_max', 10.0)
                 _w_ray = torch.clamp(1.0 / rend_dict['sigma2'], _wmin, _wmax).detach()  # [N_rays,1]
+                # track_w_fix (flag, default OFF = canon behaviour) -- two corrections (review N1):
+                # (a) EMPTY-RAY INVERSION: where the map has no surface (acc~0) the volume-rendered
+                #     sigma2 collapses to its clamp floor -> w=w_max = MAX pose trust on UNMODELED
+                #     rays, the inverted intent. Neutralise them to w=1.
+                # (b) LOSS-BALANCE CONFOUND: a trained head saturates most rays at w_max~10 and
+                #     compute_loss never normalises -> Inc-2 tracking silently runs rgb/depth ~10x
+                #     their configured weights vs sdf/fs. Mean-normalise so the weight REDISTRIBUTES
+                #     trust across rays without rescaling the loss. The A/B isolates how much of the
+                #     Inc-2 canon win is uncertainty vs plain loss-rebalance.
+                if self.config.get('uncertainty', {}).get('track_w_fix', False):
+                    _acc = rend_dict['acc_map'].detach().reshape(-1, 1)
+                    _w_ray = torch.where(_acc > 0.5, _w_ray, torch.ones_like(_w_ray))
+                    _w_ray = _w_ray / _w_ray.mean().clamp_min(1e-6)
                 rgb_unc_w = _w_ray  # broadcasts over the 3 rgb channels
                 depth_unc_w = _w_ray.squeeze()[valid_depth_mask]  # match masked depth shape
 
