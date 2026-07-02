@@ -172,7 +172,33 @@ optimised per frame against depth, photometric and semantic terms. It is not a
 camera-SLAM system --- the camera is assumed static while the surfel graph
 deforms --- so neither trajectory metrics nor like-for-like render metrics apply;
 its shipped output in this benchmark is internal telemetry (per-frame losses,
-graph statistics, timing), summarised in Figure~\ref{fig:bench_semsup}.
+graph statistics, timing), summarised in Table~\ref{tab:bench_semsup} and
+Figure~\ref{fig:bench_semsup}.
+
+\begin{table}[t]
+\centering
+\caption{SemanticSuPer on the CRCD benchmark --- internal telemetry (no
+trajectory or comparable render output is produced in this configuration).
+Surfel count is the final frame's; the embedded-deformation graph is fixed at
+1197 nodes on every snippet. Render loss is the method's \emph{own} photometric
+objective at the final processed frame --- an internal convergence indicator,
+not comparable across methods.}
+\label{tab:bench_semsup}
+\small
+\begin{tabular}{l rr r r r}
+\toprule
+Snippet & frames done & of & surfels ($10^3$) & med.\ time/frame (s) & final render loss \\
+\midrule
+C1\_001 &  360 &  360 & 159.9 & 2.29 & 0.0111 \\
+C2\_001 &   43 &  730 &  27.2 & 1.26 & 0.0082$^{\dagger}$ \\
+C3\_001 & 1527 & 1527 &  98.9 & 1.58 & 0.0052 \\
+E3\_005 &  265 &  265 & 105.1 & 1.74 & 0.0034 \\
+G3\_001 & 1987 & 1987 &  30.8 & 1.18 & 0.0029 \\
+\bottomrule
+\multicolumn{6}{l}{\footnotesize $^{\dagger}$at the halt frame (43/730), not a
+completed-sequence value.}
+\end{tabular}
+\end{table}
 
 Three facts are relevant to the comparison. First, \emph{it runs}: four of five
 snippets processed to completion at 1.2--2.3\,s per frame (median), maintaining
