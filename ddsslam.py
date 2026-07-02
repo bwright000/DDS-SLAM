@@ -970,6 +970,19 @@ class DDSSLAM():
         _init_c2w_for_log = cur_c2w.detach().clone()
         loss_iter0 = None    # loss at iter 0, post-const-velocity init, BEFORE any optimiser step
 
+        # LEAN CORE: constant zero-motion prior on the per-frame RELATIVE pose (cur vs previous committed
+        # pose). Kills noise-driven over-travel/jitter; the observability anisotropy EMERGES from the SDF
+        # loss's own per-DOF curvature (rotation-dominant/near/observable DOFs -> data overrules; sub-floor/
+        # still DOFs -> pinned). No J_i scaling (that cancels vs H_data~J^2). lam_r,lam_t = ONE calibrated-
+        # and-frozen balance. Default off (both lam 0, or no prev pose) => base byte-identical.
+        # DDS_MP_LAM_R/T env = calibration-SWEEP convenience only; the FROZEN value belongs in the config.
+        _mp_lr = float(os.environ.get('DDS_MP_LAM_R', self.config['tracking'].get('motion_prior_lam_r', 0.0)))
+        _mp_lt = float(os.environ.get('DDS_MP_LAM_T', self.config['tracking'].get('motion_prior_lam_t', 0.0)))
+        _mp_prev = None
+        if (_mp_lr > 0 or _mp_lt > 0) and (int(frame_id) - 1) in self.est_c2w_data:
+            from Addons.motion.flow_track import zero_motion_prior
+            _mp_prev = self.est_c2w_data[int(frame_id) - 1].detach().to(self.device)
+
         # Start tracking
         for i in range(self.config['tracking']['iter']):
             pose_optimizer.zero_grad()
@@ -1014,7 +1027,11 @@ class DDSSLAM():
             ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, border=border, UseBorder=True, tracking=True, track_ray_w=track_ray_w)
             loss = self.get_loss_from_ret(ret)
             if i == 0:
-                loss_iter0 = float(loss.cpu().item())
+                loss_iter0 = float(loss.cpu().item())   # DATA loss (pre-prior), comparable across arms
+            # Add the prior BEFORE best-iter selection + backward -- else the hold never binds (the optimiser
+            # would pick a jittery low-DATA-loss iteration and skip the constraint entirely). fix-3.
+            if _mp_prev is not None:
+                loss = loss + zero_motion_prior(c2w_est[0], _mp_prev, _mp_lr, _mp_lt)
 
             if best_sdf_loss is None:
                 best_sdf_loss = loss.cpu().item()
@@ -1038,6 +1055,11 @@ class DDSSLAM():
             loss.backward()
 
             pose_optimizer.step()
+
+        # P2 regression guard: with the prior on, the solve MUST have fired (sigma^2 fires only inside the
+        # solve). loss_iter0 is set at i==0, so None here would mean the loop was skipped (a freeze regression).
+        if _mp_prev is not None:
+            assert loss_iter0 is not None, "P2 guard: tracking solve did not fire with motion_prior on"
 
         if self.config['tracking']['best']:
             # Use the pose with smallest loss

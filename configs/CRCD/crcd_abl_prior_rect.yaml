@@ -1,0 +1,23 @@
+# LEAN-CORE ablation -- the constant zero-motion prior (the HEADLINE candidate).
+# No flow sensor needed: the prior penalises the per-frame RELATIVE pose (cur vs previous committed pose)
+# and the observability anisotropy EMERGES from the SDF loss's OWN per-DOF curvature (H_data~J_flow^2):
+#   rotation-dominant / near / observable DOFs -> data overrules (real motion kept);
+#   sub-floor / still DOFs                      -> constant prior wins (jitter/over-travel pinned).
+# This cures the over-travel disease INSIDE the tracking loop (fixing the null-result risk that an init-only
+# PnP could not touch, since the SDF gradient over-travels from any init). Added to the loss BEFORE best-iter
+# selection so the hold binds; the solve always fires (sigma^2 stays alive -> no P2 freeze regression).
+# tool_mask_track drops the tool (seg==2, via the decoupled semantic_class label) from the POSE solve only
+# (the tool STAYS in the map and is rendered).
+#
+# CALIBRATION (fix-1: this is ONE calibrated-and-frozen balance, NOT zero constants). lam_r/lam_t below are
+# SEEDS only -- the data loss is dominated by sdf_weight (~1e3), so the absolute scale must be tuned. The
+# runbook sweeps lam x{0.1,1,10,100} on a STILL E3 segment and FREEZES the value where flow_diag D2
+# path-ratio -> 1 with D1 moving-rho UNHARMED. Keep lam_r:lam_t ~ tied to Z^2 (rotation vs translation floors).
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+tracking:
+  motion_prior_lam_r: 1.0e5    # CALIBRATE (seed) -- rotation prior weight   [prior = lam_r*|d_rot(rad)|^2]
+  motion_prior_lam_t: 1.0e6    # CALIBRATE (seed) -- translation prior weight [prior = lam_t*|d_t(m)|^2]
+training:
+  tool_mask_track: true        # drop seg==2 (tool) from the pose solve; tool stays in the map
+data:
+  seg_label_subdir: semantic_class   # 4-class tool label (decoupled from binary edge masks) -> real tool-exclusion

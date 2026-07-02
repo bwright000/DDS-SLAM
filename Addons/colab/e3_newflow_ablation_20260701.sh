@@ -8,6 +8,10 @@
 #              common plane, threshold deviation from the consensus)  [the user's simple idea]
 #   pnp      = MODE A: robust 2D-3D PnP camera-motion solve, ref-depth-only, tool-masked, flow-floor gated,
 #              used INIT-ONLY (up-to-scale, no metric anchor -- per the internal review)
+#   prior    = LEAN CORE (HEADLINE): constant zero-motion prior IN the SDF tracking loop (lam_t|d_t|^2 +
+#              lam_r|d_rot|^2); observability anisotropy EMERGES from the SDF loss curvature -> cures the
+#              over-travel where it happens (fixes the init-only null-result risk). CALIBRATE lambda FIRST via
+#              e3_prior_lam_sweep_20260702.sh, freeze it, THEN screen base vs prior here.
 # JUDGE (flow_diag.py, auto per run): D1 CAMERA-ACTIVATION TIMING (Spearman rho(est step, GT step) + moving/
 #   still ratio; PASS rho>=0.5 & ratio>=2) and D2 OVER-TRAVEL (path-ratio toward 1; PASS [0.7,1.4]). Plus the
 #   regression gate: Sim3 ATE + path-ratio + ALIGNED Pearson (sim3_ate) + PSNR/SSIM/LPIPS + Depth-L1.
@@ -23,7 +27,7 @@
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 export SNIPPETS="${SNIPPETS:-E3_005}"
-export ARMS="${ARMS:-abl_base l0 dpool pnp}"
+export ARMS="${ARMS:-abl_base prior}"   # lean-core screen (base vs prior); add-on arms: l0 dpool pnp (ARMS="..")
 export SEEDS="${SEEDS:-0}"
 export DATE="${DATE:-newflow_20260701}"
 echo "[e3-newflow] snippets='$SNIPPETS' arms='$ARMS' seeds='$SEEDS' -> Outputs/rect_bestbase_${DATE}"
