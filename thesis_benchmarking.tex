@@ -1,0 +1,215 @@
+% ===========================================================================
+% Benchmarking — DDS-SLAM / SGS-SLAM / SemanticSuPer on the 5-snippet CRCD bench
+% Grounded in the 2026-07-02 results drop (Benchmarking-20260702T131352Z):
+%   DDS-SLAM Bench/<snip>_base_s0/{sim3_metrics,render_eval,depth_l1}.txt
+%   SGS-SLAM_CRCD_bench5/<snip>/{i.jpg,i_gt.png}  (scored with the same PSNR/SSIM
+%     implementation as Addons/eval/eval_rendering.py + LPIPS-alex)
+%   SemanticSuperResults/ss_crcd_<snip>/events.out.tfevents (internal telemetry)
+% Figures: pub_figures_20260702_benchmark/{dds_trajectories,qualitative,semsup,bars}
+% ===========================================================================
+
+\section{Benchmarking on the CRCD Five-Snippet Benchmark}
+\label{sec:benchmarking}
+
+All methods are evaluated on the same five rectified CRCD snippets
+(C1\_001, C2\_001, C3\_001, E3\_005, G3\_001; 265--1987 frames each), spanning
+four patients, camera-still and camera-moving regimes, and tool-quiet through
+tool-dominated scenes. Each method consumes the same rectified RGB stream; depth
+supervision, where a method requires it, is the same stereo-anchored MoGe-2 depth.
+Metrics follow Section~\ref{sec:eval_metrics}. The three systems compared here
+occupy deliberately different points in the design space: DDS-SLAM (the base of
+this work) is a neural-SDF SLAM that jointly tracks and reconstructs; SGS-SLAM is
+a semantic 3D-Gaussian-splatting SLAM; SemanticSuPer is a surfel-based deformable
+scene tracker rather than a camera-SLAM system, and is evaluated accordingly.
+
+% ---------------------------------------------------------------------------
+\subsection{DDS-SLAM (base configuration)}
+\label{sec:bench_dds}
+
+Table~\ref{tab:bench_dds} reports the full battery for the base
+configuration (single seed; the C3\_001 run had not completed at the time of
+writing and is reported as pending). Three observations structure the analysis:
+
+\begin{table}[t]
+\centering
+\caption{DDS-SLAM (base) on the CRCD benchmark. Sim(3) ATE in mm; path ratio and
+aligned dominant-axis $|r|$ per Section~\ref{sec:eval_metrics}; Depth-$L_1$ is the
+input-vs-output self-consistency in mm. C3\_001 pending.}
+\label{tab:bench_dds}
+\small
+\begin{tabular}{lrrrrrrrr}
+\toprule
+Snippet & $N$ & ATE$_{\mathrm{RMSE}}$ & path ratio & $|r|_{\mathrm{dom}}$ &
+PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
+\midrule
+C1\_001 &  360 & 2.64 &  8.11 & 0.943 & 25.91 & 0.804 & 0.448 &  7.78 \\
+C2\_001 &  730 & 6.78 &  8.66 & 0.627 & 22.57 & 0.728 & 0.552 &  8.72 \\
+C3\_001 & 1527 & \multicolumn{7}{c}{\emph{pending (run incomplete at time of writing)}} \\
+E3\_005 &  265 & 5.31 &  2.62 & 0.480 & 24.93 & 0.801 & 0.483 & 15.44 \\
+G3\_001 & 1987 & 4.12 & 18.25 & 0.367 & 29.68 & 0.904 & 0.317 & 10.00 \\
+\midrule
+mean (4) & --- & 4.71 & 9.41 & 0.604 & 25.77 & 0.809 & 0.450 & 10.49 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Tracking is accurate in shape but over-travels.}
+Sim(3) ATE sits at 2.6--6.8\,mm across snippets --- small in absolute terms ---
+and on C1\_001 the aligned dominant-axis correlation of $0.94$ shows the
+trajectory genuinely follows the camera's path. But the path ratios (8.1, 8.7,
+18.2 on the low-motion snippets) expose the characteristic disease: the estimate
+accumulates many times the true path length. Figure~\ref{fig:bench_traj}
+makes this visible --- the ground-truth arc is smooth while the estimate
+oscillates around it frame-to-frame. Because CRCD camera motion is sub-SNR
+(Section~\ref{sec:eval_metrics}), this jitter costs little ATE, which is
+precisely why the path ratio and correlation are mandatory companions to it.
+G3\_001 is the extreme case: 1987 frames of near-still camera yield the best
+ATE (4.1\,mm) alongside the worst path ratio (18.3) and correlation (0.37) ---
+a compact but noisy estimate, not a tracked one.
+
+\paragraph{Rendering tracks scene difficulty.}
+PSNR spans 22.6--29.7 across snippets, best on the visually static G3\_001
+and worst on C2\_001, whose large gallbladder manipulation both deforms the
+scene and drags the (rigid) map behind it. E3\_005's elevated Depth-$L_1$
+(15.4\,mm vs.\ 7.8--10.0 elsewhere) reflects the same effect geometrically:
+persistent tool--tissue interaction that a rigid SDF cannot absorb.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.49\linewidth]{figures/C2_001_traj_est_vs_gt.png}
+\includegraphics[width=0.49\linewidth]{figures/C1_001_traj_est_vs_gt.png}
+\caption{DDS-SLAM (base) estimated trajectory (blue, Sim(3)-aligned) against
+ground truth (dashed grey) on C2\_001 (left) and C1\_001 (right). The estimate
+follows the true path's shape --- the aligned correlation on C1\_001 is $0.94$
+--- but oscillates around it, accumulating $\sim$8$\times$ the true path length:
+the over-travel signature that motivates the path-ratio metric and the tracking
+contributions of this thesis.}
+\label{fig:bench_traj}
+\end{figure}
+
+% ---------------------------------------------------------------------------
+\subsection{SGS-SLAM}
+\label{sec:bench_sgs}
+
+SGS-SLAM \cite{sgsslam} represents the 3D-Gaussian-splatting family: an explicit
+anisotropic-Gaussian map optimised per keyframe, with semantic channels. It was
+onboarded onto the identical five snippets (same rectified RGB, same depth, its
+segmentation head trained on CRCD classes). SGS-SLAM renders every fifth frame
+(its keyframe set); rendering metrics in Table~\ref{tab:bench_sgs} are computed
+over those rendered keyframes against the corresponding input frames, with the
+same PSNR/SSIM implementation and LPIPS network used for DDS-SLAM. It does not
+export a comparable camera trajectory in this configuration, so the comparison
+is on the mapping half.
+
+\begin{table}[t]
+\centering
+\caption{SGS-SLAM rendering quality over its rendered keyframes ($n$ per snippet),
+scored identically to DDS-SLAM. DDS-SLAM values repeated for comparison
+(its metrics cover every frame).}
+\label{tab:bench_sgs}
+\small
+\begin{tabular}{l rrrr c rrr}
+\toprule
+& \multicolumn{4}{c}{SGS-SLAM} & & \multicolumn{3}{c}{DDS-SLAM (base)} \\
+\cmidrule{2-5} \cmidrule{7-9}
+Snippet & $n$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & &
+PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ \\
+\midrule
+C1\_001 &  73 & 22.45 & 0.803 & 0.315 & & 25.91 & 0.804 & 0.448 \\
+C2\_001 & 147 & 17.52 & 0.701 & 0.504 & & 22.57 & 0.728 & 0.552 \\
+C3\_001 & 306 & 18.78 & 0.798 & 0.508 & & \multicolumn{3}{c}{\emph{pending}} \\
+E3\_005 &  54 & 19.15 & 0.780 & 0.397 & & 24.93 & 0.801 & 0.483 \\
+G3\_001 & 398 & 18.40 & 0.846 & 0.447 & & 29.68 & 0.904 & 0.317 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The pattern is consistent and diagnostic: DDS-SLAM wins PSNR on every
+comparable snippet, by margins from $+3.4$\,dB (C1\_001) to $+11.3$\,dB
+(G3\_001), while SGS-SLAM wins LPIPS on three of the four (0.315 vs.\ 0.448 on
+C1\_001; similarly C2\_001, E3\_005). These are not contradictory --- they are
+the two regimes the metric triplet is designed to separate
+(Section~\ref{sec:eval_render}). The neural-SDF render is pixel-accurate on
+average but soft; the Gaussian render is sharper (better perceptual similarity)
+but pays in exact pixel fidelity wherever splats misalign, and it degrades
+sharply under the heavy deformation of C2\_001 (17.5\,dB), where a
+static explicit map ghosts the moving gallbladder. The exception proves the
+rule: on G3\_001 --- long, visually static, deformation-light --- the SDF map
+converges far enough that DDS-SLAM takes \emph{both} PSNR (29.7 vs.\ 18.4) and
+LPIPS (0.317 vs.\ 0.447); given sufficient optimisation of an undisturbed
+scene, the implicit map's advantage becomes unconditional.
+Figure~\ref{fig:bench_qual} shows the corresponding qualitative comparison,
+and Figure~\ref{fig:bench_bars} the per-snippet bar summary.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/bench_psnr.png}\\[2pt]
+\includegraphics[width=0.85\linewidth]{figures/bench_lpips.png}
+\caption{Per-snippet rendering comparison, DDS-SLAM (blue) vs.\ SGS-SLAM
+(green): PSNR (top, higher is better) and LPIPS (bottom, lower is better).
+DDS-SLAM leads PSNR throughout; SGS-SLAM leads LPIPS except on the static
+G3\_001. DDS-SLAM C3\_001 pending.}
+\label{fig:bench_bars}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/C1_001_f179_gt_dds_sgs.png}
+\caption{Qualitative comparison at C1\_001 frame 179: ground truth (left),
+DDS-SLAM render (centre), SGS-SLAM render (right). The DDS-SLAM render is
+smoother --- higher PSNR, but soft --- while the SGS-SLAM render preserves more
+high-frequency texture (lower LPIPS) at the cost of local splat artefacts.}
+\label{fig:bench_qual}
+\end{figure}
+
+% ---------------------------------------------------------------------------
+\subsection{SemanticSuPer}
+\label{sec:bench_semsup}
+
+SemanticSuPer \cite{semanticsuper} is included as the deformable-reconstruction
+representative: a semantic surfel graph with embedded-deformation (ED) nodes,
+optimised per frame against depth, photometric and semantic terms. It is not a
+camera-SLAM system --- the camera is assumed static while the surfel graph
+deforms --- so neither trajectory metrics nor like-for-like render metrics apply;
+its shipped output in this benchmark is internal telemetry (per-frame losses,
+graph statistics, timing), summarised in Figure~\ref{fig:bench_semsup}.
+
+Three facts are relevant to the comparison. First, \emph{it runs}: four of five
+snippets processed to completion at 1.2--2.3\,s per frame (median), maintaining
+$3\times10^4$--$1.6\times10^5$ surfels and a fixed 1197-node ED graph ---
+deformable surgical scenes are within its operating envelope. Second,
+\emph{C2\_001 fails early}: processing halts at frame 43 of 730, during the
+gallbladder retraction whose large occlusions and topology change break
+surfel--frame association --- the same sequence that is the hardest for both
+renderers above, and a useful marker of where all three paradigms strain.
+Third, the ED-graph formulation \emph{presumes} the deformation--camera split
+that this thesis has to estimate: with a moving endoscope, per-frame scene
+deformation and camera motion are entangled in exactly the way
+Chapter~\ref{sec:tracking_limits} describes, which is why SemanticSuPer's
+telemetry is reported here as context rather than as a competing tracking or
+rendering result.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/semsup_telemetry.png}
+\caption{SemanticSuPer internal telemetry on the five benchmark snippets.
+Left: surfel count over each sequence. Right: median per-frame optimisation
+time; C2\_001 (aqua) halts at frame 43 of 730 during the gallbladder
+retraction.}
+\label{fig:bench_semsup}
+\end{figure}
+
+% ---------------------------------------------------------------------------
+\subsection{Cross-method summary}
+\label{sec:bench_summary}
+
+No single system dominates. DDS-SLAM is the only one of the three that
+\emph{tracks} the camera, and its weakness is behavioural (over-travel on
+sub-SNR motion) rather than catastrophic; SGS-SLAM produces the perceptually
+sharpest renders but degrades fastest under deformation and offers no
+trajectory here; SemanticSuPer handles deformation explicitly but assumes away
+the camera problem and fails outright on the heaviest-manipulation snippet.
+C2\_001 --- large tissue retraction under camera motion --- is the common
+stress case across all three, and is where the contributions of this thesis
+(uncertainty-weighted tracking and motion-aware supervision on the SDF
+substrate) are aimed.
