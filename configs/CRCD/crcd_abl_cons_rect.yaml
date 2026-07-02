@@ -1,0 +1,11 @@
+# EPOCH-CONSISTENT POSES ablation -- the BA-jump fix arm (from the 4-agent model review).
+# After every global_BA write-back, refresh each non-keyframe absolute onto its keyframe's NEW pose
+# (rel @ kf_now = convert_relative_pose applied LIVE). Kills the last period-keyframe_every contaminant
+# that survives the rebased SAVE fix: const-velocity init at frames ==1 (mod 5) reads est[5k] (post-BA)
+# vs est[5k-1] (pre-BA epoch) -> the "velocity" contains the full ~0.8mm BA correction and EXTRAPOLATES
+# it into the next track. Also fixes flow-arm refs (frame_id - ref_stride spans BA boundaries).
+# NO other change vs the shared ablation base -> isolates the epoch-consistency effect.
+# Fingerprint it should erase: per-frame |step| spike at frames ==1 (mod 5) in the REBASED trajectory.
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+tracking:
+  consistent_poses: true

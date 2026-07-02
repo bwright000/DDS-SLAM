@@ -149,7 +149,14 @@ class DDSSLAM():
         '''
         self.est_c2w_data = {}
         self.est_c2w_data_rel = {}
-        self.load_gt_pose() 
+        # The rebased save + consistent_poses assume ONE keyframe snapshot per block (BA fires only at
+        # block boundaries). map_every < keyframe_every would re-optimise a block's anchor BETWEEN its
+        # interior tracks -> rel deltas mix epochs. All live configs are 5/5 or 1/1; warn loudly if not.
+        if self.config['mapping']['map_every'] < self.config['mapping']['keyframe_every']:
+            print('[WARN] map_every < keyframe_every: intra-block BA moves the anchor between interior '
+                  'tracks -> rel deltas mix epochs; the rebased est_c2w_data.txt / consistent_poses '
+                  'assumption is BROKEN in this configuration')
+        self.load_gt_pose()
     
     def create_bounds(self):
         '''
@@ -712,6 +719,22 @@ class DDSSLAM():
                 if _f % _ke == 0 and _f <= cur_frame_id and _f in self.est_c2w_data:
                     self.est_c2w_data[_f] = _p.to(self.device)
 
+        # EPOCH-CONSISTENT POSES (flag-gated, default off = base byte-identical): BA just moved the
+        # keyframes, so refresh every non-keyframe absolute onto its keyframe's NEW pose (rel @ kf_now,
+        # = convert_relative_pose applied live). Without this est_c2w_data mixes epochs and every raw
+        # consumer reads stale-anchored poses: const-velocity init at frames ==1 (mod map_every)
+        # EXTRAPOLATES the full BA jump into the next track (the ~0.8mm kick that survives the rebased
+        # SAVE fix), and flow-arm refs (frame_id - ref_stride) span the boundary. O(N) matmuls, trivial.
+        # Exact idempotent recompute (rel @ current kf), no error accumulation across BA calls.
+        if self.config['tracking'].get('consistent_poses', False):
+            _ke = self.config['mapping']['keyframe_every']
+            for _f in self.est_c2w_data_rel.keys():
+                if _f % _ke == 0:
+                    continue
+                _kf = (_f // _ke) * _ke
+                if _kf in self.est_c2w_data:
+                    self.est_c2w_data[_f] = (self.est_c2w_data_rel[_f] @ self.est_c2w_data[_kf].float()).detach()
+
     def predict_current_pose(self, frame_id, constant_speed=True):
         '''
         Predict current pose from previous pose using camera motion model
@@ -982,6 +1005,10 @@ class DDSSLAM():
         if (_mp_lr > 0 or _mp_lt > 0) and (int(frame_id) - 1) in self.est_c2w_data:
             from Addons.motion.flow_track import zero_motion_prior
             _mp_prev = self.est_c2w_data[int(frame_id) - 1].detach().to(self.device)
+            if not getattr(self, '_mp_logged', False):   # once per run: make the RESOLVED lambdas (and any
+                self._mp_logged = True                   # lingering env override) visible in run.log -- an
+                _src = 'ENV OVERRIDE' if ('DDS_MP_LAM_R' in os.environ or 'DDS_MP_LAM_T' in os.environ) else 'config'
+                print(f"[motion_prior] ARMED lam_r={_mp_lr:g} lam_t={_mp_lt:g} ({_src})")
 
         # Start tracking
         for i in range(self.config['tracking']['iter']):

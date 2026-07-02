@@ -27,7 +27,8 @@ declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=${BEST_
   [abl_base]=configs/CRCD/crcd_abl_base_rect.yaml [l0]=configs/CRCD/crcd_abl_l0_rect.yaml [l0aggr]=configs/CRCD/crcd_abl_l0aggr_rect.yaml \
   [l0sig]=configs/CRCD/crcd_abl_l0sig_rect.yaml [l0sigaggr]=configs/CRCD/crcd_abl_l0sigaggr_rect.yaml \
   [dpool]=configs/CRCD/crcd_abl_dpool_rect.yaml [pnp]=configs/CRCD/crcd_abl_pnp_rect.yaml \
-  [prior]=configs/CRCD/crcd_abl_prior_rect.yaml )   # BEST_CFG= override (T4); abl_*/l0*/dpool/pnp/prior = flow-supervisor arms; prior=LEAN CORE zero-motion prior (headline). lambda sweep via DDS_MP_LAM_T/R env per run
+  [prior]=configs/CRCD/crcd_abl_prior_rect.yaml \
+  [cons]=configs/CRCD/crcd_abl_cons_rect.yaml )   # BEST_CFG= override (T4); abl_*/l0*/dpool/pnp/prior/cons = ablation arms; prior=zero-motion prior (lambda sweep via DDS_MP_LAM_T/R env); cons=epoch-consistent poses (BA-jump fix)
 PARALLEL="${PARALLEL:-1}"; NPROC=$(nproc 2>/dev/null||echo 8); THREADS=$(( NPROC/PARALLEL>0 ? NPROC/PARALLEL : 1 ))
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256 LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}

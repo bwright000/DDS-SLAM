@@ -183,6 +183,11 @@ class StereoMISDataset(BaseDataset):
         self.crop = crop
         self.img_files = sorted(glob.glob(f'{self.basedir}/video_frames/*l.png'))[-4000:]
         self.depth_paths = sorted(glob.glob(f'{self.basedir}/depth/*.png'))[-4000:]
+        # rgb<->depth are paired POSITIONALLY: a gap in the middle of either glob silently shifts the
+        # pairing for every later frame (a missing tail at least crashes). Fail loudly instead.
+        assert len(self.depth_paths) == len(self.img_files), (
+            f"rgb({len(self.img_files)}) != depth({len(self.depth_paths)}) under {self.basedir} -- "
+            f"positional rgb<->depth pairing would silently shift; regenerate the depth corpus")
 
         self.semantic_paths = sorted(
            glob.glob(os.path.join(
