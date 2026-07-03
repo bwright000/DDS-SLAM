@@ -43,6 +43,8 @@ if [ "$(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -lt 151 ]; then
 fi
 if [ "$(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -lt 151 ]; then
   say "depth: no Drive cache matched -> generating MoGe-2 fresh (~2-3min)"
+  # MoGe-2 is a separate pip install (colab_setup does not include it) -- same guard as the other runbooks
+  python -c 'from moge.model.v2 import MoGeModel' 2>/dev/null || { say "installing MoGe-2 (~2min)"; pip install -q git+https://github.com/microsoft/MoGe.git huggingface_hub 2>&1|tail -2; python -c 'from moge.model.v2 import MoGeModel' || { say "FATAL: MoGe-2 still not importable"; exit 1; }; }
   PSCALE=$(python -c "import config; print(config.load_config('configs/Super/trail3_teacher_off.yaml')['cam']['png_depth_scale'])")
   say "depth: png_depth_scale from config = $PSCALE"
   mkdir -p "$DD/_mi"; for f in "$DD/rgb"/*left.png; do b=$(basename "$f"); ln -sf "$f" "$DD/_mi/${b%left.png}-left.png"; done
