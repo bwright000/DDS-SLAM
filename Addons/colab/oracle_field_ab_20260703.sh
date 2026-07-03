@@ -25,13 +25,36 @@ python -c "import torch, tinycudann" 2>/dev/null || { say "env build (~15min)"; 
 # ---- stage trial_3 (rgb + moge2 depth + baked dx*) ----
 mkdir -p "$DD/rgb" "$DD/depth/moge2" "$DD/deform"
 [ "$(ls "$DD/rgb"/*left.png 2>/dev/null|wc -l)" -ge 151 ] || cp "$DATASET/rgb"/*left.png "$DD/rgb/"
-[ "$(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -ge 151 ] || cp "$DATASET/depth/moge2"/*left_depth.npy "$DD/depth/moge2/"
 [ "$(ls "$DD/deform"/*_deform.npz 2>/dev/null|wc -l)" -ge 151 ] || cp "$DATASET/deform"/*_deform.npz "$DD/deform/"
-say "staged: rgb $(ls "$DD/rgb"/*left.png|wc -l)  depth $(ls "$DD/depth/moge2"/*.npy|wc -l)  deform $(ls "$DD/deform"/*.npz|wc -l)"
-# rgb-derived aux the Super loader expects (seg masks etc.) come from the same Drive tree if present
+# rgb-derived aux the Super loader expects (seg masks etc.)
 for SUB in seg pose; do
   [ -d "$DATASET/$SUB" ] && [ ! -d "$DD/$SUB" ] && cp -r "$DATASET/$SUB" "$DD/$SUB" || true
 done
+# DEPTH: try the known Drive layouts; if none match, GENERATE MoGe fresh (151 frames ~2-3min on T4)
+# and BACKFILL the canonical Drive location so no future instance regenerates.
+if [ "$(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -lt 151 ]; then
+  for CAND in "$DATASET/depth/moge2" "$DATASET/MoGe2_trail3_20260608" \
+              /content/drive/MyDrive/Datasets/MoGe2_trail3_20260608 \
+              /content/drive/MyDrive/MoGe2_trail3_20260608; do
+    if [ "$(ls "$CAND"/*left_depth.npy 2>/dev/null|wc -l)" -ge 151 ]; then
+      say "depth: restoring from $CAND"; cp "$CAND"/*left_depth.npy "$DD/depth/moge2/"; break
+    fi
+  done
+fi
+if [ "$(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -lt 151 ]; then
+  say "depth: no Drive cache matched -> generating MoGe-2 fresh (~2-3min)"
+  PSCALE=$(python -c "import config; print(config.load_config('configs/Super/trail3_teacher_off.yaml')['cam']['png_depth_scale'])")
+  say "depth: png_depth_scale from config = $PSCALE"
+  mkdir -p "$DD/_mi"; for f in "$DD/rgb"/*left.png; do b=$(basename "$f"); ln -sf "$f" "$DD/_mi/${b%left.png}-left.png"; done
+  python Addons/depth/generate_depth_moge.py --rgb "$DD/_mi" --out "$DD/depth/moge2" \
+    --temporal_window 1 --depth_scale "$PSCALE" --max_depth_m 5.0 --resolution_level 9 \
+    || { say "FATAL: MoGe generation failed"; exit 1; }
+  rm -rf "$DD/_mi"
+  mkdir -p "$DATASET/depth/moge2" && cp "$DD/depth/moge2"/*left_depth.npy "$DATASET/depth/moge2/" 2>/dev/null \
+    && say "depth: backfilled to Drive ($DATASET/depth/moge2)" || say "WARN: Drive depth backfill failed"
+fi
+say "staged: rgb $(ls "$DD/rgb"/*left.png|wc -l)  depth $(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)  deform $(ls "$DD/deform"/*.npz|wc -l)  seg $(ls "$DD/seg/png_masks"/*left.png 2>/dev/null|wc -l)"
+[ "$(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -ge 151 ] || { say "FATAL: depth staging failed"; exit 1; }
 
 # ---- SMOKE both arms first (integration errors cost 2min, not 2h) ----
 say "SMOKE static + oracle"
