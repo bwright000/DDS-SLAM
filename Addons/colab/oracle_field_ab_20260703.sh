@@ -50,8 +50,14 @@ if [ "$(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -lt 151 ]; then
     --temporal_window 1 --depth_scale "$PSCALE" --max_depth_m 5.0 --resolution_level 9 \
     || { say "FATAL: MoGe generation failed"; exit 1; }
   rm -rf "$DD/_mi"
-  mkdir -p "$DATASET/depth/moge2" && cp "$DD/depth/moge2"/*left_depth.npy "$DATASET/depth/moge2/" 2>/dev/null \
-    && say "depth: backfilled to Drive ($DATASET/depth/moge2)" || say "WARN: Drive depth backfill failed"
+fi
+# PERSIST: whatever the source (restore or fresh generation), make sure the CANONICAL Drive location
+# (the workspace-doc path every runbook checks FIRST) holds the full set -> no instance ever re-stages.
+if [ "$(ls "$DATASET/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -lt 151 ] \
+   && [ "$(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -ge 151 ]; then
+  mkdir -p "$DATASET/depth/moge2" && cp "$DD/depth/moge2"/*left_depth.npy "$DATASET/depth/moge2/" \
+    && say "depth: PERSISTED to canonical Drive path ($DATASET/depth/moge2, $(ls "$DATASET/depth/moge2"/*left_depth.npy|wc -l) npy)" \
+    || say "WARN: Drive depth persist failed -- next instance will re-stage"
 fi
 say "staged: rgb $(ls "$DD/rgb"/*left.png|wc -l)  depth $(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)  deform $(ls "$DD/deform"/*.npz|wc -l)  seg $(ls "$DD/seg/png_masks"/*left.png 2>/dev/null|wc -l)"
 [ "$(ls "$DD/depth/moge2"/*left_depth.npy 2>/dev/null|wc -l)" -ge 151 ] || { say "FATAL: depth staging failed"; exit 1; }
