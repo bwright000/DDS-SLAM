@@ -75,8 +75,12 @@ def main():
     print('device:', dev, '| RAFT-', 'small' if a.small else 'large')
     raft, tf = load_raft(dev, small=a.small)
     dino = load_dino(dev)
-    files = sorted(glob.glob(a.frames_dir + '/*.png') + glob.glob(a.frames_dir + '/*.jpg'))
-    files = [f for f in files if 'right' not in os.path.basename(f).lower()]
+    # LEFT frames only -- staged video_frames/ holds BOTH eyes (000000l.png + 000000r.png; the runbook
+    # everywhere globs '*l.png'). A bare *.png doubles the count and breaks the depth pairing.
+    files = sorted(glob.glob(a.frames_dir + '/*l.png'))
+    if not files:                                       # raw-left / other stagings: fall back, drop rights
+        files = sorted(glob.glob(a.frames_dir + '/*.png') + glob.glob(a.frames_dir + '/*.jpg'))
+        files = [f for f in files if not os.path.basename(f).lower().endswith(('r.png', 'right.png'))]
     dfiles = sorted(glob.glob(a.depth_dir + '/*.png') + glob.glob(a.depth_dir + '/*.npy'))
     assert len(dfiles) >= len(files), f"depth({len(dfiles)}) < frames({len(files)})"
     GT = load_gt_tum(a.gt)
