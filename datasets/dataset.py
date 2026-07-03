@@ -205,10 +205,10 @@ class StereoMISDataset(BaseDataset):
             assert len(self.dino_paths) == len(self.img_files), \
                 f"DINO features {len(self.dino_paths)} != frames {len(self.img_files)} in {self.basedir}/{_sub}"
 
-        # ARM-2 Stage-1: baked Δx* deformation targets (deformation_sup_weight>0). Same [-4000:] slice as
-        # img_files so frame i <-> deform_paths[i]. None => no key => base bit-identical.
+        # ARM-2 Stage-1: baked Δx* deformation targets (deformation_sup_weight>0 OR deform_oracle). Same
+        # [-4000:] slice as img_files so frame i <-> deform_paths[i]. None => no key => base bit-identical.
         self.deform_paths = None
-        if self.config['training'].get('deformation_sup_weight', 0) > 0:
+        if self.config['training'].get('deformation_sup_weight', 0) > 0 or self.config['training'].get('deform_oracle', False):
             _dsub = self.config.get('data', {}).get('deform_subdir', 'deform')
             self.deform_paths = sorted(glob.glob(f'{self.basedir}/{_dsub}/*_deform.npz'))[-4000:]
             assert len(self.deform_paths) == len(self.img_files), \
@@ -420,10 +420,10 @@ class SuperDataset(BaseDataset):
             assert len(self.dino_paths) == len(self.img_files), \
                 f"DINO features {len(self.dino_paths)} != frames {len(self.img_files)} in {self.basedir}/{_sub}"
 
-        # ARM-2 Stage-1: baked Δx* deformation targets (deformation_sup_weight>0). NO [-4000:] slice
-        # (SemSup, like dino above). None => no key => base bit-identical.
+        # ARM-2 Stage-1: baked Δx* deformation targets (deformation_sup_weight>0 OR deform_oracle). NO
+        # [-4000:] slice (SemSup, like dino above). None => no key => base bit-identical.
         self.deform_paths = None
-        if self.config['training'].get('deformation_sup_weight', 0) > 0:
+        if self.config['training'].get('deformation_sup_weight', 0) > 0 or self.config['training'].get('deform_oracle', False):
             _dsub = self.config.get('data', {}).get('deform_subdir', 'deform')
             self.deform_paths = sorted(glob.glob(f'{self.basedir}/{_dsub}/*_deform.npz'))
             assert len(self.deform_paths) == len(self.img_files), \

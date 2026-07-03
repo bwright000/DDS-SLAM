@@ -16,6 +16,9 @@ class KeyFrameDatabase(object):
         # B2: parallel per-keyframe field-route weight (rays stay width 8 for parity). 1 = field ON (neutral);
         # add_keyframe overwrites it when a route_map is passed (map_route.route_ba).
         self.route = torch.ones((num_kf, num_rays_to_save, 1))
+        # ORACLE-FIELD (deform_oracle): parallel per-keyframe baked dx* at the SAME subsampled pixels, so
+        # global_BA rays can be warped without pixel identity (mirrors the route mechanism). Zeros = no warp.
+        self.dx = torch.zeros((num_kf, num_rays_to_save, 3))
         self.num_rays_to_save = num_rays_to_save
         self.frame_ids = None
         self.H = H
@@ -56,7 +59,7 @@ class KeyFrameDatabase(object):
         else:
             self.frame_ids = torch.cat([self.frame_ids, frame_ids], dim=0)
     
-    def add_keyframe(self, batch, filter_depth=False, route_map=None):
+    def add_keyframe(self, batch, filter_depth=False, route_map=None, dx_map=None):
         '''
         Add keyframe rays to the keyframe database. route_map: [H,W] field-route for this frame (B2);
         None -> leave the neutral ONES (field ON / un-routed).
@@ -81,11 +84,16 @@ class KeyFrameDatabase(object):
         # None (warm-up / route_ba off) -> keep the ONES default (field ON = un-routed = neutral).
         if route_map is not None:
             self.route[len(self.frame_ids)-1] = route_map.reshape(-1)[idxs].view(-1, 1).float().cpu()
+        # ORACLE-FIELD: this keyframe's per-pixel dx* at the SAME subsampled pixels (aligned with rays).
+        if dx_map is not None:
+            self.dx[len(self.frame_ids)-1] = dx_map.reshape(-1, 3)[idxs].float().cpu()
     
-    def sample_global_rays(self, bs, with_route=False):
+    def sample_global_rays(self, bs, with_route=False, with_dx=False):
         '''
         Sample rays from self.rays as well as frame_ids. with_route (B2): also return the stored
         per-keyframe field-route at the SAME sampled rays (to route global_BA's keyframe rays).
+        with_dx (ORACLE-FIELD): also return the stored per-keyframe dx* at the SAME sampled rays.
+        Flags append to the return tuple in (route, dx) order; both default False = base signature.
         '''
         num_kf = self.__len__()
         idxs = torch.tensor(random.sample(range(num_kf * self.num_rays_to_save), bs))
@@ -93,9 +101,12 @@ class KeyFrameDatabase(object):
 
         frame_ids = self.frame_ids[idxs//self.num_rays_to_save]
 
+        out = (sample_rays, frame_ids)
         if with_route:
-            return sample_rays, frame_ids, self.route[:num_kf].reshape(-1, 1)[idxs]
-        return sample_rays, frame_ids
+            out = out + (self.route[:num_kf].reshape(-1, 1)[idxs],)
+        if with_dx:
+            out = out + (self.dx[:num_kf].reshape(-1, 3)[idxs],)
+        return out
     
     def sample_global_keyframe(self, window_size, n_fixed=1):
         '''

@@ -104,6 +104,11 @@ class DDSSLAM():
         self.map_route_on = bool(self.config.get('map_route', {}).get('enable', False))
         self._map_route_buf = None
         self._route_map = None
+        # ORACLE-FIELD (option C, in-pipeline): warp map-training + render sample points by the BAKED
+        # teacher dx* instead of time_net (run_network oracle_dx seam) -- the "given a CORRECT field"
+        # online A/B. Touches current_frame_mapping / global_BA (per-keyframe dx stored in the DB,
+        # mirroring route) / rendering. Tracking untouched (SemSup arms are pose-frozen). Default off.
+        self._oracle_on = bool(self.config['training'].get('deform_oracle', False))
         if self.map_route_on:
             from collections import deque
             from Addons.motion.flow_track import load_raft, load_dino
@@ -494,7 +499,8 @@ class DDSSLAM():
                 loss = _ds_w * def_sup
                 ret = None                                                     # render forward skipped (teacher-only)
             else:
-                ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, target_seg=target_seg, route_w=route_w, map_ray_w=map_ray_w)
+                ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, target_seg=target_seg, route_w=route_w, map_ray_w=map_ray_w,
+                                         oracle_dx=(deform_dx if self._oracle_on else None))   # ORACLE-FIELD: warp this map update by the baked dx* (already per-ray at these pixels)
                 loss = self.get_loss_from_ret(ret)
                 if _teach:                                                     # joint: render loss + teacher
                     Xk = rays_o[..., :3] + rays_d * target_d
@@ -544,6 +550,15 @@ class DDSSLAM():
         
         return cur_rot, cur_trans, pose_optimizer
     
+    def _oracle_dx_flat(self, batch):
+        """ORACLE-FIELD helper: full-frame baked dx* [H*W,3] (row-major, matches direction.reshape(-1,3))
+        upsampled from the compact grid. Loud assert: deform_oracle without staged dx* must not silently
+        train static."""
+        assert 'deform_dx' in batch, "deform_oracle=true but deform_dx not attached -- stage deform/ npz"
+        H, W = self.dataset.H, self.dataset.W
+        hh = torch.arange(H).repeat_interleave(W); ww = torch.arange(W).repeat(H)
+        return sample_dino_grid(batch['deform_dx'].squeeze(0), hh, ww, H, W)
+
     def global_BA(self, batch, cur_frame_id):
         '''
         Global bundle adjustment that includes all the keyframes and the current frame
@@ -597,8 +612,12 @@ class DDSSLAM():
             # rays [bs, 7]
             # frame_ids [bs]
             _route_ba = self.config.get('map_route', {}).get('route_ba', False) and getattr(self, '_route_map', None) is not None
-            if _route_ba:
+            if _route_ba and self._oracle_on:
+                rays, ids, kf_route, kf_dx = self.keyframeDatabase.sample_global_rays(self.config['mapping']['sample'], with_route=True, with_dx=True)
+            elif _route_ba:
                 rays, ids, kf_route = self.keyframeDatabase.sample_global_rays(self.config['mapping']['sample'], with_route=True)
+            elif self._oracle_on:
+                rays, ids, kf_dx = self.keyframeDatabase.sample_global_rays(self.config['mapping']['sample'], with_dx=True)
             else:
                 rays, ids = self.keyframeDatabase.sample_global_rays(self.config['mapping']['sample'])
 
@@ -615,6 +634,15 @@ class DDSSLAM():
                 _idxc = torch.as_tensor(idx_cur, device=self.device)
                 route_w_ba = torch.cat([kf_route.view(-1).to(self.device),
                                         self._route_map.reshape(-1)[_idxc]]).view(-1, 1)
+            # ORACLE-FIELD: per-ray dx* for BA = [stored keyframe dx ; current-frame dx at idx_cur pixels].
+            # current_rays are row-major flat, so pixel = (idx//W, idx%W).
+            _odx_ba = None
+            if self._oracle_on:
+                _ic = torch.as_tensor(idx_cur)
+                _cur_dx = sample_dino_grid(batch['deform_dx'].squeeze(0),
+                                           _ic // self.dataset.W, _ic % self.dataset.W,
+                                           self.dataset.H, self.dataset.W)
+                _odx_ba = torch.cat([kf_dx.to(self.device), _cur_dx.to(self.device)], dim=0)
 
 
             rays_d_cam = rays[..., :3].to(self.device)
@@ -662,6 +690,7 @@ class DDSSLAM():
                         rays_o, rays_d = rays_o[_keep], rays_d[_keep]
                         target_s, target_d, target_edge_semantic = target_s[_keep], target_d[_keep], target_edge_semantic[_keep]
                         route_w_ba = route_w_ba[_keep]
+                        if _odx_ba is not None: _odx_ba = _odx_ba[_keep]   # keep dx aligned with rays
                 elif _af > 0:
                     _mv = (_r >= _af)
                     if bool(_mv.any()):
@@ -669,8 +698,9 @@ class DDSSLAM():
                         target_s = torch.cat([target_s, target_s[_mv]]); target_d = torch.cat([target_d, target_d[_mv]])
                         target_edge_semantic = torch.cat([target_edge_semantic, target_edge_semantic[_mv]])
                         route_w_ba = torch.cat([route_w_ba, route_w_ba[_mv]])
+                        if _odx_ba is not None: _odx_ba = torch.cat([_odx_ba, _odx_ba[_mv]])
 
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, route_w=route_w_ba)
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, route_w=route_w_ba, oracle_dx=_odx_ba)
 
             loss = self.get_loss_from_ret(ret, smooth=True)
             
@@ -1319,7 +1349,8 @@ class DDSSLAM():
                 # Add keyframe
                 if i % self.config['mapping']['keyframe_every'] == 0:
                     self.keyframeDatabase.add_keyframe(batch, filter_depth=self.config['mapping']['filter_depth'],
-                                                       route_map=(self._route_map if self.config.get('map_route', {}).get('route_ba', False) else None))
+                                                       route_map=(self._route_map if self.config.get('map_route', {}).get('route_ba', False) else None),
+                                                       dx_map=(self._oracle_dx_flat(batch) if self._oracle_on else None))
                     print('add keyframe:',i)
             
 
@@ -1397,6 +1428,8 @@ class DDSSLAM():
         # chunk below. The render MUST share the mapper's routing or the background (co-adapted to a tissue-only
         # warp) would be re-warped here. None unless map_route.enable + buffer filled -> unrouted (base).
         route_flat = self._route_map.reshape(-1) if getattr(self, '_route_map', None) is not None else None
+        # ORACLE-FIELD: full-frame dx* (row-major [H*W,3], matches rays_d.view(-1,3)); sliced per chunk.
+        odx_flat = self._oracle_dx_flat(batch) if self._oracle_on else None
 
         rgb = []
         depth_chunks = []
@@ -1411,13 +1444,14 @@ class DDSSLAM():
             target_d1 = target_d[i:i + ray_batch_size]
             target_dino1 = target_dino_full[i:i + ray_batch_size] if target_dino_full is not None else None
             route_w1 = route_flat[i:i + ray_batch_size].view(-1, 1) if route_flat is not None else None
+            odx1 = odx_flat[i:i + ray_batch_size].to(self.device) if odx_flat is not None else None
             if self.config['dynamic']:
                 cur_id = (frame_id*torch.ones(rays_o1.shape[0]))
                 timestamps = (cur_id.to(self.device) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else cur_id.to(self.device)  # T1.2: normalise frame_time to [0,1]; flag default off = upstream behaviour
                 rays_o1 = torch.cat([rays_o1,timestamps.unsqueeze(-1)],dim=1)
             # ret = self.model.render_rays(rays_o1, rays_d1, target_d1)
             ret = self.model.forward(rays_o1, rays_d1, target_s, target_d1,
-                                     target_edge_semantic=target_edge_semantic, target_dino=target_dino1, notFirstMap=False,render_only=True, route_w=route_w1)
+                                     target_edge_semantic=target_edge_semantic, target_dino=target_dino1, notFirstMap=False,render_only=True, route_w=route_w1, oracle_dx=odx1)
             rgb.append(ret['rgb'].detach().clone().cpu())
             if 'depth' in ret:
                 depth_chunks.append(ret['depth'].detach().clone().cpu())
