@@ -1,0 +1,6 @@
+# STILL-GATE + EPOCH-CONSISTENT POSES -- the composite ship-candidate: the map-anchored freeze
+# decision on top of coherent pose bookkeeping (cons kills the BA-jump velocity extrapolation that
+# would otherwise contaminate the const-velocity 'motion hypothesis' the gate tests against).
+inherit_from: configs/CRCD/crcd_abl_still_rect.yaml
+tracking:
+  consistent_poses: true

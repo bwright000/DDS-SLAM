@@ -819,6 +819,54 @@ class DDSSLAM():
         if frame_id <= 3 or frame_id % 30 == 0:
             print(f'[map_route] frame {frame_id}: moving-frac={float(route.mean()):.3f} (causal ref {ref_id})')
 
+    def _still_gate_decide(self, batch, frame_id, init_c2w):
+        """MAP-ANCHORED STILL-TEST (still_gate) -- the freeze decision with a RIGID REFERENCE.
+        Flow alone cannot distinguish 'camera moves' from 'scene drifts coherently' (measured: the
+        C1-f359 vs E3-busy classes demand OPPOSITE readings of every flow feature). The map can:
+        render the SAME sampled rays from (a) the PREVIOUS pose (zero-motion hypothesis) and (b) the
+        const-velocity INIT (motion hypothesis) and compare per-ray photometric residuals against the
+        current frame. Coherent tissue drift matches the frozen map under NO pose -> both hypotheses
+        read ~equal -> freeze is safe; true camera motion is explained by (b) only -> track.
+        Robust MEDIAN comparison (map staleness near recently-deformed tissue must not dominate);
+        tool pixels (seg==2) excluded from the DECISION when seg is present (the tool moves regardless
+        of the camera -> uninformative). Two no-grad forwards ~ 2 tracking iterations (~10-20%).
+        Returns (freeze: bool, info: str). Gated: still_gate flag off -> never called (base parity)."""
+        cfg = self.config['tracking']
+        margin = float(cfg.get('still_margin', 0.05))
+        n_rays = int(cfg.get('still_rays', 1024))
+        warmup = int(cfg.get('still_warmup', 2 * self.config['mapping']['keyframe_every']))
+        if int(frame_id) <= warmup:
+            return False, 'warmup'
+        prev_c2w = self.est_c2w_data[int(frame_id) - 1].float().to(self.device)
+        init = init_c2w.float().to(self.device)
+        # degenerate: init == prev -> no motion hypothesis to test against (const_speed off / frame<=1)
+        if float((init[:3, 3] - prev_c2w[:3, 3]).norm()) < 1e-7 and float((init[:3, :3] - prev_c2w[:3, :3]).norm()) < 1e-7:
+            return False, 'init==prev'
+        iH, iW = cfg['ignore_edge_H'], cfg['ignore_edge_W']
+        Hc, Wc = self.dataset.H - iH * 2, self.dataset.W - iW * 2
+        indice = self.select_samples(Hc, Wc, n_rays)
+        ih, iw = indice % Hc, indice // Hc
+        if 'seg' in batch:                                    # tool out of the DECISION only
+            _keep = (batch['seg'].squeeze(0)[iH:-iH, iW:-iW][ih, iw] != 2)
+            if 0 < int(_keep.sum()) < _keep.numel():
+                ih, iw = ih[_keep], iw[_keep]
+        rays_d_cam = batch['direction'].squeeze(0)[iH:-iH, iW:-iW][ih, iw].to(self.device)
+        tgt_rgb = batch['rgb'].squeeze(0)[iH:-iH, iW:-iW][ih, iw].to(self.device)
+        tgt_d = batch['depth'].squeeze(0)[iH:-iH, iW:-iW][ih, iw].to(self.device).unsqueeze(-1)
+        tgt_e = batch['edge_semantic'].squeeze(0)[iH:-iH, iW:-iW][ih, iw].to(self.device).unsqueeze(-1)
+        med = {}
+        with torch.no_grad():
+            for name, c2w in (('prev', prev_c2w), ('init', init)):
+                ro = c2w[:3, 3].expand(rays_d_cam.shape[0], 3)
+                rd = torch.sum(rays_d_cam[..., None, :] * c2w[:3, :3], -1)
+                if self.config['dynamic']:
+                    _t = (float(frame_id) / self.dataset.num_frames) if self.config['training'].get('time_normalize', False) else float(frame_id)
+                    ro = torch.cat([ro, torch.full((rd.shape[0], 1), _t, device=self.device)], dim=1)
+                ret = self.model.forward(ro, rd, tgt_rgb, tgt_d, target_edge_semantic=tgt_e, render_only=True)
+                med[name] = float(((ret['rgb'] - tgt_rgb) ** 2).mean(-1).median())
+        freeze = med['prev'] <= med['init'] * (1.0 + margin)
+        return freeze, f"med_prev={med['prev']:.5f} med_init={med['init']:.5f} margin={margin}"
+
     def _flowlog(self, header, row):
         """Append one per-frame diagnostic row to output/trust_log.csv (header written once). Used by the
         flow_track modes (solve_pnp / depth_pool). Best-effort; never breaks tracking."""
@@ -853,6 +901,25 @@ class DDSSLAM():
             cur_c2w = self.est_c2w_data[frame_id]
         else:
             cur_c2w = self.predict_current_pose(frame_id, self.config['tracking']['const_speed'])
+
+        # MAP-ANCHORED STILL-GATE (default off = base parity): freeze iff the zero-motion pose explains
+        # the frame against the MAP at least as well as the predicted pose. Unlike the flow gates this
+        # decision has a rigid reference, so coherent tissue drift cannot fake camera motion (C1-f359)
+        # and a busy scene cannot veto real motion (E3). Freeze writes pose+rel exactly like the old
+        # gate's freeze; mapping still runs. NB no freeze_ba analog needed -- bookkeeping coherence is
+        # the rebased save / consistent_poses' job now.
+        if self.config['tracking'].get('still_gate', False) and (int(frame_id) - 1) in self.est_c2w_data:
+            _sg_freeze, _sg_info = self._still_gate_decide(batch, frame_id, cur_c2w)
+            if _sg_freeze:
+                self.est_c2w_data[frame_id] = self.est_c2w_data[int(frame_id) - 1].detach().clone()
+                if frame_id % self.config['mapping']['keyframe_every'] != 0:
+                    _kf = (frame_id // self.config['mapping']['keyframe_every']) * self.config['mapping']['keyframe_every']
+                    self.est_c2w_data_rel[frame_id] = self.est_c2w_data[frame_id] @ self.est_c2w_data[_kf].float().inverse()
+                self._sg_frozen = getattr(self, '_sg_frozen', 0) + 1
+                print(f"[still_gate] frame {frame_id} FROZEN ({_sg_info}) total={self._sg_frozen}")
+                return
+            elif frame_id % 30 == 0:
+                print(f"[still_gate] frame {frame_id} track ({_sg_info})")
 
         indice = None
         best_sdf_loss = None

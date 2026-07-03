@@ -1,0 +1,18 @@
+# MAP-ANCHORED STILL-GATE (the flow-gate successor's FREEZE decision, isolated).
+# Per frame, BEFORE the pose solve: render the same sampled rays from (a) the previous pose
+# (zero-motion) and (b) the const-velocity init (motion), compare per-ray photometric MEDIANS against
+# the current frame -> freeze iff zero-motion is not-worse (within still_margin). The MAP is the rigid
+# reference the flow rules lacked: the offline design round proved flow-only cannot pass BOTH bars
+# (C1 global-drift stills need incoherence->freeze; E3 busy-moving needs the opposite). Tool excluded
+# from the DECISION via seg (semantic_class); robust median guards against map staleness near
+# recently-deformed tissue. ~2 extra no-grad forwards/frame (~10-20% tracking cost).
+# BARS (flow_diag freeze-confusion, auto): E3 freeze-precision >=80 (old gate 23 windowed) AND
+# C1 still-recall >=80 (old gate 84). C2/C3 = held-out.
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+tracking:
+  still_gate: true
+  still_margin: 0.05      # freeze iff med_prev <= med_init * (1+margin); THE one calibrated constant
+  still_rays: 1024
+  still_warmup: 10        # no freezing before the map has content (2x keyframe_every)
+data:
+  seg_label_subdir: semantic_class   # tool out of the freeze DECISION (not the map)
