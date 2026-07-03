@@ -169,6 +169,43 @@ def render_all(a, cfg, model, frames, dirs, dev, num_frames, normalize_time):
     print(f"[{a.arm}] TRAIN-VIEW PSNR mean {np.mean(psnrs):.3f} (n={len(psnrs)})  -> {a.out}")
 
 
+def masked_eval(a):
+    """Decisive cut: PSNR over MOVING pixels (|dx*| >= thresh) vs STATIC pixels, per arm, from the
+    existing renders. Global PSNR dilutes the field's effect (moving tissue = a fraction of the frame);
+    this is where a correct field must win if job-1 (sharp fusion under motion) is real."""
+    import cv2
+    gts = sorted(glob.glob(os.path.join(a.gt_dir, '*left.png')))
+    dxs = sorted(glob.glob(os.path.join(a.deform_dir, '*_deform.npz')))
+    assert len(gts) == len(dxs), f"gt({len(gts)}) != deform({len(dxs)})"
+    acc = {arm: {'mov': [], 'sta': []} for arm in ('static', 'oracle')}
+    mov_frac = []
+    for i, (gp, dp) in enumerate(zip(gts, dxs)):
+        gt = cv2.imread(gp).astype(np.float32) / 255.0
+        H, W = gt.shape[:2]
+        dx = np.load(dp)['dx'].astype(np.float32)                     # [gh,gw,3]
+        mag = torch.from_numpy(np.linalg.norm(dx, axis=-1))
+        m = F.interpolate(mag[None, None], size=(H, W), mode='bilinear', align_corners=True)[0, 0].numpy()
+        mov = m >= a.move_thresh
+        mov_frac.append(float(mov.mean()))
+        for arm, d in (('static', a.static_dir), ('oracle', a.oracle_dir)):
+            r = cv2.imread(os.path.join(d, f"{i:04d}.jpg"))
+            if r is None: continue
+            r = r.astype(np.float32) / 255.0
+            se = ((r - gt) ** 2).mean(axis=-1)
+            for key, msk in (('mov', mov), ('sta', ~mov)):
+                if msk.sum() > 100:
+                    acc[arm][key].append(-10 * np.log10(max(float(se[msk].mean()), 1e-12)))
+    print(f"[masked_eval] move_thresh={a.move_thresh} (|dx*| world units)  moving-pixel fraction: "
+          f"median {np.median(mov_frac):.3f}")
+    for arm in ('static', 'oracle'):
+        print(f"  {arm:7s}  MOVING-region PSNR {np.mean(acc[arm]['mov']):.3f}   "
+              f"STATIC-region PSNR {np.mean(acc[arm]['sta']):.3f}   (n={len(acc[arm]['mov'])})")
+    dm = np.mean(acc['oracle']['mov']) - np.mean(acc['static']['mov'])
+    dstat = np.mean(acc['oracle']['sta']) - np.mean(acc['static']['sta'])
+    print(f"  ORACLE-vs-STATIC: moving {dm:+.3f} dB | static {dstat:+.3f} dB "
+          f"-> {'FIELD PAYS RENT in moving regions' if dm > 3 * abs(dstat) and dm > 0.3 else 'gain NOT localised to motion -- inspect'}")
+
+
 def compare(a):
     """Pin-patch panel: GT vs static vs oracle crops at the largest-envelope pins."""
     import cv2
@@ -214,11 +251,17 @@ if __name__ == '__main__':
     ap.add_argument('--deform_scale', type=float, default=1.0)
     ap.add_argument('--smoke', action='store_true')
     ap.add_argument('--compare', nargs=2, metavar=('STATIC_DIR', 'ORACLE_DIR'), default=None)
+    ap.add_argument('--masked', nargs=2, metavar=('STATIC_DIR', 'ORACLE_DIR'), default=None)
     ap.add_argument('--gt_dir', default='data/Super/trail_3/rgb')
+    ap.add_argument('--deform_dir', default='data/Super/trail_3/deform')
+    ap.add_argument('--move_thresh', type=float, default=0.02, help='|dx*| (world units) above which a pixel counts as MOVING')
     ap.add_argument('--panel_out', default='output/oracle_ab/pin_panel.png')
     ap.add_argument('--n_pins', type=int, default=6)
     a = ap.parse_args()
-    if a.compare:
+    if a.masked:
+        a.static_dir, a.oracle_dir = a.masked
+        masked_eval(a)
+    elif a.compare:
         a.static_dir, a.oracle_dir = a.compare
         compare(a)
     else:
