@@ -70,9 +70,35 @@ fi
 # ---------- NAME -> CRCD-Published episode/snippet path (C1_001 -> C_1/snippet_001) ----------
 snip_src(){ local n=$1; local ep=${n%_*}; local sn=${n#*_}; echo "$DPUB/${ep:0:1}_${ep:1}/snippet_${sn}"; }
 
-# ---------- stage ONE snippet rectified (idempotent: .STAGED marker) ----------
+# ---------- stage ONE snippet rectified (idempotent: .STAGED marker + DRIVE tar cache) ----------
+# DRIVE STAGE CACHE: /content/ is EPHEMERAL, so without this every fresh instance re-rectifies +
+# re-runs MoGe (~50min for C3's 1527 frames). First successful staging tars the snippet (rights
+# EXCLUDED -- only the in-staging stereo anchor needs them) to dds_cache; later instances restore in
+# ~2-5min. STAGEVER must be BUMPED whenever preprocess/depth/anchor changes, else stale caches serve
+# old stagings (v2 = semantic_class era). STAGE_CACHE=0 disables restore+upload.
+STAGE_CACHE="${STAGE_CACHE:-1}"; STAGEVER=v2
+STAGE_CACHE_DIR=/content/drive/MyDrive/dds_cache/rect_staged
+_stage_upload(){ local NAME=$1 TGZ=$2   # tar the staged snippet (rights excluded) -> Drive, atomically via /tmp
+  mkdir -p "$STAGE_CACHE_DIR"
+  tar -cf "/tmp/${NAME}_$STAGEVER.tar" -C "$REPO/data/CRCD" --exclude="$NAME/video_frames/*r.png" "$NAME" \
+    && mv -f "/tmp/${NAME}_$STAGEVER.tar" "$TGZ" \
+    && say "  $NAME cache uploaded ($(du -h "$TGZ" | cut -f1))" \
+    || say "  WARN: cache upload failed (staging itself is fine)"
+}
 stage_rect(){ local NAME=$1 SRC; local DD="$REPO/data/CRCD/$NAME"; SRC=$(snip_src "$NAME")
-  [ -f "$DD/.STAGED" ] && { say "  $NAME already staged"; return 0; }
+  local TGZ="$STAGE_CACHE_DIR/${NAME}_$STAGEVER.tar"
+  if [ -f "$DD/.STAGED" ]; then
+    say "  $NAME already staged"
+    [ "$STAGE_CACHE" = "1" ] && [ ! -f "$TGZ" ] && { say "  $NAME uploading staged cache (backfill)"; _stage_upload "$NAME" "$TGZ"; }
+    return 0
+  fi
+  if [ "$STAGE_CACHE" = "1" ] && [ -f "$TGZ" ]; then
+    say "  $NAME RESTORING staged cache from Drive ($(du -h "$TGZ" | cut -f1))"
+    mkdir -p "$REPO/data/CRCD" && tar -xf "$TGZ" -C "$REPO/data/CRCD" \
+      && [ -f "$DD/.STAGED" ] && [ "$(ls "$DD/video_frames"/*l.png 2>/dev/null | wc -l)" -gt 0 ] \
+      && { say "  $NAME restored: $(ls "$DD/video_frames"/*l.png|wc -l) frames, $(ls "$DD/depth"/*.png|wc -l) depth"; return 0; } \
+      || say "  WARN: cache restore failed/incomplete -> staging fresh"
+  fi
   [ -d "$SRC/rgb" ] || { say "  FATAL: snippet rgb missing at $SRC"; return 1; }
   # RESUME: skip rectify / MoGe if COMPLETELY on disk (e.g. a re-run after an anchor-gate fix) -> straight to
   # anchor. Counts must match the source so a run stopped mid-rectify re-does it (no partial reuse).
@@ -107,6 +133,10 @@ PY
   $DINO_PY Addons/preprocess/derive_crcd_bounds.py --depth_dir "$DD/depth" --calib "$DD/rectified_calib.txt" --depth_scale $DEPTH_SCALE --name "$NAME" --out "$DD/bound.yaml" || { say "  FATAL bound"; return 1; }
   rm -rf "$DD/_mi" "$DD/_mo"; touch "$DD/.STAGED"
   say "  $NAME staged: $(ls "$DD/video_frames"/*l.png|wc -l) frames, $(ls "$DD/depth"/*.png|wc -l) depth, masks $(ls "$DD/masks"/*.png 2>/dev/null|wc -l)"
+  if [ "$STAGE_CACHE" = "1" ]; then
+    say "  $NAME uploading staged cache to Drive (rights excluded)"
+    _stage_upload "$NAME" "$TGZ"
+  fi
 }
 
 # ---------- assemble per-snippet config: template + seed/datadir/timesteps/bound/rectified-intrinsics ----------
