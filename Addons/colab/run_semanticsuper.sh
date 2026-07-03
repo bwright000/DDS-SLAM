@@ -332,7 +332,7 @@ edit('super/nodes.py', '[DDS-crcd-depthdump]',
      "        self.summary_writer.add_image('visualization/render', render_img_keypoints, self.time)\n",
      ins=("        _os3 = __import__('os'); _np3 = __import__('numpy'); _cv3 = __import__('cv2'); _t3 = __import__('torch')  # [DDS-crcd-depthdump]\n"
           "        _yD, _xD, _, _vD = pcd2depth(inputs, self.points)\n"
-          "        _zD = self.points[:, 2]\n"
+          "        _zD = self.points[:, 2].float()  # CRCD surfels are float64 -> cast to the float32 canvas\n"
           "        _oD = _t3.argsort(_zD, descending=True)\n"
           "        _yD, _xD, _zD, _vD = _yD[_oD], _xD[_oD], _zD[_oD], _vD[_oD]\n"
           "        _HD, _WD = inputs[(\"color\", 0)][0, 0].size()\n"
