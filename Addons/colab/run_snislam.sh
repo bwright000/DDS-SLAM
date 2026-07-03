@@ -47,7 +47,8 @@ CONDA_ROOT=${CONDA_ROOT:-/content/miniconda3}
 SNI_ENV=${SNI_ENV:-sni}; SNI_PY="$CONDA_ROOT/envs/$SNI_ENV/bin/python"
 ENV_CACHE=/content/drive/MyDrive/dds_cache/sni_env_bench.tar.gz
 STAGE_CACHE_DIR=/content/drive/MyDrive/dds_cache/rect_staged; STAGEVER=v2
-SEG_PTH=${SEG_PTH:-/content/drive/MyDrive/Outputs/seg/dinov2_crcd.pth}
+SEG_PTH=${SEG_PTH:-}                              # explicit override wins; else per-snippet resolution below
+SEG_DIR_DRIVE=${SEG_DIR_DRIVE:-/content/drive/MyDrive/Outputs/seg}
 SNI_GDRIVE_ID=1BCu8bCGKG9HmnLFbyx7DIHI0slgkeo4h   # authors' folder (dinov2 backbone zip fallback)
 DRIVE_OUT=${DRIVE_OUT:-/content/drive/MyDrive/Outputs/SNI-SLAM_bench_$DATE}
 GT_SEM=${GT_SEM:-0}
@@ -55,6 +56,22 @@ SNIPPETS=${SNIPPETS:-"E3_005 C1_001 C2_001 C3_001 G3_001"}   # shortest-first (E
 VERB=${1:-}
 
 say(){ echo ""; echo "[$(date +%H:%M:%S)] $*"; }
+
+# ---- per-snippet in-domain seg head (OUR trained DINOv2/14 heads; snippet HELD OUT) ----
+# Precedence: explicit SEG_PTH -> v2_b2 LOSO fold (improved recipe: aug+wce_dice+2 blocks,
+# this snippet excluded from training) -> v2_max LOSO fold (frozen recipe) -> the flat
+# 15-non-benchmark-snippet head -> loso_ref fold (old baseline recipe). dinov3 heads are
+# patch-16 and can NOT load into SNI's /14 DINO2SEG -> never resolved here.
+seg_head_for(){ local NAME=$1 c
+  for c in "${SEG_PTH:-}" \
+           "$SEG_DIR_DRIVE/loso_v2_b2/dinov2_crcd_${NAME}.pth" \
+           "$SEG_DIR_DRIVE/loso_v2_max/dinov2_crcd_${NAME}.pth" \
+           "$SEG_DIR_DRIVE/dinov2_crcd.pth" \
+           "$SEG_DIR_DRIVE/loso_ref/dinov2_crcd_${NAME}.pth"; do
+    [ -n "$c" ] && [ -f "$c" ] && { echo "$c"; return 0; }
+  done
+  return 1
+}
 
 # ---------------------------------------------------------------- env ----
 build_env(){
@@ -101,9 +118,18 @@ PY
     [ -n "$Z" ] && unzip -qo "$Z" -d "$SNI_REPO/seg/" || { say "FATAL: dinov2 backbone zip not obtained (gdown quota? fetch manually to $SNI_REPO/seg/)"; return 1; }
   fi
   if [ "$GT_SEM" != 1 ]; then
-    [ -f "$SEG_PTH" ] || { say "FATAL: in-domain seg head missing at $SEG_PTH (train_seg_head output). GT_SEM=1 to run the GT-mask ablation instead."; return 1; }
-    cp -f "$SEG_PTH" "$SNI_REPO/seg/dinov2_crcd.pth"
-    say "seg head: dinov2_crcd.pth (held-out on the benchmark 5) staged"
+    local MISS=""
+    for NAME in $SNIPPETS; do seg_head_for "$NAME" >/dev/null || MISS="$MISS $NAME"; done
+    [ -z "$MISS" ] || { say "FATAL: no in-domain seg head found for:$MISS
+  searched (in precedence order):
+    \$SEG_PTH                                   = '${SEG_PTH:-<unset>}'
+    $SEG_DIR_DRIVE/loso_v2_b2/dinov2_crcd_<SNIP>.pth   (v2_b2 LOSO, improved recipe -- PREFERRED)
+    $SEG_DIR_DRIVE/loso_v2_max/dinov2_crcd_<SNIP>.pth  (frozen-recipe LOSO)
+    $SEG_DIR_DRIVE/dinov2_crcd.pth                     (flat 15-snippet held-out head)
+    $SEG_DIR_DRIVE/loso_ref/dinov2_crcd_<SNIP>.pth     (old baseline-recipe LOSO)
+  (dinov3 _SWEEPONLY heads are /16 and NOT loadable into SNI's /14 DINO2SEG -- excluded.)
+  GT_SEM=1 to run the GT-mask ablation instead."; return 1; }
+    for NAME in $SNIPPETS; do say "seg head [$NAME]: $(seg_head_for "$NAME")"; done
   fi
   # DDS-harness eval deps in the SYSTEM python (no tinycudann needed for SNI eval)
   python3 -c "import lpips" 2>/dev/null || pip install -q lpips
@@ -191,6 +217,11 @@ run_one(){ local NAME=$1 SD="$SNI_REPO/data/CRCD/$NAME" OUTD="$SNI_REPO/output/C
   mkdir -p "$DST"
   [ -f "$DST/.DONE" ] && [ "${FORCE:-0}" != 1 ] && { say "$NAME done -> skip"; return 0; }
   stage_bridge "$NAME" || { echo "FAILED stage" > "$DST/status.txt"; return 1; }
+  if [ "$GT_SEM" != 1 ]; then   # stage THIS snippet's held-out head (sequential runs -> overwrite is safe)
+    local HEAD; HEAD=$(seg_head_for "$NAME") || { echo "FAILED no seg head" > "$DST/status.txt"; return 1; }
+    cp -f "$HEAD" "$SNI_REPO/seg/dinov2_crcd.pth"
+    echo "$HEAD" > "$DST/seg_head_provenance.txt"; say "$NAME seg head: $HEAD"
+  fi
   mk_sni_cfg "$NAME"   || { echo "FAILED cfg"   > "$DST/status.txt"; return 1; }
   # VRAM watcher (peak logging; SNI CRCD was only ever proven on A100)
   ( while true; do nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null; sleep 30; done \
