@@ -87,7 +87,8 @@ def dino_grid(rgb_bgr, dino_model, device):
 
 
 def agreement_gate(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
-                   n_groups=12, ransac_thresh=1.0, deadband=3.0, min_px=50, seed=0):
+                   n_groups=12, ransac_thresh=1.0, deadband=3.0, min_px=50, seed=0,
+                   return_detail=False):
     """The probe's per-region camera/scene test, as a frame-level signal. Pool flow into DINO regions
     and ask: do the per-region motion vectors AGREE with ONE rigid (camera) motion?
     Returns (cam_mag, disagree_frac):
@@ -107,6 +108,8 @@ def agreement_gate(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
     idx = np.linspace(0, len(p1) - 1, min(4000, len(p1))).astype(np.int64)
     F, _ = cv2.findFundamentalMat(p1[idx], p2[idx], cv2.FM_RANSAC, ransac_thresh, 0.999)
     if F is None or F.shape != (3, 3):
+        if return_detail:
+            return cam_mag, 0.0, np.full(n_groups, np.nan, np.float32)
         return cam_mag, 0.0                       # no fit -> treat as agreeing (rigid)
     resid = _sampson(F.astype(np.float64), p1, p2).reshape(H, W)
     # pool to DINO regions; count regions that disagree with the consensus
@@ -115,13 +118,17 @@ def agreement_gate(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,
     lab = KMeans(n_groups, n_init=4, random_state=seed).fit_predict(X).reshape(gh, gw).astype(np.uint8)
     lab = cv2.resize(lab, (W, H), interpolation=cv2.INTER_NEAREST)
     dis, tot = 0, 0
+    samp = np.full(n_groups, np.nan, np.float32)   # per-region median Sampson (detail dump)
     for k in range(n_groups):
         m = lab == k
         if m.sum() < min_px:
             continue
         tot += 1
-        if float(np.median(resid[m])) > deadband:
+        samp[k] = float(np.median(resid[m]))
+        if samp[k] > deadband:
             dis += 1
+    if return_detail:
+        return cam_mag, (dis / max(tot, 1)), samp
     return cam_mag, (dis / max(tot, 1))
 
 
@@ -361,6 +368,10 @@ def region_vote(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
         return None, np.ones((H, W), np.float32), lab
     info, wk = _vote_fit(fK, zK, pK, ok, W, H, still_floor_px=still_floor_px,
                          mad_c=mad_c, min_regions=min_regions)
+    # raw VOTES exposed for the offline rule-design dump (diag_vote_scan --dump): any candidate
+    # decision rule can be replayed on real frames without RAFT/DINO/GPU.
+    info['region_flow'] = fK.tolist(); info['region_depth'] = zK.tolist()
+    info['region_centroid'] = pK.tolist(); info['region_ok'] = ok.tolist()
     w = np.ones((H, W), np.float32)
     for k in range(n_groups):
         if ok[k]:

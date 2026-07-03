@@ -15,7 +15,10 @@
 # ============================================================================
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd); REPO=$(cd "$HERE/../.." && pwd); cd "$REPO"
-SNIPPETS="${SNIPPETS:-E3_005 C1_001}"
+# ALL 5 bench snippets: E3+C1 = rule DESIGN set; C2/C3/G3 = HELD-OUT validation (don't fit the rule
+# to the whole benchmark). Each scan also dumps <out>_votes.npz (per-region flow/depth/centroid/
+# residual + old-gate Sampson per frame) so candidate rules replay OFFLINE with no GPU.
+SNIPPETS="${SNIPPETS:-E3_005 C1_001 C2_001 C3_001 G3_001}"
 EVERY="${EVERY:-3}"
 STILL_FLOOR="${STILL_FLOOR:-0.5}"
 DRIVE=/content/drive/MyDrive/Outputs/vote_scan_$(date +%Y%m%d)

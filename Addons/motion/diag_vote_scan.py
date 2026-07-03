@@ -87,25 +87,36 @@ def main():
     gstep = np.linalg.norm(np.diff(GT, axis=0), axis=1) * 1000.0
 
     rows = []
+    NG = a.n_groups
+    dump = dict(frame=[], gt_mm=[], flow=[], depth=[], centroid=[], ok=[], resid=[], trust=[], sampson=[])
     for t in range(a.stride, len(files), a.every):
         cur = cv2.imread(files[t]); ref = cv2.imread(files[t - a.stride])
         depth = load_depth(dfiles[t - a.stride])                       # REF-frame depth (matches ref pixels)
         dg = dino_grid(cur, dino, dev)
-        # OLD gate (identical inputs to the champion runs)
-        cam, dis = agreement_gate(ref, cur, dg, raft, tf, dev,
-                                  n_groups=a.n_groups, ransac_thresh=1.0, deadband=a.deadband)
+        # OLD gate (identical inputs to the champion runs) + per-region Sampson detail
+        cam, dis, samp = agreement_gate(ref, cur, dg, raft, tf, dev, n_groups=NG,
+                                        ransac_thresh=1.0, deadband=a.deadband, return_detail=True)
         old_track = bool(cam > a.cam_thresh and dis <= a.disagree_thresh)
         # NEW vote (flow computed ref->cur inside; depth = ref frame)
         info, w, lab = region_vote(ref, cur, depth, dg, raft, tf, dev,
-                                   n_groups=a.n_groups, still_floor_px=a.still_floor_px)
+                                   n_groups=NG, still_floor_px=a.still_floor_px)
         if info is None:
             info = dict(moving=True, confidence=0.0, mag=0.0, turn=0.0, slide=0.0, zoom=0.0,
-                        n_valid=0, n_inliers=0)                        # degenerate -> track (never freeze blind)
+                        n_valid=0, n_inliers=0,                        # degenerate -> track (never freeze blind)
+                        region_flow=np.zeros((NG, 2)).tolist(), region_depth=np.zeros(NG).tolist(),
+                        region_centroid=np.zeros((NG, 2)).tolist(), region_ok=np.zeros(NG, bool).tolist(),
+                        region_resid=np.zeros(NG).tolist(), region_trust=np.ones(NG).tolist())
         g = float(gstep[min(t, len(gstep) - 1)])
         rows.append(dict(frame=t, gt_mm=g, old_cam=cam, old_dis=dis, old_track=int(old_track),
                          vote_moving=int(info['moving']), vote_mag=info['mag'], vote_conf=info['confidence'],
                          turn=info['turn'], slide=info['slide'], zoom=info['zoom'],
                          n_inl=info['n_inliers'], n_val=info['n_valid']))
+        # raw VOTES -> npz: replay ANY candidate rule offline (no GPU) against these frames
+        dump['frame'].append(t); dump['gt_mm'].append(g)
+        dump['flow'].append(info['region_flow']); dump['depth'].append(info['region_depth'])
+        dump['centroid'].append(info['region_centroid']); dump['ok'].append(info['region_ok'])
+        dump['resid'].append(info['region_resid']); dump['trust'].append(info['region_trust'])
+        dump['sampson'].append(samp.tolist())
         print(f"f{t:4d} GT={g:.3f}mm | old cam={cam:5.2f} dis={dis:.2f} track={int(old_track)} | "
               f"vote mag={info['mag']:5.2f} turn={info['turn']:4.2f} slide={info['slide']:4.2f} "
               f"zoom={info['zoom']:4.2f} moving={int(info['moving'])} inl={info['n_inliers']}/{info['n_valid']}")
@@ -122,6 +133,9 @@ def main():
     import csv as _csv
     with open(a.out + '.csv', 'w', newline='') as fh:
         wcsv = _csv.DictWriter(fh, fieldnames=list(rows[0].keys())); wcsv.writeheader(); wcsv.writerows(rows)
+    np.savez_compressed(a.out + '_votes.npz', stride=a.stride, every=a.every,
+                        wh=np.array(cur.shape[:2][::-1]),               # [W,H] for centroid normalisation
+                        **{k: np.asarray(v) for k, v in dump.items()})
 
     # ---- plot: GT + vote components + decisions (old vs new) ----
     T = R['frame']; still = ~gt_moving
