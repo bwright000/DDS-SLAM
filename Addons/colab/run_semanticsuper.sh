@@ -432,7 +432,7 @@ PY
   "$DDS_PY" -c "import lpips" 2>/dev/null || "$DDS_PY" -m pip install -q lpips 2>/dev/null
   rm -f "$OUT/render_eval.txt" "$OUT/render_eval.csv"
   PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/eval_rendering.py" --gt_dir "$OUT" --render_dir "$OUT" \
-     --sequence "CRCD-SuPer ($UP)" --output_csv "$OUT/render_eval.csv" --summary_csv "$OUT/render_eval.txt" \
+     --sequence "CRCD ($UP)" --output_csv "$OUT/render_eval.csv" --summary_csv "$OUT/render_eval.txt" \
      || echo "[$NAME] WARN eval_rendering"
   PYTHONPATH= "$DDS_PY" "$REPO/Addons/viz/generate_video.py" --rgb_input_dir "$OUT" --rgb_output_dir "$OUT" \
      --output "$OUT/video.mp4" 2>/dev/null || echo "[$NAME] WARN video"
