@@ -34,7 +34,7 @@ for NAME in $SNIPPETS; do
     OUT="$DRIVE/${NAME}_floor${SF}"
     echo "[vote-scan] ===== $NAME  still_floor_px=$SF ====="
     python Addons/motion/diag_vote_scan.py --frames_dir "$DD/video_frames" --depth_dir "$DD/depth" \
-      --gt "$DD/groundtruth.txt" --out "$OUT" --every "$EVERY" --still_floor_px "$SF" \
+      --gt "$DD/groundtruth.txt" --out "$OUT" --every "$EVERY" --still_floor_px "$SF" ${VIDEO:+--video} \
       2>&1 | tee "$OUT.log" | tail -25
   done
 done

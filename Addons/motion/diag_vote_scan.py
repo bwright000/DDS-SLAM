@@ -68,6 +68,9 @@ def main():
     ap.add_argument('--deadband', type=float, default=3.0)
     ap.add_argument('--gt_still_mm', type=float, default=0.05)
     ap.add_argument('--small', action='store_true', help='RAFT-small (fast)')
+    ap.add_argument('--video', action='store_true',
+                    help='ALSO write <out>_votes.mp4: the DEMOCRACY overlay -- district boundaries + '
+                         'per-district vote arrows (color=trust) + tally banner, on the real frames')
     a = ap.parse_args()
 
     import torch
@@ -89,6 +92,7 @@ def main():
     rows = []
     NG = a.n_groups
     dump = dict(frame=[], gt_mm=[], flow=[], depth=[], centroid=[], ok=[], resid=[], trust=[], sampson=[])
+    vw = None   # --video writer, opened lazily on the first frame
     for t in range(a.stride, len(files), a.every):
         cur = cv2.imread(files[t]); ref = cv2.imread(files[t - a.stride])
         depth = load_depth(dfiles[t - a.stride])                       # REF-frame depth (matches ref pixels)
@@ -120,6 +124,33 @@ def main():
         print(f"f{t:4d} GT={g:.3f}mm | old cam={cam:5.2f} dis={dis:.2f} track={int(old_track)} | "
               f"vote mag={info['mag']:5.2f} turn={info['turn']:4.2f} slide={info['slide']:4.2f} "
               f"zoom={info['zoom']:4.2f} moving={int(info['moving'])} inl={info['n_inliers']}/{info['n_valid']}")
+        # --- THE DEMOCRACY OVERLAY: district boundaries + per-district vote arrows on the real frame ---
+        if a.video and 'region_flow' in info:
+            vis = cur.copy()
+            Hh, Ww = vis.shape[:2]
+            edges = (cv2.Laplacian(lab.astype(np.float32), cv2.CV_32F) != 0)
+            vis[edges] = (255, 255, 255)                                   # district boundaries
+            rf = np.asarray(info['region_flow']); rc = np.asarray(info['region_centroid'])
+            rt = np.asarray(info['region_trust']); rok = np.asarray(info['region_ok'])
+            for k in range(NG):
+                if not rok[k]: continue
+                x, y = int(rc[k, 0]), int(rc[k, 1])
+                u, v = rf[k]; m = float(np.hypot(u, v))
+                L = min(20 + m * 6, 120)                                   # arrow length ~ vote size
+                ex, ey = (int(x + u / m * L), int(y + v / m * L)) if m > 1e-6 else (x, y)
+                c = (int(60 + 195 * (1 - rt[k])), int(60 + 195 * rt[k]), 40)   # BGR: green=trusted, red=dissident
+                cv2.arrowedLine(vis, (x, y), (ex, ey), c, 3, tipLength=0.3)
+                cv2.putText(vis, f"{m:.1f}", (x + 4, y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45, c, 1)
+            gt_moving = g >= a.gt_still_mm
+            banner = (f"f{t}  GT:{'MOVING' if gt_moving else 'STILL'} {g:.2f}mm | vote q10-era mag={info['mag']:.1f} "
+                      f"turn={info['turn']:.1f} slide={info['slide']:.1f} zoom={info['zoom']:.1f} "
+                      f"-> {'MOVING' if info['moving'] else 'STILL'} | old cam={cam:.1f} dis={dis:.2f}")
+            col = (0, 200, 0) if (bool(info['moving']) == bool(gt_moving)) else (0, 0, 255)
+            cv2.rectangle(vis, (0, 0), (Ww, 26), (0, 0, 0), -1)
+            cv2.putText(vis, banner, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
+            if vw is None:
+                vw = cv2.VideoWriter(a.out + '_votes.mp4', cv2.VideoWriter_fourcc(*'mp4v'), 10, (Ww, Hh))
+            vw.write(vis)
 
     R = {k: np.array([r[k] for r in rows]) for k in rows[0]}
     gt_moving = R['gt_mm'] >= a.gt_still_mm
@@ -136,6 +167,8 @@ def main():
     np.savez_compressed(a.out + '_votes.npz', stride=a.stride, every=a.every,
                         wh=np.array(cur.shape[:2][::-1]),               # [W,H] for centroid normalisation
                         **{k: np.asarray(v) for k, v in dump.items()})
+    if vw is not None:
+        vw.release(); print('wrote', a.out + '_votes.mp4')
 
     # ---- plot: GT + vote components + decisions (old vs new) ----
     T = R['frame']; still = ~gt_moving
