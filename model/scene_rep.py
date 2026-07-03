@@ -175,7 +175,7 @@ class JointEncoding(nn.Module):
             return self.decoder(embed, embe_pos, embed_color)
         return self.decoder(embed, embe_pos)
     
-    def run_network(self, inputs, oracle_w=None, surf_w=None):
+    def run_network(self, inputs, oracle_w=None, surf_w=None, oracle_dx=None):
         """
         Run the network on a batch of inputs.
 
@@ -185,6 +185,11 @@ class JointEncoding(nn.Module):
                       oracle routing. When given, Δx is multiplied by w broadcast
                       over samples (routes deformation to w>0 regions + w-weights
                       the field's gradient). None = ungated (default, upstream).
+            oracle_dx: [N_rays, 3] ORACLE deformation (the baked teacher Δx*, canonical = X_0 - X_t),
+                      broadcast constant along each ray (surface-attached approximation). Bypasses
+                      time_net entirely -- the "given a CORRECT field, does the render improve?"
+                      experiment (Addons/experiments/oracle_field_trainer.py). Takes precedence over
+                      deformation_off. None = default (parity).
         Returns:
             outputs: [N_rays, N_samples, 4]
         """
@@ -199,7 +204,10 @@ class JointEncoding(nn.Module):
             # turning the deformation field OFF without retraining.  Required
             # for Tests 0/2/5 (depth-floor, tool-cancellation, strain).
             # Default: False (normal SLAM behavior unchanged).
-            if self.config.get('deformation_off', False):
+            if oracle_dx is not None:
+                vox_motion = oracle_dx.reshape(inputs.shape[0], 1, 3).expand(
+                    inputs.shape[0], inputs.shape[1], 3).reshape(-1, 3).to(pts.dtype)
+            elif self.config.get('deformation_off', False):
                 vox_motion = torch.zeros(pts.shape[0], 3, device=pts.device, dtype=pts.dtype)
             else:
                 embed_time = self.embed_time(frame_time)
@@ -379,7 +387,7 @@ class JointEncoding(nn.Module):
 
         return torch.sigmoid(raw_color)
 
-    def render_rays(self, rays_o, rays_d, target_d=None, oracle_w=None):
+    def render_rays(self, rays_o, rays_d, target_d=None, oracle_w=None, oracle_dx=None):
         '''
         Params:
             rays_o: [N_rays, 3]
@@ -433,7 +441,7 @@ class JointEncoding(nn.Module):
         if _sb and _sb > 0 and target_d is not None:
             _trunc_w = self.config['training']['trunc'] * self.config['data'].get('sc_factor', 1.0)
             surf_w = torch.exp(-((z_vals - target_d) / (_sb * _trunc_w + 1e-9)) ** 2)  # [N_rays, N_samples]
-        raw, edge_semantic, sigma2, geo_feat, def_reg = self.run_network(pts, oracle_w=oracle_w, surf_w=surf_w)
+        raw, edge_semantic, sigma2, geo_feat, def_reg = self.run_network(pts, oracle_w=oracle_w, surf_w=surf_w, oracle_dx=oracle_dx)
         # ARM-2 Inc-1: raw2outputs returns an 8th element (sigma2_map) ONLY when
         # sigma2 is not None (uncertainty head on); otherwise the 7-tuple unpack
         # below is byte-identical to base.
@@ -463,7 +471,7 @@ class JointEncoding(nn.Module):
             # NOTE: n_importance>0 branch is DEAD/BROKEN upstream (raw2outputs called
             # with wrong arity, edge_map undefined). Kept disabled via n_importance:0.
             # Unpack updated only to match run_network's new 4-tuple arity.
-            raw, edge_semantic, sigma2, geo_feat, def_reg = self.run_network(pts, oracle_w=oracle_w)
+            raw, edge_semantic, sigma2, geo_feat, def_reg = self.run_network(pts, oracle_w=oracle_w, oracle_dx=oracle_dx)
             rgb_map, disp_map, acc_map, weights, depth_map, depth_var, edge_map,edge_semantic_map = self.raw2outputs(raw, z_vals, self.config['training']['white_bkgd'])
 
         # Return rendering outputs
@@ -499,7 +507,7 @@ class JointEncoding(nn.Module):
 
         return ret
     
-    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None, track_ray_w=None, route_w=None, map_ray_w=None):
+    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None, track_ray_w=None, route_w=None, map_ray_w=None, oracle_dx=None):
         '''
         Params:
             rays_o: ray origins (Bs, 3)
@@ -524,7 +532,7 @@ class JointEncoding(nn.Module):
         # the same routing or the background co-adapts to a warp the render then re-applies.
         # The caller supplies a route_w matching the ray batch. route_w=None ⇒ unchanged base.
         oracle_w = route_w if route_w is not None else (target_edge_semantic if (self.config.get('oracle_routing', False) and target_edge_semantic is not None and not render_only) else None)
-        rend_dict = self.render_rays(rays_o, rays_d, target_d=target_d, oracle_w=oracle_w)
+        rend_dict = self.render_rays(rays_o, rays_d, target_d=target_d, oracle_w=oracle_w, oracle_dx=oracle_dx)
 
         # Inc-1 v2 (mode:'dino'): per-PIXEL DINO uncertainty. The per-point geo head is ABSENT in dino
         # mode (run_network returns sigma2=None -> render_rays writes no 'sigma2'); instead derive
