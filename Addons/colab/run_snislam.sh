@@ -184,7 +184,7 @@ PY
 # ---------------------------------------------- per-snippet config authoring
 mk_sni_cfg(){ local NAME=$1 DD="/content/rect_staged/$NAME" SD="$SNI_REPO/data/CRCD/$NAME" CFG="$SNI_REPO/configs/CRCD/bench_${NAME}.yaml"
   PYTHONPATH= "$SNI_PY" - "$NAME" "$DD" "$SD" "$CFG" "$GT_SEM" <<'PY' || return 1
-import glob, sys, yaml, cv2
+import glob, sys, yaml, cv2, os
 NAME, DD, SD, CFG, GT = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5] == "1"
 b = yaml.safe_load(open(f"{DD}/bound.yaml"))["mapping"]          # SAME bounds as the DDS arm
 img = cv2.imread(sorted(glob.glob(f"{SD}/rgb/rgb_*.png"))[0]); H, W = img.shape[:2]
@@ -207,8 +207,16 @@ cfg = {
                     "pretrained_model_path": ("seg/dinov2_replica.pth" if GT else "seg/dinov2_crcd.pth")}},
   "func": {"use_gt_semantic": bool(GT), "use_gt_pose": False},
 }
+# SNI defaults keyframe_device/feature_device to "cpu" (system RAM) to spare VRAM. On a T4 with
+# 12GB RAM but ~8GB free VRAM, that's inverted -> SNI_STORE_DEVICE=cuda:0 puts keyframe+feature
+# storage on the GPU, freeing the scarce RAM (the no-High-RAM path; long snippets may then hit VRAM).
+_sd = os.environ.get("SNI_STORE_DEVICE", "")
+if _sd:
+    cfg["keyframe_device"] = _sd
+    cfg["feature_device"] = _sd
 yaml.safe_dump(cfg, open(CFG, "w"), sort_keys=False)
-print(f"[cfg] {NAME}: HxW={H}x{W} fx={intr['fx']:.1f} bound={b['bound']} gt_sem={GT} -> {CFG}")
+print(f"[cfg] {NAME}: HxW={H}x{W} fx={intr['fx']:.1f} bound={b['bound']} gt_sem={GT} "
+      f"store_device={_sd or 'cpu(default)'} -> {CFG}")
 PY
 }
 
