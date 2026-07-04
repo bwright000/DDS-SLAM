@@ -143,9 +143,24 @@ print("[env] patched dinov2_seg.py sys.path -> in-repo segmentation/facebookrese
 PY
 }
 
+# patch (c): sem_gauss.py:22 imports TUMDataset from datasets.gradslam_datasets, but the repo ships NO
+# tum.py and __init__.py exports only Replica/Scannet -> ImportError at import time. It is DEAD for us
+# (get_dataset() routes dataset_name 'replica' -> ReplicaDataset; TUMDataset is never instantiated).
+# Alias it to GradSLAMDataset so the authors' broken import resolves. Idempotent + fail-loud.
+apply_tumdataset_patch(){
+  local F="$SEMGAUSS/datasets/gradslam_datasets/__init__.py"
+  [ -f "$F" ] || { echo "[env] FATAL $F missing (clone incomplete)"; return 1; }
+  if grep -q "TUMDataset" "$F"; then echo "[env] TUMDataset alias patch already applied"; return 0; fi
+  grep -q "from .basedataset import GradSLAMDataset" "$F" || {
+    echo "[env] FATAL __init__.py anchor gone (GradSLAMDataset import) -> inspect + update patch (c)"; return 1; }
+  printf '\n# [DDS] repo ships no tum.py; sem_gauss.py imports TUMDataset -> alias it (dead for the replica route).\nTUMDataset = GradSLAMDataset\n' >> "$F"
+  echo "[env] patched __init__.py -> TUMDataset = GradSLAMDataset (repo import fix)"
+}
+
 build_env(){
   [ -d "$SEMGAUSS/.git" ] || git clone "$SEMGAUSS_URL" "$SEMGAUSS" || { echo "FATAL clone $SEMGAUSS_URL"; exit 30; }
   apply_dinov2_path_patch || exit 30
+  apply_tumdataset_patch || exit 30
   if [ "${REBUILD_RAST:-0}" != 1 ] && [ -x "$ENV_PY" ] \
      && PYTHONPATH= "$ENV_PY" -c "import diff_gaussian_rasterization" 2>/dev/null; then
     echo "[env] $ENV_NAME ready (rasterizer imports; REBUILD_RAST=1 to recompile for this GPU)"; return 0; fi
