@@ -177,10 +177,18 @@ def main():
 
     R = {k: np.array([r[k] for r in rows]) for k in rows[0]}
     gt_moving = R['gt_mm'] >= a.gt_still_mm
+    # C' = the INCUMBENT decision rule (offline-designed, damage-calibrated): freeze iff the quietest
+    # districts are quiet (q10 < 2.5px @ stride 8) OR the chamber is majority-incoherent (dis3 > 0.5).
+    fl_, ok_, samp_ = np.asarray(dump['flow']), np.asarray(dump['ok']), np.asarray(dump['sampson'])
+    mag_ = np.linalg.norm(fl_, axis=-1)
+    q10_ = np.array([np.percentile(mag_[i][ok_[i]], 10) if ok_[i].sum() >= 4 else 99 for i in range(len(rows))])
+    dis_ = np.array([np.mean(samp_[i][ok_[i] & np.isfinite(samp_[i])] > 3.0) if ok_[i].sum() >= 4 else 0 for i in range(len(rows))])
+    cprime_moving = ~((q10_ < 2.5) | (dis_ > 0.5))
     res = dict(name=os.path.basename(a.out), n=len(rows), every=a.every, stride=a.stride,
                still_floor_px=a.still_floor_px,
                old=confusion(R['old_track'].astype(bool), gt_moving),
-               vote=confusion(R['vote_moving'].astype(bool), gt_moving))
+               vote_v1=confusion(R['vote_moving'].astype(bool), gt_moving),
+               cprime=confusion(cprime_moving, gt_moving))
     print(json.dumps(res, indent=2))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     json.dump(res, open(a.out + '.json', 'w'), indent=2)
