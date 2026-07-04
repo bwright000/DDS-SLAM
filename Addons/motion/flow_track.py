@@ -426,6 +426,44 @@ def _vote_fit(fK, zK, pK, ok, W, H, still_floor_px=0.5, mad_c=2.5, min_regions=5
     return info, wk
 
 
+def fit_rotation_field(pts, fl, f, c, iters=3, mad_c=2.5, floor_px=0.3):
+    """Constrained 'C': robust 3-dof ROTATIONAL flow-field fit (pure numpy, testable).
+
+    Pure camera rotation induces flow that is exactly a homography (K R K^-1) -- depth never
+    enters. Linearised (small per-window angles), with x'=x-cx, y'=y-cy:
+        u = wx*x'y'/f - wy*(f + x'^2/f) + wz*y'
+        v = wx*(f + y'^2/f) - wy*x'y'/f  - wz*x'
+    Linear in w -> lstsq + MAD-IRLS refit (tools/deformation drop out as outliers). The (x/f)^2
+    edge terms ARE the model, so the periphery signature is used to the extent it is measurable
+    (~34% edge boost at our ~60-deg FOV). Honest limit: field-wide coherent SCENE drag is
+    near-degenerate with a small pan at this FOV -- that class stays the map anchor's job.
+    Uses: (a) depth-free rotation SENSOR |w| (validate vs GT quats); (b) DE-ROTATION -- the
+    residual field is translation parallax + scene motion only, where x-depth equalisation
+    is actually valid (rotation is the regime where it provably hurts).
+
+    pts [N,2] px | fl [N,2] px flow over the window | f focal px | c (cx,cy).
+    Returns (omega [3] rad/window, pred [N,2] px, resid [N] px, inl [N] bool)."""
+    x = pts[:, 0].astype(np.float64) - c[0]; y = pts[:, 1].astype(np.float64) - c[1]
+    A = np.zeros((len(pts) * 2, 3), np.float64)
+    A[0::2, 0] = x * y / f;     A[0::2, 1] = -(f + x * x / f); A[0::2, 2] = y
+    A[1::2, 0] = f + y * y / f; A[1::2, 1] = -x * y / f;       A[1::2, 2] = -x
+    b = np.asarray(fl, np.float64).reshape(-1)
+    inl = np.ones(len(pts), bool); omega = np.zeros(3)
+    for _ in range(iters):
+        m2 = np.repeat(inl, 2)
+        omega = np.linalg.lstsq(A[m2], b[m2], rcond=None)[0]
+        r = np.linalg.norm((A @ omega).reshape(-1, 2) - fl, axis=1)
+        med = float(np.median(r[inl])); mad = float(np.median(np.abs(r[inl] - med)))
+        scale = max(1.4826 * mad, floor_px)
+        nxt = r <= med + mad_c * scale
+        if nxt.sum() < 6:
+            break
+        inl = nxt
+    pred = (A @ omega).reshape(-1, 2).astype(np.float32)
+    resid = np.linalg.norm(pred - np.asarray(fl, np.float64), axis=1).astype(np.float32)
+    return omega, pred, resid, inl
+
+
 def zero_motion_prior(c2w_est, prev_c2w, lam_r, lam_t):
     """[TRACKING, LEAN CORE] Constant-strength zero-motion prior on the per-frame RELATIVE pose (cur vs prev),
     added to the SDF tracking loss to kill noise-driven over-travel/jitter while letting real motion through.

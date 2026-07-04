@@ -29,8 +29,9 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'eval'))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 from sim3_ate import load_gt_tum  # noqa: E402
+from flow_diag import spearman  # noqa: E402
 from Addons.motion.flow_track import (load_raft, load_dino, agreement_gate,  # noqa: E402
-                                      dino_grid, region_vote)
+                                      dino_grid, region_vote, fit_rotation_field)
 
 
 def load_depth(path):
@@ -67,6 +68,8 @@ def main():
     ap.add_argument('--disagree_thresh', type=float, default=0.2)
     ap.add_argument('--deadband', type=float, default=3.0)
     ap.add_argument('--gt_still_mm', type=float, default=0.05)
+    ap.add_argument('--fx', type=float, default=1096.7,
+                    help='focal px for the 3-dof rotation-field fit (rectified CRCD default)')
     ap.add_argument('--small', action='store_true', help='RAFT-small (fast)')
     ap.add_argument('--video', action='store_true',
                     help='ALSO write <out>_votes.mp4: the DEMOCRACY overlay -- district boundaries + '
@@ -93,10 +96,16 @@ def main():
     assert len(dfiles) >= len(files), f"depth({len(dfiles)}) < frames({len(files)})"
     GT = load_gt_tum(a.gt)
     gstep = np.linalg.norm(np.diff(GT, axis=0), axis=1) * 1000.0
+    # GT quaternions (TUM cols 4:8) -> the rotation SENSOR's validation target, same [t-stride,t] window
+    _graw = np.loadtxt(a.gt, comments='#')
+    gquat = None
+    if _graw.ndim == 2 and _graw.shape[1] >= 8:
+        gquat = _graw[:, 4:8] / (np.linalg.norm(_graw[:, 4:8], axis=1, keepdims=True) + 1e-12)
 
     rows = []
     NG = a.n_groups
-    dump = dict(frame=[], gt_mm=[], flow=[], depth=[], centroid=[], ok=[], resid=[], trust=[], sampson=[])
+    dump = dict(frame=[], gt_mm=[], flow=[], depth=[], centroid=[], ok=[], resid=[], trust=[], sampson=[],
+                omega=[], rot_deg=[], rot_resid_med=[], rot_inl_frac=[], derot=[], gt_rot_deg=[])
     vw = None   # --video writer, opened lazily on the first frame
     from Addons.motion.flow_track import _raft_flow
     k_extra = [int(k) for k in a.k_list.split(',') if k.strip()] if a.k_list else []
@@ -127,6 +136,27 @@ def main():
                 kd['flow'].append(ik['region_flow']); kd['depth'].append(ik['region_depth'])
                 kd['centroid'].append(ik['region_centroid']); kd['ok'].append(ik['region_ok'])
                 kd['resid'].append(ik['region_resid']); kd['trust'].append(ik['region_trust'])
+        # CONSTRAINED-C: 3-dof rotational-field fit on the SAME shared flow (depth-free rotation
+        # sensor + de-rotation). Grid-sampled at stride 16; district labels sampled at the same
+        # grid pool the DE-ROTATED residual per district (the field where x-depth is actually valid).
+        Hf, Wf = _flow.shape[:2]
+        ys_g, xs_g = np.mgrid[0:Hf:16, 0:Wf:16]
+        pts_g = np.stack([xs_g.ravel(), ys_g.ravel()], 1).astype(np.float64)
+        fl_g = _flow[::16, ::16].reshape(-1, 2)
+        omega, pred_r, res_r, inl_r = fit_rotation_field(pts_g, fl_g, a.fx, (Wf / 2.0, Hf / 2.0))
+        rot_deg = float(np.degrees(np.linalg.norm(omega)))
+        lab_g = lab[ys_g.ravel(), xs_g.ravel()]
+        derot_k = [float(np.median(res_r[lab_g == k])) if int((lab_g == k).sum()) >= 8 else -1.0
+                   for k in range(NG)]
+        if gquat is not None:
+            q0, q1 = gquat[max(t - a.stride, 0)], gquat[min(t, len(gquat) - 1)]
+            gt_rot = float(np.degrees(2.0 * np.arccos(min(abs(float((q0 * q1).sum())), 1.0))))
+        else:
+            gt_rot = float('nan')
+        dump['omega'].append(omega.tolist()); dump['rot_deg'].append(rot_deg)
+        dump['rot_resid_med'].append(float(np.median(res_r[inl_r])) if inl_r.any() else -1.0)
+        dump['rot_inl_frac'].append(float(inl_r.mean()))
+        dump['derot'].append(derot_k); dump['gt_rot_deg'].append(gt_rot)
         if info is None:
             info = dict(moving=True, confidence=0.0, mag=0.0, turn=0.0, slide=0.0, zoom=0.0,
                         n_valid=0, n_inliers=0,                        # degenerate -> track (never freeze blind)
@@ -137,7 +167,8 @@ def main():
         rows.append(dict(frame=t, gt_mm=g, old_cam=cam, old_dis=dis, old_track=int(old_track),
                          vote_moving=int(info['moving']), vote_mag=info['mag'], vote_conf=info['confidence'],
                          turn=info['turn'], slide=info['slide'], zoom=info['zoom'],
-                         n_inl=info['n_inliers'], n_val=info['n_valid']))
+                         n_inl=info['n_inliers'], n_val=info['n_valid'],
+                         rot_deg=round(rot_deg, 4), gt_rot_deg=round(gt_rot, 4)))
         # raw VOTES -> npz: replay ANY candidate rule offline (no GPU) against these frames
         dump['frame'].append(t); dump['gt_mm'].append(g)
         dump['flow'].append(info['region_flow']); dump['depth'].append(info['region_depth'])
@@ -146,7 +177,8 @@ def main():
         dump['sampson'].append(samp.tolist())
         print(f"f{t:4d} GT={g:.3f}mm | old cam={cam:5.2f} dis={dis:.2f} track={int(old_track)} | "
               f"vote mag={info['mag']:5.2f} turn={info['turn']:4.2f} slide={info['slide']:4.2f} "
-              f"zoom={info['zoom']:4.2f} moving={int(info['moving'])} inl={info['n_inliers']}/{info['n_valid']}")
+              f"zoom={info['zoom']:4.2f} moving={int(info['moving'])} inl={info['n_inliers']}/{info['n_valid']} | "
+              f"rot={rot_deg:5.3f}deg gtrot={gt_rot:5.3f} inl={int(100 * inl_r.mean())}%")
         # --- THE DEMOCRACY OVERLAY: district boundaries + per-district vote arrows on the real frame ---
         if a.video and 'region_flow' in info:
             vis = cur.copy()
@@ -189,6 +221,17 @@ def main():
                old=confusion(R['old_track'].astype(bool), gt_moving),
                vote_v1=confusion(R['vote_moving'].astype(bool), gt_moving),
                cprime=confusion(cprime_moving, gt_moving))
+    # ROTATION-SENSOR validation: does the flow-fitted |omega| track the GT rotation step?
+    # rho = timing (rank), est/gt = ABSOLUTE gain on GT-moving windows (rotation has no scale
+    # ambiguity, so ~1.0 means the sensor is metrically right, not just correlated).
+    om_, gr_ = np.asarray(dump['rot_deg']), np.asarray(dump['gt_rot_deg'])
+    if np.isfinite(gr_).all() and len(om_) > 3:
+        gmv = gt_moving
+        res['rot_sensor'] = dict(rho=round(abs(spearman(om_, gr_)), 3),
+                                 est_over_gt_moving=round(float(np.median(om_[gmv]) / (np.median(gr_[gmv]) + 1e-9)), 2)
+                                 if gmv.any() else None,
+                                 med_est_deg=round(float(np.median(om_)), 4),
+                                 med_gt_deg=round(float(np.median(gr_)), 4))
     print(json.dumps(res, indent=2))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     json.dump(res, open(a.out + '.json', 'w'), indent=2)
