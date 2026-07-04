@@ -216,9 +216,24 @@ build_env(){
   echo "[env] GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1) compute_cap=$CC -> arch $ARCH"
   local PYBIND_INC; PYBIND_INC=$(PYTHONPATH= "$ENV_PY" -c "import pybind11; print(pybind11.get_include())" 2>/dev/null)
   echo "[env] pybind11 include: $PYBIND_INC"
+  # CUDA 11.6 nvcc supports host GCC <=10, but Colab's default is GCC 11 -> the rasterizer's
+  # rasterizer_impl.cu fails ("parameter packs not expanded with '...'" in std_function.h). Install
+  # gcc/g++-10 and route nvcc's host compiler (CUDAHOSTCXX) + the C++ steps (CC/CXX) through it.
+  # (SGS builds fine on GCC 11 because it's cu118, which accepts GCC 11; cu116 does not.)
+  local HOSTENV=""
+  if ! command -v g++-10 >/dev/null 2>&1; then
+    echo "[env] installing gcc-10/g++-10 (CUDA 11.6 nvcc needs host GCC<=10; Colab default is 11)"
+    sudo apt-get -qq update >/dev/null 2>&1 && sudo apt-get -qq install -y gcc-10 g++-10 >/dev/null 2>&1 || true
+  fi
+  if command -v g++-10 >/dev/null 2>&1; then
+    HOSTENV="CUDAHOSTCXX=$(command -v g++-10) CC=$(command -v gcc-10) CXX=$(command -v g++-10)"
+    echo "[env] nvcc host compiler -> $(command -v g++-10)"
+  else
+    echo "[env] WARN g++-10 unavailable -> rasterizer build may fail (GCC11 vs CUDA11.6)"
+  fi
   echo "[env] in-repo rasterizer build (VERBOSE; arch=$ARCH) -> $SEMGAUSS/diff-gaussian-rasterization-w-depth_sem_gauss"
   PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="$ARCH" \
-     CPATH="${PYBIND_INC}${CPATH:+:$CPATH}" \
+     CPATH="${PYBIND_INC}${CPATH:+:$CPATH}" $HOSTENV \
      "$ENV_PY" -m pip install --no-build-isolation --force-reinstall --no-deps -v \
      "$SEMGAUSS/diff-gaussian-rasterization-w-depth_sem_gauss" 2>&1 | tee /content/semgauss_rasterizer_build.log
   PYTHONPATH= "$ENV_PY" -c "import diff_gaussian_rasterization" 2>/dev/null \
