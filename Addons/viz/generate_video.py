@@ -121,11 +121,12 @@ def load_trajectory(est_path, gt_path=None, gt_frames=None):
             if line.startswith('#'):
                 continue
             vals = list(map(float, line.strip().split()))
-            if len(vals) == 8:
+            if len(vals) == 8:                       # TUM: ts tx ty tz qx qy qz qw
                 est_xyz.append(vals[1:4])
-            elif len(vals) == 12:
-                c2w = np.array(vals).reshape(3, 4)
-                est_xyz.append(c2w[:3, 3])
+            elif len(vals) == 12:                    # 3x4 row-major c2w -> t at [3,7,11]
+                est_xyz.append([vals[3], vals[7], vals[11]])
+            elif len(vals) == 16:                    # 4x4 row-major c2w (sni_export/depth_l1 convention)
+                est_xyz.append([vals[3], vals[7], vals[11]])
     est_xyz = np.array(est_xyz)
 
     gt_xyz = None
@@ -525,7 +526,11 @@ def main():
             panel_lengths[k] = len(v)
     if args.trajectory_est:
         est_xyz, gt_xyz = load_trajectory(args.trajectory_est, args.trajectory_gt)
-        if args.gt_frame_slice:
+        if est_xyz.ndim != 2 or len(est_xyz) < 2:    # unparseable/degenerate -> skip the trajectory panels, don't crash the whole video
+            print(f"WARN: trajectory_est parsed {len(est_xyz)} poses from {args.trajectory_est} "
+                  f"(expected N>=2 lines of 8/12/16 floats) -> skipping trajectory panels")
+            args.trajectory_est = None
+        elif args.gt_frame_slice:
             gt_all = []
             with open(args.trajectory_gt) as f:
                 for line in f:
@@ -536,9 +541,9 @@ def main():
                         gt_all.append(vals[1:4])
             gt_all = np.array(gt_all)
             gt_xyz = eval(f"gt_all[{args.gt_frame_slice}]")[:len(est_xyz)]
-        if not args.skip_horn_traj:
+        if args.trajectory_est and not args.skip_horn_traj:
             panel_lengths['Trajectory (Sim3-aligned)'] = len(est_xyz)
-        if args.trajectory_raw:
+        if args.trajectory_est and args.trajectory_raw:
             panel_lengths['Trajectory Raw'] = len(est_xyz)
 
     n_frames = max(panel_lengths.values()) if panel_lengths else 0
