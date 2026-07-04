@@ -196,12 +196,14 @@ for ln in open(f"{DD}/rectified_calib.txt"):
     if len(p) >= 2 and p[0] in ("fx", "fy", "cx", "cy"):
         intr[p[0]] = float(p[1])
 assert all(k in intr for k in ("fx", "fy", "cx", "cy")), intr
-# CRCD metric depth is ~0.1m -- 8x smaller than SNI's stable regime (June worked at ~0.8m). Neural SLAM
-# is NOT scale-invariant: at 0.1m the tracker over-scales 130x -> map built outside the bounds -> black
-# renders. SNI_SLAM.py:160 multiplies bound+depth+pose all by cfg['scale'] CONSISTENTLY, so scale is a
-# single clean lever to lift the scene into SNI's regime. truncation lives in the scaled frame -> scale it
-# too (~0.006*scale ~= Replica's 0.06 at scale~10). Sim3 eval removes the global scale, so ATE is unaffected.
-_scale = float(os.environ.get("SNI_SCALE", "1"))          # REFUTED as a fix (tracker render-loss is scale-INVARIANT: scale=8 gave byte-identical Sim3 + worse PSNR + OOM). Default off; kept for experiments.
+# CRCD metric depth is ~0.1m. The GT-pose ablation (SNI_GT_POSE=1) proved the SDF/geometry forms fine at
+# this scale (sharp rendered depth, PSNR 9->11.2) -> the earlier BLACK renders were TRACKER over-travel
+# (est path ~2.6x GT), NOT scale. SNI_SCALE is REFUTED as a fix: the tracker render-loss is scale-INVARIANT
+# (scale=8 gave byte-identical Sim3 + worse PSNR + OOM). The REMAINING issue is a COLOUR wash (grey RGB,
+# sharp depth): the RGB decoder cats the DINO semantic feature (decoders.py:117-119), so colour rides on the
+# seg head. GT_SEM couples head+target -> GT_SEM=1 (Replica head + GT-mask target) == June's coloured config;
+# GT_SEM=0 (loso 4-class head + DINO argmax) == the wash. Under investigation.
+_scale = float(os.environ.get("SNI_SCALE", "1"))          # REFUTED as a fix (see above). Default off; kept for experiments.
 _gtpose = os.environ.get("SNI_GT_POSE", "0") == "1"       # ablation: map+track at GT poses (render ceiling)
 cfg = {
   "inherit_from": "configs/CRCD/crcd_sni_base.yaml",
