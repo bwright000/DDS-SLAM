@@ -20,6 +20,12 @@ Two MODES (--mode):
   rectified — the ORIGINAL path: rgb + semantic from preprocess_crcd_published (already
            rectified), MoGe depth rectified here with the SAME left map, intrinsics from
            rectified_calib.txt. Selected by the runbook when ALLOW_RECTIFIED=1.
+  semgauss — SAME rectified inputs + transforms as `rectified`, but writes the SemGauss
+           gradslam ReplicaDataset tree instead: rgb/rgb_{i:06d}.png (PNG, NOT jpg),
+           depth/depth_{i:06d}.png (underscore mandatory), semantic_remap/semantic_{i:06d}.png,
+           traj.txt, + emit_yaml. Requires --staged + --calib_pkl. Used by run_semgauss.sh
+           (Arm-4 method #3). One semantic PNG per rgb -> the loader's unconditional
+           semantic_paths[index] stays 1:1 by construction.
 
 Pairing is BY SORTED INDEX in both modes (depth files are 000000.png... sequential; rgb/sem
 share order, not basenames). Prints np.unique(semantic) so the class count is confirmed.
@@ -200,8 +206,11 @@ def _nsort(paths):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--mode', choices=['rawleft', 'rectified'], default='rawleft',
-                    help='rawleft (DEFAULT, policy) or rectified (guarded)')
+    ap.add_argument('--mode', choices=['rawleft', 'rectified', 'semgauss'], default='rawleft',
+                    help='rawleft (DEFAULT) | rectified (SGS ReplicaDataset layout) | '
+                         'semgauss (SemGauss ReplicaDataset layout: rgb/rgb_*.png depth/depth_*.png '
+                         'semantic_remap/semantic_*.png). semgauss uses the SAME rectified inputs as '
+                         'rectified (--staged + --calib_pkl), only the output tree differs.')
     # rawleft inputs
     ap.add_argument('--rgb_dir', help='[rawleft] raw rgb dir (frame_*.png)')
     ap.add_argument('--sem_dir', help='[rawleft] raw semantic_instance dir (frame_*.png uint16)')
@@ -219,14 +228,18 @@ def main():
     ap.add_argument('--emit_yaml', default=None)
     a = ap.parse_args()
 
-    for sub in ('frames', 'depths', 'semantic_ids', 'semantic_colors'):
+    # SemGauss ReplicaDataset globs a DIFFERENT tree than SGS (rgb/rgb_*.png, depth/depth_*.png,
+    # semantic_remap/*.png — CONFIRMED SemGauss datasets/gradslam_datasets/replica.py:44-52).
+    _dirs = ('rgb', 'depth', 'semantic_remap') if a.mode == 'semgauss' \
+        else ('frames', 'depths', 'semantic_ids', 'semantic_colors')
+    for sub in _dirs:
         os.makedirs(os.path.join(a.out, sub), exist_ok=True)
 
     deps = _nsort(glob.glob(os.path.join(a.moge_depth, '*.png')))
 
-    if a.mode == 'rectified':
+    if a.mode in ('rectified', 'semgauss'):
         if not a.staged or not a.calib_pkl:
-            ap.error("--mode rectified requires --staged and --calib_pkl")
+            ap.error(f"--mode {a.mode} requires --staged and --calib_pkl")
         rgbs = _nsort(glob.glob(os.path.join(a.staged, 'video_frames', '*l.png')))
         sems = _nsort(glob.glob(os.path.join(a.staged, 'semantic_class', '*.png')))
         gt = _read_gt(os.path.join(a.staged, 'groundtruth.txt'))
@@ -251,13 +264,16 @@ def main():
     traj = []
     rgb = None
     for i in range(n):
-        # ---- rgb -> frames/frame{i}.jpg ----
+        # ---- rgb ----  SGS: frames/frame{i}.jpg   SemGauss: rgb/rgb_{i}.png (PNG mandatory)
         rgb = cv2.imread(rgbs[i], cv2.IMREAD_COLOR)
-        cv2.imwrite(os.path.join(a.out, 'frames', f'frame{i:06d}.jpg'), rgb)
+        if a.mode == 'semgauss':
+            cv2.imwrite(os.path.join(a.out, 'rgb', f'rgb_{i:06d}.png'), rgb)
+        else:
+            cv2.imwrite(os.path.join(a.out, 'frames', f'frame{i:06d}.jpg'), rgb)
 
-        # ---- depth -> depths/depth{i}.png ----
+        # ---- depth ----  SGS: depths/depth{i}.png   SemGauss: depth/depth_{i}.png (underscore)
         dep = cv2.imread(deps[i], cv2.IMREAD_UNCHANGED)
-        if a.mode == 'rectified':
+        if a.mode in ('rectified', 'semgauss'):
             # rectify with the SAME left map (NEAREST preserves depth values)
             if dep.shape[:2] != mlx.shape[:2]:
                 dep = cv2.resize(dep, (mlx.shape[1], mlx.shape[0]),
@@ -268,9 +284,12 @@ def main():
         elif dep.shape[:2] != rgb.shape[:2]:
             dep = cv2.resize(dep, (rgb.shape[1], rgb.shape[0]),
                              interpolation=cv2.INTER_NEAREST)
-        cv2.imwrite(os.path.join(a.out, 'depths', f'depth{i:06d}.png'), dep.astype(np.uint16))
+        if a.mode == 'semgauss':
+            cv2.imwrite(os.path.join(a.out, 'depth', f'depth_{i:06d}.png'), dep.astype(np.uint16))
+        else:
+            cv2.imwrite(os.path.join(a.out, 'depths', f'depth{i:06d}.png'), dep.astype(np.uint16))
 
-        # ---- semantic -> semantic_ids (id) + semantic_colors (LUT) ----
+        # ---- semantic ----  SGS: semantic_ids + semantic_colors   SemGauss: semantic_remap (id only)
         sem = cv2.imread(sems[i], cv2.IMREAD_UNCHANGED)
         if sem.ndim == 3:
             sem = sem[..., 0]
@@ -279,10 +298,15 @@ def main():
             sem = cv2.resize(sem, (rgb.shape[1], rgb.shape[0]),
                              interpolation=cv2.INTER_NEAREST)
         uniq.update(np.unique(sem).tolist())
-        cv2.imwrite(os.path.join(a.out, 'semantic_ids', f'semantic_id{i:06d}.png'), sem)
-        col = LUT[np.clip(sem, 0, len(LUT) - 1)]                       # RGB
-        cv2.imwrite(os.path.join(a.out, 'semantic_colors', f'semantic_color{i:06d}.png'),
-                    cv2.cvtColor(col, cv2.COLOR_RGB2BGR))
+        if a.mode == 'semgauss':
+            # SemGauss uses GT masks as loader INPUT only (not supervision under use_gt_semantic=False);
+            # one PNG per rgb -> the loader's unconditional semantic_paths[index] stays 1:1 by construction.
+            cv2.imwrite(os.path.join(a.out, 'semantic_remap', f'semantic_{i:06d}.png'), sem)
+        else:
+            cv2.imwrite(os.path.join(a.out, 'semantic_ids', f'semantic_id{i:06d}.png'), sem)
+            col = LUT[np.clip(sem, 0, len(LUT) - 1)]                       # RGB
+            cv2.imwrite(os.path.join(a.out, 'semantic_colors', f'semantic_color{i:06d}.png'),
+                        cv2.cvtColor(col, cv2.COLOR_RGB2BGR))
 
         # ---- TUM pose -> 4x4 c2w line ----
         g = gt[i]
@@ -296,7 +320,7 @@ def main():
           f"{'bg present' if 0 in uniq else 'NO bg class - consider n_classes=3'})")
 
     if a.emit_yaml:
-        if a.mode == 'rectified':
+        if a.mode in ('rectified', 'semgauss'):
             kv = read_rectified_calib(os.path.join(a.staged, 'rectified_calib.txt'))
             fx, fy, cx, cy = kv['fx'], kv['fy'], kv['cx'], kv['cy']
             h = int(kv.get('height', rgb.shape[0])); w = int(kv.get('width', rgb.shape[1]))
