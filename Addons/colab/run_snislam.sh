@@ -196,18 +196,24 @@ for ln in open(f"{DD}/rectified_calib.txt"):
     if len(p) >= 2 and p[0] in ("fx", "fy", "cx", "cy"):
         intr[p[0]] = float(p[1])
 assert all(k in intr for k in ("fx", "fy", "cx", "cy")), intr
+# CRCD metric depth is ~0.1m -- 8x smaller than SNI's stable regime (June worked at ~0.8m). Neural SLAM
+# is NOT scale-invariant: at 0.1m the tracker over-scales 130x -> map built outside the bounds -> black
+# renders. SNI_SLAM.py:160 multiplies bound+depth+pose all by cfg['scale'] CONSISTENTLY, so scale is a
+# single clean lever to lift the scene into SNI's regime. truncation lives in the scaled frame -> scale it
+# too (~0.006*scale ~= Replica's 0.06 at scale~10). Sim3 eval removes the global scale, so ATE is unaffected.
+_scale = float(os.environ.get("SNI_SCALE", "8"))          # 0.1m*8 = ~0.8m (June's proven regime)
+_gtpose = os.environ.get("SNI_GT_POSE", "0") == "1"       # ablation: map+track at GT poses (render ceiling)
 cfg = {
   "inherit_from": "configs/CRCD/crcd_sni_base.yaml",
+  "scale": _scale,
   "mapping": {"bound": b["bound"], "marching_cubes_bound": b["marching_cubes_bound"]},
   "data": {"input_folder": f"data/CRCD/{NAME}/", "output": f"output/CRCD/bench_{NAME}"},
   "cam": {"H": H, "W": W, "fx": intr["fx"], "fy": intr["fy"], "cx": intr["cx"], "cy": intr["cy"],
           "png_depth_scale": 10000, "crop_edge": 0},
-  # depth is already METRIC (every-120 stereo anchor, sc=1) -> truncation at surgical scale,
-  # NOT the 0.06 Replica anchor (fork note: set 0.01 manually when bypassing Phase 3.7).
-  "model": {"truncation": 0.01,
+  "model": {"truncation": round(0.006 * _scale, 4),
             "cnn": {"n_classes": 4,
                     "pretrained_model_path": ("seg/dinov2_replica.pth" if GT else "seg/dinov2_crcd.pth")}},
-  "func": {"use_gt_semantic": bool(GT), "use_gt_pose": False},
+  "func": {"use_gt_semantic": bool(GT), "use_gt_pose": _gtpose},
 }
 # SNI defaults keyframe_device/feature_device to "cpu" (system RAM) to spare VRAM. On a T4 with
 # 12GB RAM but ~8GB free VRAM, that's inverted -> SNI_STORE_DEVICE=cuda:0 puts keyframe+feature
@@ -217,8 +223,8 @@ if _sd:
     cfg["keyframe_device"] = _sd
     cfg["feature_device"] = _sd
 yaml.safe_dump(cfg, open(CFG, "w"), sort_keys=False)
-print(f"[cfg] {NAME}: HxW={H}x{W} fx={intr['fx']:.1f} bound={b['bound']} gt_sem={GT} "
-      f"store_device={_sd or 'cpu(default)'} -> {CFG}")
+print(f"[cfg] {NAME}: HxW={H}x{W} fx={intr['fx']:.1f} bound={b['bound']} scale={_scale} "
+      f"trunc={round(0.006*_scale,4)} gt_pose={_gtpose} gt_sem={GT} store_device={_sd or 'cpu(default)'} -> {CFG}")
 PY
 }
 
