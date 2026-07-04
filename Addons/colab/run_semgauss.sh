@@ -159,8 +159,13 @@ build_env(){
   # accept Anaconda ToS (defaults channels) if the gate is present (known Colab trap)
   conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main 2>/dev/null || true
   conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
-  conda env list | grep -q "^$ENV_NAME " || conda create -y -n "$ENV_NAME" -c conda-forge python=3.10 \
+  conda env list | grep -q "^$ENV_NAME " || conda create -y -n "$ENV_NAME" -c conda-forge python=3.10 pip setuptools wheel \
      || { echo "FATAL conda create"; exit 30; }
+  # conda-forge's python does NOT bundle pip -> every `$ENV_PY -m pip` = "No module named pip".
+  # Ensure it explicitly (idempotent; ALSO repairs an env created before this line existed).
+  PYTHONPATH= "$ENV_PY" -m pip --version >/dev/null 2>&1 \
+     || conda install -y -n "$ENV_NAME" -c conda-forge pip setuptools wheel \
+     || { echo "FATAL: pip not installable into $ENV_NAME"; exit 30; }
   # Install BY NAME / via "$ENV_PY -m pip" - do NOT rely on `conda activate` (on Colab the PATH
   # never switches and system py site-packages leak in via PYTHONPATH). PYTHONPATH= isolates the
   # env's py3.10 from Colab's system packages (mixing them segfaults / ModuleNotFound).
