@@ -629,6 +629,11 @@ PY
      --npz "$NPZ" --out "$OUT/est_c2w_data.txt" \
      || { echo "FAILED npz->est" > "$OUT/status.txt"; touch "$OUT/.FAILED"; return 1; }
   [ -s "$OUT/est_c2w_data.txt" ] || { echo "FAILED empty est" > "$OUT/status.txt"; touch "$OUT/.FAILED"; return 1; }
+  # persist the checkpoint (Gaussian map) to Drive too -> lets us re-render / reproduce without re-running
+  # SLAM (survives a Colab restart). Set SAVE_CKPT=0 to skip (long snippets -> large npz).
+  [ "${SAVE_CKPT:-1}" = 1 ] && { cp -f "$NPZ" "$OUT/params.npz" 2>/dev/null \
+     && echo "[$UP] ckpt -> $OUT/params.npz ($(du -h "$NPZ" 2>/dev/null | cut -f1))" \
+     || echo "[$UP] WARN ckpt copy to Drive failed"; }
 
   # 14) render-rename: gs_%04d.png -> $OUT/{idx}.jpg ; GT sibling rgb/rgb_%06d.png -> $OUT/{idx}_gt.png
   PYTHONPATH= "$DDS_PY" - "$REN_RGB" "$scene_dir/rgb" "$OUT" <<'PY'
