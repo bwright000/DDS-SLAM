@@ -216,6 +216,12 @@ assert all(k in intr for k in ("fx", "fy", "cx", "cy")), intr
 # GT_SEM=0 (loso 4-class head + DINO argmax) == the wash. Under investigation.
 _scale = float(os.environ.get("SNI_SCALE", "1"))          # REFUTED as a fix (see above). Default off; kept for experiments.
 _gtpose = os.environ.get("SNI_GT_POSE", "0") == "1"       # ablation: map+track at GT poses (render ceiling)
+# T4 RESOURCE CAP (not a faithfulness knob): pixels is a memory/quality knob. The authors' faithful
+# values (tracking 2000 / mapping 4000) can OOM a RAM-limited T4. Setting SNI_TRACK_PIXELS/SNI_MAP_PIXELS
+# caps ONLY the per-iter ray budget while lr/const_speed/joint_opt/iters/keyframe cadence stay faithful.
+# Default = unset -> authors' values (fully faithful). Document any cap as a T4 hardware limit.
+_trk_px = os.environ.get("SNI_TRACK_PIXELS", "")
+_map_px = os.environ.get("SNI_MAP_PIXELS", "")
 cfg = {
   "inherit_from": "configs/CRCD/crcd_sni_base.yaml",
   "scale": _scale,
@@ -239,9 +245,12 @@ _sd = os.environ.get("SNI_STORE_DEVICE", "")
 if _sd:
     cfg["keyframe_device"] = _sd
     cfg["feature_device"] = _sd
+if _map_px: cfg["mapping"]["pixels"] = int(_map_px)          # T4 cap; else inherits authors' 4000
+if _trk_px: cfg.setdefault("tracking", {})["pixels"] = int(_trk_px)   # T4 cap; else inherits authors' 2000
 yaml.safe_dump(cfg, open(CFG, "w"), sort_keys=False)
 print(f"[cfg] {NAME}: HxW={H}x{W} fx={intr['fx']:.1f} bound={b['bound']} scale={_scale} "
-      f"trunc={round(0.01*_scale,4)} gt_pose={_gtpose} gt_sem={GT} store_device={_sd or 'cpu(default)'} -> {CFG}")
+      f"trunc={round(0.01*_scale,4)} gt_pose={_gtpose} gt_sem={GT} store_device={_sd or 'cpu(default)'} "
+      f"pixels=trk:{_trk_px or 'auth2000'}/map:{_map_px or 'auth4000'} -> {CFG}")
 PY
 }
 
