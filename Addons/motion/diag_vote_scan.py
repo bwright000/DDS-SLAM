@@ -235,6 +235,12 @@ def main():
     print(json.dumps(res, indent=2))
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     json.dump(res, open(a.out + '.json', 'w'), indent=2)
+    # C' PER-FRAME COLUMNS in the csv: the json's headline rule was previously invisible here
+    # (q10/dis3 lived only in the npz) -- the csv showed v1's vote_moving next to a json counting
+    # C' freezes, which read as a csv-vs-json contradiction. One file, all three rules.
+    for i, r in enumerate(rows):
+        r['q10'] = round(float(q10_[i]), 3); r['dis3'] = round(float(dis_[i]), 3)
+        r['cprime_moving'] = int(cprime_moving[i])
     import csv as _csv
     with open(a.out + '.csv', 'w', newline='') as fh:
         wcsv = _csv.DictWriter(fh, fieldnames=list(rows[0].keys())); wcsv.writeheader(); wcsv.writerows(rows)
