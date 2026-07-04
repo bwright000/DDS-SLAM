@@ -934,7 +934,7 @@ class DDSSLAM():
                 _tr = float(torch.trace(_og_prev[:3, :3].T @ c2w_gt[:3, :3]))
                 _rot_deg = float(np.degrees(np.arccos(np.clip((_tr - 1.0) / 2.0, -1.0, 1.0))))
                 if _dt_mm <= float(self.config['tracking'].get('oracle_still_mm', 1e-4)) and \
-                   _rot_deg <= float(self.config['tracking'].get('oracle_still_deg', 1e-4)):
+                   _rot_deg <= float(self.config['tracking'].get('oracle_still_deg', 1e-2)):
                     self.est_c2w_data[frame_id] = self.est_c2w_data[int(frame_id) - 1].detach().clone()
                     if frame_id % self.config['mapping']['keyframe_every'] != 0:
                         _kf = (frame_id // self.config['mapping']['keyframe_every']) * self.config['mapping']['keyframe_every']

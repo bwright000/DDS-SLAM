@@ -6,5 +6,7 @@
 inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
 tracking:
   oracle_gate: true
-  oracle_still_mm: 0.0001
-  oracle_still_deg: 0.0001
+  oracle_still_mm: 0.0001    # matches flow_diag gstill (translation step); the 128/208 bit-still GT rows
+  oracle_still_deg: 0.01     # loose guard ABOVE the GT quat-quantization floor (0.00023deg) and FAR below
+                             # real rotation (~0.26deg median). On this RCM rig dt=0 => no real rotation, so
+                             # translation already fixes 'still'; this only blocks a hypothetical pure-pivot.
