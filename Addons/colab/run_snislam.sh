@@ -157,14 +157,25 @@ import glob, os, sys
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 DD, SD = sys.argv[1], sys.argv[2]
-rgb  = sorted(glob.glob(f"{DD}/video_frames/*l.png"))
-dep  = sorted(glob.glob(f"{DD}/depth/[0-9]*.png"))
-sem  = sorted(glob.glob(f"{DD}/semantic_class/*.png"))
+import re
+def _fid(p):  # frame-id = trailing digit run in the basename (robust to unpadded names)
+    m = re.findall(r'\d+', os.path.basename(p)); return int(m[-1]) if m else -1
+rgb  = sorted(glob.glob(f"{DD}/video_frames/*l.png"), key=_fid)   # numeric sort (lexicographic breaks on unpadded ids)
+dep  = sorted(glob.glob(f"{DD}/depth/[0-9]*.png"), key=_fid)
+sem  = sorted(glob.glob(f"{DD}/semantic_class/*.png"), key=_fid)
 gt   = [l.split() for l in open(f"{DD}/groundtruth.txt") if l.strip() and not l.startswith('#')]
 n = min(len(rgb), len(dep), len(sem), len(gt))
 assert n > 0, f"empty staging: rgb={len(rgb)} dep={len(dep)} sem={len(sem)} gt={len(gt)}"
 if not (len(rgb) == len(dep) == len(sem) == len(gt)):
     print(f"[bridge] WARN count mismatch rgb={len(rgb)} dep={len(dep)} sem={len(sem)} gt={len(gt)} -> truncating to {n}")
+# CRITICAL (audit 2026-07-04): modalities are paired BY POSITION below. If depth/semantic are not 1:1
+# per-frame with rgb (e.g. depth sampled sparsely), rgb[i]/dep[i]/sem[i] would be DIFFERENT frames and the
+# loader's own equal-count assert still passes -> SILENT rgb-vs-depth-vs-pose misalignment. Guard it:
+_rid, _did, _sid = [_fid(p) for p in rgb[:n]], [_fid(p) for p in dep[:n]], [_fid(p) for p in sem[:n]]
+_mis = [(i, _rid[i], _did[i], _sid[i]) for i in range(n) if not (_rid[i] == _did[i] == _sid[i])]
+assert not _mis, (f"[bridge] FRAME-ID MISALIGNMENT at {len(_mis)} idx (first: idx {_mis[0][0]} "
+                  f"rgb#{_mis[0][1]} dep#{_mis[0][2]} sem#{_mis[0][3]}). depth/semantic not 1:1 per-frame "
+                  f"with rgb -> re-stage {DD} with one depth+semantic per rgb frame.")
 for sub in ("rgb", "depth", "semantic_class"):
     os.makedirs(f"{SD}/{sub}", exist_ok=True)
 for i in range(n):
@@ -208,7 +219,11 @@ _gtpose = os.environ.get("SNI_GT_POSE", "0") == "1"       # ablation: map+track 
 cfg = {
   "inherit_from": "configs/CRCD/crcd_sni_base.yaml",
   "scale": _scale,
-  "mapping": {"bound": b["bound"], "marching_cubes_bound": b["marching_cubes_bound"]},
+  # GT-pose ablation must be a TRUE GT-pose run: freeze SNI's joint pose BA. Mapper.py:469 has NO
+  # use_gt_pose guard, so joint_opt otherwise drifts the GT poses during mapping (path-ratio ~2.6
+  # even at GT poses). Normal runs keep joint_opt=True (authors' faithful default).
+  "mapping": {"bound": b["bound"], "marching_cubes_bound": b["marching_cubes_bound"],
+              **({"joint_opt": False} if _gtpose else {})},
   "data": {"input_folder": f"data/CRCD/{NAME}/", "output": f"output/CRCD/bench_{NAME}"},
   "cam": {"H": H, "W": W, "fx": intr["fx"], "fy": intr["fy"], "cx": intr["cx"], "cy": intr["cy"],
           "png_depth_scale": 10000, "crop_edge": 0},
