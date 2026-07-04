@@ -58,14 +58,14 @@ VERB=${1:-}
 say(){ echo ""; echo "[$(date +%H:%M:%S)] $*"; }
 
 # ---- per-snippet in-domain seg head (OUR trained DINOv2/14 heads; snippet HELD OUT) ----
-# Precedence: explicit SEG_PTH -> v2_b2 LOSO fold (improved recipe: aug+wce_dice+2 blocks,
-# this snippet excluded from training) -> v2_max LOSO fold (frozen recipe) -> the flat
-# 15-non-benchmark-snippet head -> loso_ref fold (old baseline recipe). dinov3 heads are
-# patch-16 and can NOT load into SNI's /14 DINO2SEG -> never resolved here.
+# Precedence (user-set canonical 2026-07-04): explicit SEG_PTH -> loso_v2_max fold (CANONICAL:
+# the complete LOSO fold set, so all snippets use ONE recipe -> a consistent benchmark) ->
+# loso_v2_b2 fold -> flat 15-snippet head -> loso_ref fold. dinov3 heads are patch-16 and
+# can NOT load into SNI's /14 DINO2SEG -> never resolved here.
 seg_head_for(){ local NAME=$1 c
   for c in "${SEG_PTH:-}" \
-           "$SEG_DIR_DRIVE/loso_v2_b2/dinov2_crcd_${NAME}.pth" \
            "$SEG_DIR_DRIVE/loso_v2_max/dinov2_crcd_${NAME}.pth" \
+           "$SEG_DIR_DRIVE/loso_v2_b2/dinov2_crcd_${NAME}.pth" \
            "$SEG_DIR_DRIVE/dinov2_crcd.pth" \
            "$SEG_DIR_DRIVE/loso_ref/dinov2_crcd_${NAME}.pth"; do
     [ -n "$c" ] && [ -f "$c" ] && { echo "$c"; return 0; }
@@ -110,26 +110,28 @@ assert torch.cuda.is_available(), 'no CUDA'
 print('[env] torch', torch.__version__, '| pytorch3d', pytorch3d.__version__, '| GPU', torch.cuda.get_device_name(0))
 PY
   # ---- seg assets ----
-  if [ ! -d "$SNI_REPO/seg/facebookresearch_dinov2_main" ]; then
-    say "fetching DINOv2 backbone code (authors' Drive folder)"
+  # DINOv2 backbone CODE (always -> sys.path for DINO2SEG) + the Replica head weights
+  # (only the GT_SEM=1 path torch.loads seg/dinov2_replica.pth; the trained-head path carries its
+  # own backbone in dinov2_crcd.pth). Fetch+place BOTH so either path works.
+  if [ ! -d "$SNI_REPO/seg/facebookresearch_dinov2_main" ] || [ ! -f "$SNI_REPO/seg/dinov2_replica.pth" ]; then
+    say "fetching DINOv2 backbone code + Replica head (authors' Drive folder)"
     pip install -q gdown 2>/dev/null
     gdown --folder "https://drive.google.com/drive/folders/$SNI_GDRIVE_ID" -O /tmp/snidl --remaining-ok 2>/dev/null || true
     Z=$(find /tmp/snidl -name 'facebookresearch_dinov2_main.zip' | head -1)
-    [ -n "$Z" ] && unzip -qo "$Z" -d "$SNI_REPO/seg/" || { say "FATAL: dinov2 backbone zip not obtained (gdown quota? fetch manually to $SNI_REPO/seg/)"; return 1; }
+    [ -n "$Z" ] && unzip -qo "$Z" -d "$SNI_REPO/seg/"
+    for f in dinov2_replica.pth semantic_classes.pkl num_semantic_class.pkl; do
+      S=$(find /tmp/snidl -name "$f" | head -1); [ -n "$S" ] && cp -f "$S" "$SNI_REPO/seg/$f"
+    done
+    { [ -d "$SNI_REPO/seg/facebookresearch_dinov2_main" ] && [ -f "$SNI_REPO/seg/dinov2_replica.pth" ]; } \
+      || { say "FATAL: DINOv2 backbone/head not obtained (gdown quota? fetch manually into $SNI_REPO/seg/)"; return 1; }
   fi
   if [ "$GT_SEM" != 1 ]; then
-    local MISS=""
-    for NAME in $SNIPPETS; do seg_head_for "$NAME" >/dev/null || MISS="$MISS $NAME"; done
-    [ -z "$MISS" ] || { say "FATAL: no in-domain seg head found for:$MISS
-  searched (in precedence order):
-    \$SEG_PTH                                   = '${SEG_PTH:-<unset>}'
-    $SEG_DIR_DRIVE/loso_v2_b2/dinov2_crcd_<SNIP>.pth   (v2_b2 LOSO, improved recipe -- PREFERRED)
-    $SEG_DIR_DRIVE/loso_v2_max/dinov2_crcd_<SNIP>.pth  (frozen-recipe LOSO)
-    $SEG_DIR_DRIVE/dinov2_crcd.pth                     (flat 15-snippet held-out head)
-    $SEG_DIR_DRIVE/loso_ref/dinov2_crcd_<SNIP>.pth     (old baseline-recipe LOSO)
-  (dinov3 _SWEEPONLY heads are /16 and NOT loadable into SNI's /14 DINO2SEG -- excluded.)
-  GT_SEM=1 to run the GT-mask ablation instead."; return 1; }
-    for NAME in $SNIPPETS; do say "seg head [$NAME]: $(seg_head_for "$NAME")"; done
+    local MISS="" FOUND="" H
+    for NAME in $SNIPPETS; do
+      if H=$(seg_head_for "$NAME"); then say "seg head [$NAME]: $H"; FOUND="$FOUND $NAME"; else MISS="$MISS $NAME"; fi
+    done
+    [ -n "$MISS" ] && say "WARN: no in-domain seg head for:$MISS -> those snippets will be SKIPPED (isolated). Train the fold or run them GT_SEM=1. Canonical source: $SEG_DIR_DRIVE/loso_v2_max/ ."
+    [ -n "$FOUND" ] || { say "FATAL: no seg head for ANY snippet -> check $SEG_DIR_DRIVE/loso_v2_max/, or GT_SEM=1 for the GT-mask ablation."; return 1; }
   fi
   # DDS-harness eval deps in the SYSTEM python (no tinycudann needed for SNI eval)
   python3 -c "import lpips" 2>/dev/null || pip install -q lpips
