@@ -1,0 +1,14 @@
+# C' VOTE, BOTH consumers (thesis #3 in full): FREEZE confident-still frames AND down-weight deforming
+# rays on the frames it tracks. Completes the vote-consumer bake-off: vote (freeze only) | vote_trust
+# (trust only) | vote_both (freeze + trust). freeze_ba off here (isolate the freeze+trust combination
+# from the BA-hold; add later if it wins).
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+flow_track:
+  enable: true
+  mode: vote
+  ref_stride: 8
+  n_groups: 12
+  vote_freeze: true        # freeze confident-still (q10|dis3)
+  vote_trust: true         # AND down-weight deforming rays on tracked frames
+  q10_px: 2.5
+  dis3_frac: 0.5

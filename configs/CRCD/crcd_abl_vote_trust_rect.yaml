@@ -1,0 +1,14 @@
+# C' VOTE as a TRACKING DOWN-WEIGHT (NEW, exclude-don't-freeze). The vote's per-region trust map w
+# (deforming/tool regions = fit outliers -> low trust) is fed as a per-ray weight into the RGB pose
+# solve (which owns ~100% of the tracking gradient). NO freezing -> tracking stays continuous (no
+# cold-start lurch, no BA keyframe jitter). This is the moving-frame lever for E3 (fundamental
+# moving-frame over-travel; freezing is a dead-end there) and operationalizes thesis #3 (one signal,
+# two consumers). Label-free (no seg mask). A/B: vs vote (freeze only) and vote_both (freeze+trust).
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+flow_track:
+  enable: true
+  mode: vote
+  ref_stride: 8
+  n_groups: 12
+  vote_freeze: false       # do NOT freeze -- pure down-weight
+  vote_trust: true         # region trust w -> per-ray tracking down-weight

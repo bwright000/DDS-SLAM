@@ -1046,7 +1046,7 @@ class DDSSLAM():
                                                  n_groups=int(_ft.get('n_groups', 12)),
                                                  ransac_thresh=float(_ft.get('ransac_thresh', 1.0)),
                                                  deadband=float(_ft.get('deadband', 3.0)), return_detail=True)
-                    _vinfo, _, _ = region_vote(ref_bgr, cur_bgr, ref_depth, _dg, self._raft, self._raft_tf,
+                    _vinfo, _vw, _ = region_vote(ref_bgr, cur_bgr, ref_depth, _dg, self._raft, self._raft_tf,
                                                self.device, n_groups=int(_ft.get('n_groups', 12)), flow=_flow)
                     if _vinfo is None:
                         _q10, _dis3 = 99.0, 0.0            # degenerate chamber -> track (never freeze blind)
@@ -1056,7 +1056,17 @@ class DDSSLAM():
                         _q10 = float(np.percentile(_vmag[_vok], 10)) if int(_vok.sum()) >= 4 else 99.0
                         _sv = np.asarray(_samp)[_vok]
                         _dis3 = float(np.mean(_sv[np.isfinite(_sv)] > 3.0)) if int(_vok.sum()) >= 4 else 0.0
-                    _vg_freeze = (_q10 < float(_ft.get('q10_px', 2.5))) or (_dis3 > float(_ft.get('dis3_frac', 0.5)))
+                    # C' uses the vote signal TWO ways (thesis #3, one signal two consumers):
+                    #   vote_freeze (default ON) -> confident-still FREEZE (the gate);
+                    #   vote_trust  (default off) -> feed the region trust map w as a per-ray tracking
+                    #       DOWN-WEIGHT (exclude-don't-freeze: deforming/tool regions -> low trust in the
+                    #       pose solve). E3 = moving-frame disease where freezing is a dead-end -> trust w/o
+                    #       freeze keeps tracking continuous (no cold-start, no BA jitter) + damps deform rays.
+                    if _ft.get('vote_trust', False):
+                        self._trust_map = _vw
+                        track_w_map = torch.from_numpy(_vw[iH:-iH, iW:-iW])
+                    _vg_freeze = _ft.get('vote_freeze', True) and (
+                        (_q10 < float(_ft.get('q10_px', 2.5))) or (_dis3 > float(_ft.get('dis3_frac', 0.5))))
                     self._flowlog(['frame', 'q10', 'dis3', 'freeze'],
                                   [frame_id, round(_q10, 3), round(_dis3, 3), int(_vg_freeze)])
                     if _vg_freeze:
@@ -1069,7 +1079,8 @@ class DDSSLAM():
                         print(f"[vote_gate] f{frame_id}: q10={_q10:.2f} dis3={_dis3:.2f} -> FROZEN total={self._vg_frozen}")
                         return
                     elif frame_id % 30 == 0:
-                        print(f"[vote_gate] f{frame_id}: q10={_q10:.2f} dis3={_dis3:.2f} -> track")
+                        print(f"[vote_gate] f{frame_id}: q10={_q10:.2f} dis3={_dis3:.2f} -> track "
+                              f"(trust={'on' if _ft.get('vote_trust', False) else 'off'})")
                 elif _ft.get('gate', False):
                     if _ft.get('agreement', False):
                         # PER-REGION AGREEMENT (the probe in the loop): pool flow into DINO regions, do the
