@@ -113,8 +113,8 @@ PY
   # DINOv2 backbone CODE (always -> sys.path for DINO2SEG) + the Replica head weights
   # (only the GT_SEM=1 path torch.loads seg/dinov2_replica.pth; the trained-head path carries its
   # own backbone in dinov2_crcd.pth). Fetch+place BOTH so either path works.
-  if [ ! -d "$SNI_REPO/seg/facebookresearch_dinov2_main" ] || [ ! -f "$SNI_REPO/seg/dinov2_replica.pth" ]; then
-    say "fetching DINOv2 backbone code + Replica head (authors' Drive folder)"
+  if [ ! -d "$SNI_REPO/seg/facebookresearch_dinov2_main" ] || { [ "$GT_SEM" = 1 ] && [ ! -f "$SNI_REPO/seg/dinov2_replica.pth" ]; }; then
+    say "fetching DINOv2 backbone code$([ "$GT_SEM" = 1 ] && echo ' + Replica head') (authors' Drive folder)"
     pip install -q gdown 2>/dev/null
     gdown --folder "https://drive.google.com/drive/folders/$SNI_GDRIVE_ID" -O /tmp/snidl --remaining-ok 2>/dev/null || true
     Z=$(find /tmp/snidl -name 'facebookresearch_dinov2_main.zip' | head -1)
@@ -122,8 +122,8 @@ PY
     for f in dinov2_replica.pth semantic_classes.pkl num_semantic_class.pkl; do
       S=$(find /tmp/snidl -name "$f" | head -1); [ -n "$S" ] && cp -f "$S" "$SNI_REPO/seg/$f"
     done
-    { [ -d "$SNI_REPO/seg/facebookresearch_dinov2_main" ] && [ -f "$SNI_REPO/seg/dinov2_replica.pth" ]; } \
-      || { say "FATAL: DINOv2 backbone/head not obtained (gdown quota? fetch manually into $SNI_REPO/seg/)"; return 1; }
+    [ -d "$SNI_REPO/seg/facebookresearch_dinov2_main" ] || { say "FATAL: DINOv2 backbone code not obtained (gdown quota? fetch manually into $SNI_REPO/seg/)"; return 1; }
+    { [ "$GT_SEM" = 1 ] && [ ! -f "$SNI_REPO/seg/dinov2_replica.pth" ]; } && { say "FATAL: dinov2_replica.pth not obtained but GT_SEM=1 needs it (fetch manually into $SNI_REPO/seg/)"; return 1; } || true
   fi
   if [ "$GT_SEM" != 1 ]; then
     local MISS="" FOUND="" H
