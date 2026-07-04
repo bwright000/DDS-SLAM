@@ -30,7 +30,8 @@ declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=${BEST_
   [prior]=configs/CRCD/crcd_abl_prior_rect.yaml \
   [cons]=configs/CRCD/crcd_abl_cons_rect.yaml [unc]=configs/CRCD/crcd_abl_unc_rect.yaml \
   [uncfix]=configs/CRCD/crcd_abl_uncfix_rect.yaml [still]=configs/CRCD/crcd_abl_still_rect.yaml \
-  [stillcons]=configs/CRCD/crcd_abl_stillcons_rect.yaml )   # BEST_CFG= override (T4). Arms: abl_*/l0*/dpool/pnp | prior (DDS_MP_LAM sweep) | cons=epoch-consistent poses | unc/uncfix=canon-confound A/B | still=MAP-ANCHORED freeze gate | stillcons=still+cons (ship candidate)
+  [stillcons]=configs/CRCD/crcd_abl_stillcons_rect.yaml [vote]=configs/CRCD/crcd_abl_vote_rect.yaml \
+  [oracle]=configs/CRCD/crcd_abl_oracle_rect.yaml )   # BEST_CFG= override (T4). Arms: abl_*/l0*/dpool/pnp | prior (DDS_MP_LAM sweep) | cons=epoch-consistent poses | unc/uncfix=canon-confound A/B | still=MAP-ANCHORED gate (v1 FAILED bench) | stillcons=still+cons | vote=C' LIVE (q10|dis3) | oracle=GT-perfect freezes (ceiling, diagnostic)
 PARALLEL="${PARALLEL:-1}"; NPROC=$(nproc 2>/dev/null||echo 8); THREADS=$(( NPROC/PARALLEL>0 ? NPROC/PARALLEL : 1 ))
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256 LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
@@ -60,11 +61,11 @@ python -c 'from moge.model.v2 import MoGeModel' 2>/dev/null || { say "installing
 python -c "import lpips" 2>/dev/null || pip install -q lpips || true
 # best arm needs the champion config + RAFT/DINOv2 (flow_agree gate). Validate the config + pre-warm the weights
 # ONCE here so parallel best jobs don't each re-download.
-if echo " $ARMS " | grep -q " best "; then
+if echo " $ARMS " | grep -qE " (best|vote) "; then
   [ -f configs/CRCD/crcd_best_rect.yaml ] || { say "FATAL: configs/CRCD/crcd_best_rect.yaml missing (best arm)"; exit 1; }
-  python - <<'PY' 2>&1 | tail -1 || say "WARN: RAFT/DINO prewarm failed (best arm may redownload per job)"
+  python - <<'PY' 2>&1 | tail -1 || say "WARN: RAFT/DINO prewarm failed (best/vote arm may redownload per job)"
 import torch; from Addons.motion.flow_track import load_raft, load_dino
-d=torch.device('cuda'); load_raft(d); load_dino(d); print("RAFT+DINOv2 prewarmed for the best arm")
+d=torch.device('cuda'); load_raft(d); load_dino(d); print("RAFT+DINOv2 prewarmed for the best/vote arm")
 PY
 fi
 

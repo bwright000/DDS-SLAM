@@ -87,7 +87,7 @@ class DDSSLAM():
             self._dino = None
             with torch.random.fork_rng(devices=(list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [])):
                 self._raft, self._raft_tf = load_raft(self.device, bool(_ft.get('raft_small', False)))
-                if _ft.get('agreement', False) or _ft.get('residual', 'sampson') == 'rigid' or _ft.get('mode', '') in ('depth_pool', 'solve_pnp'):   # agreement gate, L0 region-pool, and the new depth_pool/solve_pnp modes all need DINO (fork_rng -> parity-safe)
+                if _ft.get('agreement', False) or _ft.get('residual', 'sampson') == 'rigid' or _ft.get('mode', '') in ('depth_pool', 'solve_pnp', 'vote'):   # agreement gate, L0 region-pool, and the depth_pool/solve_pnp/vote modes all need DINO (fork_rng -> parity-safe)
                     from Addons.motion.flow_track import load_dino
                     self._dino = load_dino(self.device)
             self._flow_buf = deque(maxlen=int(_ft.get('ref_stride', 8)))
@@ -921,6 +921,28 @@ class DDSSLAM():
             elif frame_id % 30 == 0:
                 print(f"[still_gate] frame {frame_id} track ({_sg_info})")
 
+        # ORACLE GATE (diagnostic-only, default off, uses GT -> NEVER ships): freeze iff the GT pose
+        # did not move this step (translation <= oracle_still_mm AND rotation <= oracle_still_deg;
+        # defaults match flow_diag's gstill = step <= 1e-4mm, i.e. the bit-identical GT rows). Bounds
+        # the value of ANY freeze detector: base vs C'-live vs oracle = achieved vs CEILING. Same
+        # freeze mechanics as the gates so the comparison is apples-to-apples.
+        if self.config['tracking'].get('oracle_gate', False):
+            _og_prev = getattr(self, '_oracle_prev_gt', None)
+            self._oracle_prev_gt = c2w_gt.detach().clone()
+            if _og_prev is not None and (int(frame_id) - 1) in self.est_c2w_data:
+                _dt_mm = float(torch.norm(c2w_gt[:3, 3] - _og_prev[:3, 3])) * 1000.0
+                _tr = float(torch.trace(_og_prev[:3, :3].T @ c2w_gt[:3, :3]))
+                _rot_deg = float(np.degrees(np.arccos(np.clip((_tr - 1.0) / 2.0, -1.0, 1.0))))
+                if _dt_mm <= float(self.config['tracking'].get('oracle_still_mm', 1e-4)) and \
+                   _rot_deg <= float(self.config['tracking'].get('oracle_still_deg', 1e-4)):
+                    self.est_c2w_data[frame_id] = self.est_c2w_data[int(frame_id) - 1].detach().clone()
+                    if frame_id % self.config['mapping']['keyframe_every'] != 0:
+                        _kf = (frame_id // self.config['mapping']['keyframe_every']) * self.config['mapping']['keyframe_every']
+                        self.est_c2w_data_rel[frame_id] = self.est_c2w_data[frame_id] @ self.est_c2w_data[_kf].float().inverse()
+                    self._og_frozen = getattr(self, '_og_frozen', 0) + 1
+                    print(f"[oracle_gate] frame {frame_id} FROZEN (gt_step={_dt_mm:.5f}mm rot={_rot_deg:.5f}deg) total={self._og_frozen}")
+                    return
+
         indice = None
         best_sdf_loss = None
         best_ret = None
@@ -1005,6 +1027,43 @@ class DDSSLAM():
                     self._flowlog(['frame', 'dev_med', 'dev_mad', 'scale', 'w_mean', 'w_min', 'frac_dn'],
                                   [frame_id, round(_med, 4), round(_mad, 4), round(_scale, 4),
                                    round(float(_wc.mean()), 4), round(float(_wc.min()), 4), round(float((_wc < 0.5).mean()), 4)])
+                elif _mode == 'vote':
+                    # C' VOTE GATE, LIVE (the flow-plateau incumbent; offline 4/4: E3 p64/r86,
+                    # C1 92/73, C2 86/82, C3 88/81). Freeze iff q10 < q10_px (the QUIETEST districts
+                    # are quiet -- stillness as quiet-decile unanimity) OR dis3 > dis3_frac (majority
+                    # dissent from one rigid story). GATE-ONLY on purpose: trust weights stay off so
+                    # the A/B isolates the DECISION.
+                    from Addons.motion.flow_track import agreement_gate, region_vote, dino_grid, _raft_flow
+                    _dg = dino_grid(cur_bgr, self._dino, self.device)
+                    _flow = _raft_flow(self._raft, self._raft_tf, ref_bgr, cur_bgr, self.device)
+                    _, _, _samp = agreement_gate(ref_bgr, cur_bgr, _dg, self._raft, self._raft_tf, self.device,
+                                                 n_groups=int(_ft.get('n_groups', 12)),
+                                                 ransac_thresh=float(_ft.get('ransac_thresh', 1.0)),
+                                                 deadband=float(_ft.get('deadband', 3.0)), return_detail=True)
+                    _vinfo, _, _ = region_vote(ref_bgr, cur_bgr, ref_depth, _dg, self._raft, self._raft_tf,
+                                               self.device, n_groups=int(_ft.get('n_groups', 12)), flow=_flow)
+                    if _vinfo is None:
+                        _q10, _dis3 = 99.0, 0.0            # degenerate chamber -> track (never freeze blind)
+                    else:
+                        _vok = np.asarray(_vinfo['region_ok'], bool)
+                        _vmag = np.linalg.norm(np.asarray(_vinfo['region_flow']), axis=-1)
+                        _q10 = float(np.percentile(_vmag[_vok], 10)) if int(_vok.sum()) >= 4 else 99.0
+                        _sv = np.asarray(_samp)[_vok]
+                        _dis3 = float(np.mean(_sv[np.isfinite(_sv)] > 3.0)) if int(_vok.sum()) >= 4 else 0.0
+                    _vg_freeze = (_q10 < float(_ft.get('q10_px', 2.5))) or (_dis3 > float(_ft.get('dis3_frac', 0.5)))
+                    self._flowlog(['frame', 'q10', 'dis3', 'freeze'],
+                                  [frame_id, round(_q10, 3), round(_dis3, 3), int(_vg_freeze)])
+                    if _vg_freeze:
+                        self.est_c2w_data[frame_id] = self.est_c2w_data[frame_id - 1].detach().clone()
+                        self._gate_fixed_pose[frame_id] = self.est_c2w_data[frame_id].detach().clone()
+                        if frame_id % self.config['mapping']['keyframe_every'] != 0:
+                            _kf = (frame_id // self.config['mapping']['keyframe_every']) * self.config['mapping']['keyframe_every']
+                            self.est_c2w_data_rel[frame_id] = self.est_c2w_data[frame_id] @ self.est_c2w_data[_kf].float().inverse()
+                        self._vg_frozen = getattr(self, '_vg_frozen', 0) + 1
+                        print(f"[vote_gate] f{frame_id}: q10={_q10:.2f} dis3={_dis3:.2f} -> FROZEN total={self._vg_frozen}")
+                        return
+                    elif frame_id % 30 == 0:
+                        print(f"[vote_gate] f{frame_id}: q10={_q10:.2f} dis3={_dis3:.2f} -> track")
                 elif _ft.get('gate', False):
                     if _ft.get('agreement', False):
                         # PER-REGION AGREEMENT (the probe in the loop): pool flow into DINO regions, do the

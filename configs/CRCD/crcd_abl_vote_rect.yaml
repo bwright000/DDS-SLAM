@@ -1,0 +1,14 @@
+# C' VOTE GATE, LIVE IN THE TRACKER (first time the offline-validated incumbent drives poses).
+# Offline bench 4/4: E3 p64.3/r85.7, C1 91.9/73.1, C2 86.2/81.7, C3 87.9/80.5.
+# Freeze iff q10 < 2.5px (quiet-decile unanimity, stride-8 raw px) OR dis3 > 0.5 (majority
+# dissent from a single rigid F story). GATE-ONLY: no trust weights, no init override -- this
+# arm isolates the DECISION so the A/B vs abl_base and vs the oracle reads clean.
+# Judge: Sim3 ATE + render + flow_diag freeze-confusion (+ rot channel). Ceiling ref = oracle arm.
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+flow_track:
+  enable: true
+  mode: vote
+  ref_stride: 8       # the bench's stride: decisions replicate diag_vote_scan frame pairing
+  n_groups: 12        # k-sweep verdict: 24 died held-out (C2 worse); 12 confirmed
+  q10_px: 2.5
+  dis3_frac: 0.5

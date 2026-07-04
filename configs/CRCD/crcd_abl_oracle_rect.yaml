@@ -1,0 +1,10 @@
+# ORACLE GATE (diagnostic-only -- uses GT, NEVER ships): perfect freeze decisions every frame.
+# Freeze iff GT translation step <= 0.0001mm AND GT rotation step <= 0.0001deg (the bit-identical
+# GT rows = flow_diag's gstill definition). This bounds the ENTIRE gate direction: whatever ATE /
+# render the oracle achieves is the ceiling ANY freeze detector (flow, vote, map) can reach with
+# these freeze mechanics; the gap C'-live vs oracle = the remaining headroom worth chasing.
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+tracking:
+  oracle_gate: true
+  oracle_still_mm: 0.0001
+  oracle_still_deg: 0.0001
