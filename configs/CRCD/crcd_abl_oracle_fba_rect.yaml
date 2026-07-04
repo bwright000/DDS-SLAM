@@ -1,0 +1,11 @@
+# ORACLE + freeze_ba (diagnostic): perfect GT freezes AND hold the frozen keyframes after global_BA.
+# Isolates ONE question at 100% freeze-precision (no false-freeze risk): does killing the period-5
+# BA keyframe jitter in genuinely-still regions improve ATE/path-ratio, or is it cosmetic? Compare
+# to crcd_abl_oracle_rect (freeze_ba off). freeze_ba is SAFE here precisely because the oracle never
+# false-freezes a moving keyframe (the risk that makes it dicey on the low-precision vote arm on E3).
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+tracking:
+  oracle_gate: true
+  oracle_still_mm: 0.0001
+  oracle_still_deg: 0.01
+  freeze_ba: true          # tracking.freeze_ba -> re-apply oracle freezes to keyframes post-BA

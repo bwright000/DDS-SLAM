@@ -80,6 +80,7 @@ class DDSSLAM():
         self.flow_track_on = bool(self.config.get('flow_track', {}).get('enable', False))
         self._flow_buf = None
         self._trust_map = None   # [H,W] depth-supervisor per-pixel trust weight (for the trust/ diagnostic dump)
+        self._gate_fixed_pose = {}   # frame_id -> gate-frozen pose; freeze_ba re-applies after BA (flow gates AND oracle)
         if self.flow_track_on:
             from collections import deque
             from Addons.motion.flow_track import load_raft
@@ -741,9 +742,13 @@ class DDSSLAM():
                 print('Update current pose')
                 self.est_c2w_data[cur_frame_id] = self.matrix_from_tensor(cur_rot[-1:], cur_trans[-1:]).detach().clone()[0]
 
-        # flow_track freeze_ba: re-apply the gate's FIX to gate-fixed KEYFRAMES that BA just re-optimised,
-        # so the still-window freeze persists (keyframes anchor the non-keyframes via the relative poses).
-        if self.config.get('flow_track', {}).get('freeze_ba', False) and getattr(self, '_gate_fixed_pose', None):
+        # freeze_ba: re-apply the gate's FIX to gate-fixed KEYFRAMES that BA just re-optimised, so the
+        # still-window freeze persists (keyframes anchor the non-keyframes via the relative poses). Kills
+        # the period-5 BA keyframe jitter exposed by the oracle in still regions. Flagged either via
+        # flow_track.freeze_ba (flow/vote gates) OR tracking.freeze_ba (oracle gate).
+        _fb_on = (self.config.get('flow_track', {}).get('freeze_ba', False)
+                  or self.config['tracking'].get('freeze_ba', False))
+        if _fb_on and getattr(self, '_gate_fixed_pose', None):
             _ke = self.config['mapping']['keyframe_every']
             for _f, _p in self._gate_fixed_pose.items():
                 if _f % _ke == 0 and _f <= cur_frame_id and _f in self.est_c2w_data:
@@ -936,6 +941,7 @@ class DDSSLAM():
                 if _dt_mm <= float(self.config['tracking'].get('oracle_still_mm', 1e-4)) and \
                    _rot_deg <= float(self.config['tracking'].get('oracle_still_deg', 1e-2)):
                     self.est_c2w_data[frame_id] = self.est_c2w_data[int(frame_id) - 1].detach().clone()
+                    self._gate_fixed_pose[frame_id] = self.est_c2w_data[frame_id].detach().clone()  # freeze_ba-ready
                     if frame_id % self.config['mapping']['keyframe_every'] != 0:
                         _kf = (frame_id // self.config['mapping']['keyframe_every']) * self.config['mapping']['keyframe_every']
                         self.est_c2w_data_rel[frame_id] = self.est_c2w_data[frame_id] @ self.est_c2w_data[_kf].float().inverse()

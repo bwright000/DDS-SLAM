@@ -1,0 +1,13 @@
+# C' VOTE GATE + freeze_ba: same q10|dis3 freeze DECISION as crcd_abl_vote_rect, PLUS hold the frozen
+# keyframes after global_BA (kill the BA keyframe jitter). freeze_ba safety scales with freeze-precision
+# -> expect help on high-precision snippets (C1 92%), RISK on E3 (64% -> false-frozen keyframes lock in
+# wrong poses BA can no longer fix). This arm tests exactly that trade on E3. Decision unchanged vs vote.
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+flow_track:
+  enable: true
+  mode: vote
+  ref_stride: 8
+  n_groups: 12
+  q10_px: 2.5
+  dis3_frac: 0.5
+  freeze_ba: true          # flow_track.freeze_ba -> re-apply vote freezes to keyframes post-BA

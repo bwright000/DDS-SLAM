@@ -31,7 +31,8 @@ declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=${BEST_
   [cons]=configs/CRCD/crcd_abl_cons_rect.yaml [unc]=configs/CRCD/crcd_abl_unc_rect.yaml \
   [uncfix]=configs/CRCD/crcd_abl_uncfix_rect.yaml [still]=configs/CRCD/crcd_abl_still_rect.yaml \
   [stillcons]=configs/CRCD/crcd_abl_stillcons_rect.yaml [vote]=configs/CRCD/crcd_abl_vote_rect.yaml \
-  [oracle]=configs/CRCD/crcd_abl_oracle_rect.yaml )   # BEST_CFG= override (T4). Arms: abl_*/l0*/dpool/pnp | prior (DDS_MP_LAM sweep) | cons=epoch-consistent poses | unc/uncfix=canon-confound A/B | still=MAP-ANCHORED gate (v1 FAILED bench) | stillcons=still+cons | vote=C' LIVE (q10|dis3) | oracle=GT-perfect freezes (ceiling, diagnostic)
+  [oracle]=configs/CRCD/crcd_abl_oracle_rect.yaml [vote_fba]=configs/CRCD/crcd_abl_vote_fba_rect.yaml \
+  [oracle_fba]=configs/CRCD/crcd_abl_oracle_fba_rect.yaml )   # BEST_CFG= override (T4). Arms: abl_*/l0*/dpool/pnp | prior (DDS_MP_LAM sweep) | cons=epoch-consistent poses | unc/uncfix=canon-confound A/B | still=MAP-ANCHORED gate (v1 FAILED bench) | stillcons=still+cons | vote=C' LIVE (q10|dis3) | oracle=GT-perfect freezes (ceiling) | *_fba=+freeze_ba (hold frozen KFs post-BA)
 PARALLEL="${PARALLEL:-1}"; NPROC=$(nproc 2>/dev/null||echo 8); THREADS=$(( NPROC/PARALLEL>0 ? NPROC/PARALLEL : 1 ))
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256 LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
