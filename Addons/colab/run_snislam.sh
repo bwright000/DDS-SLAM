@@ -201,7 +201,7 @@ assert all(k in intr for k in ("fx", "fy", "cx", "cy")), intr
 # renders. SNI_SLAM.py:160 multiplies bound+depth+pose all by cfg['scale'] CONSISTENTLY, so scale is a
 # single clean lever to lift the scene into SNI's regime. truncation lives in the scaled frame -> scale it
 # too (~0.006*scale ~= Replica's 0.06 at scale~10). Sim3 eval removes the global scale, so ATE is unaffected.
-_scale = float(os.environ.get("SNI_SCALE", "8"))          # 0.1m*8 = ~0.8m (June's proven regime)
+_scale = float(os.environ.get("SNI_SCALE", "1"))          # REFUTED as a fix (tracker render-loss is scale-INVARIANT: scale=8 gave byte-identical Sim3 + worse PSNR + OOM). Default off; kept for experiments.
 _gtpose = os.environ.get("SNI_GT_POSE", "0") == "1"       # ablation: map+track at GT poses (render ceiling)
 cfg = {
   "inherit_from": "configs/CRCD/crcd_sni_base.yaml",
@@ -210,7 +210,7 @@ cfg = {
   "data": {"input_folder": f"data/CRCD/{NAME}/", "output": f"output/CRCD/bench_{NAME}"},
   "cam": {"H": H, "W": W, "fx": intr["fx"], "fy": intr["fy"], "cx": intr["cx"], "cy": intr["cy"],
           "png_depth_scale": 10000, "crop_edge": 0},
-  "model": {"truncation": round(0.006 * _scale, 4),
+  "model": {"truncation": round(0.01 * _scale, 4),
             "cnn": {"n_classes": 4,
                     "pretrained_model_path": ("seg/dinov2_replica.pth" if GT else "seg/dinov2_crcd.pth")}},
   "func": {"use_gt_semantic": bool(GT), "use_gt_pose": _gtpose},
@@ -224,7 +224,7 @@ if _sd:
     cfg["feature_device"] = _sd
 yaml.safe_dump(cfg, open(CFG, "w"), sort_keys=False)
 print(f"[cfg] {NAME}: HxW={H}x{W} fx={intr['fx']:.1f} bound={b['bound']} scale={_scale} "
-      f"trunc={round(0.006*_scale,4)} gt_pose={_gtpose} gt_sem={GT} store_device={_sd or 'cpu(default)'} -> {CFG}")
+      f"trunc={round(0.01*_scale,4)} gt_pose={_gtpose} gt_sem={GT} store_device={_sd or 'cpu(default)'} -> {CFG}")
 PY
 }
 
