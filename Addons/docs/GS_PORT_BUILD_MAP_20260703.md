@@ -1,5 +1,18 @@
 # GS PORT & BUILD MAP — "Corrected DDS-SLAM" on Gaussian Splatting (2026-07-03)
 
+> **⚠️ REVISION 2026-07-04 — read `GS_SOTA_REVIEW_20260704.md` WITH this doc.** A 9-agent SoTA
+> sweep + local code audits changed material parts of this plan: (1) P2 streaming-time is now
+> keyframe-anchored absolute-time bases + partial activation + replay (Free-DyGS/NRGS recipe),
+> NOT sliding-window local time; (2) NRGS-SLAM (Feb 2026, co-authored by the DDS-SLAM lab's
+> Hesheng Wang — IRMVLab has pivoted to GS) occupies the P1+P2 square on paper, code unreleased →
+> our claim = first RELEASED artifact + teacher supervision + tool-as-object + protocol factorial;
+> (3) P3 repositioned: T2GS (MICCAI 25) models the tool OFFLINE → our claim is the ONLINE
+> tool-object with lifecycle; (4) 🚨 deform hooks must cover BOTH transform_to_frame AND
+> transform_to_frame_eval or held-state eval silently violates the BUILD LAW; (5) 🚨 depth-L1 vs
+> MoGe-2 is circular — add C3VD + independent stereo depth for any reconstruction claim;
+> (6) path corrections below (teacher baker = Addons/deform/…; no Addons/tracking/ — extract
+> functions from flow_track.py, never import it).
+
 > **Decision (user, 2026-07-03): GS is THE platform.** Port a *corrected DDS-SLAM* onto the
 > EndoGSLAM base, then port our improvements on top. **Budget: ~3 months to paper submission**
 > (≈10 build weeks + ~2 weeks freeze/write). This doc supersedes the phasing in
@@ -86,8 +99,8 @@ that promise, built correctly:
 |---|---|---|---|
 | Inc-1 σ² head (image-space, DINO, `uncfix`-corrected) | `DDS-SLAM/model/scene_rep.py` σ² path + `WildGS-SLAM/src/utils/dyn_uncertainty/` | post-render in `get_loss` (mapping NLL) | ~3 d |
 | Inc-2 tracking down-weight (1/σ², clipped, detached) | `DDS-SLAM` Inc-2 + normalisation lesson | `get_loss` tracking residual reduction (~262–274) | ~1 d (after Inc-1) |
-| Tracking gate: zero-motion prior OR vote detector | `Addons/tracking/` lean-core + `Addons/motion/` vote detector | tracking loss / pre-solve weight | ~3 d (pick by vote_scan) |
-| Δx\* teacher bake + regauge | `Addons/dino/generate_deform_targets.py`, `regauge_deform_targets.py` | offline bake (env-agnostic .npz) — reuse as-is | ~1 d |
+| Tracking gate: zero-motion prior OR vote detector | EXTRACT functions from `Addons/motion/flow_track.py` — `zero_motion_prior` (:427-444), `region_vote`/`_vote_fit` (:319-424); NEVER import the module (rest of file = condemned flow gate). Also port `_still_gate_decide` (ddsslam.py:822-868, map-anchored still test — near-verbatim in GS) | tracking loss / pre-solve weight | ~3 d (pick by vote_scan) |
+| Δx\* teacher bake + regauge | `Addons/deform/generate_deform_targets.py`, `Addons/deform/regauge_deform_targets.py` (path corrected 07-04; CRCD bakes need --est_c2w + CRCD intrinsics + OpenCV rays) | offline bake (env-agnostic .npz) — reuse as-is | ~1 d |
 | Teacher supervision → ψ_g(t) | `deform_teacher_loss` concept (D7: Δx\* supervises nearest-GAUSSIAN trajectory — a Gaussian IS a surface point) | new loss on `_coefs` during mapping | in P2 |
 | Held-state A/B eval | `Addons/experiments/heldstate_eval.py` (protocol + factorial compare) | gs_eval already held-state; add paired compare + masked split + factorial mode | ~1 d |
 | pin-EPE judge | `Addons/eval/field_warped_pin_epe.py` (judge via ψ_g instead of time_net) | offline judge | ~1 d |
