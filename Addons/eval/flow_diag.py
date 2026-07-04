@@ -19,9 +19,36 @@ def load_est(p):
     return np.loadtxt(p)[:, [3, 7, 11]]
 
 
+def load_est_rot(p):
+    d = np.loadtxt(p)
+    if d.ndim != 2 or d.shape[1] < 12:
+        return None
+    return d[:, :12].reshape(-1, 3, 4)[:, :, :3]
+
+
 def load_gt(p):
     d = np.loadtxt(p, comments='#')
     return (d[:, 1:4] if d.ndim == 2 else d[None, 1:4])
+
+
+def load_gt_quat(p):
+    d = np.loadtxt(p, comments='#')
+    if d.ndim != 2 or d.shape[1] < 8:
+        return None
+    q = d[:, 4:8]
+    return q / (np.linalg.norm(q, axis=1, keepdims=True) + 1e-12)
+
+
+def rot_steps_est(Rm):
+    # relative-rotation angle per frame pair (deg); gauge-free, so NO Sim3 alignment is involved
+    rel = np.einsum('nij,nik->njk', Rm[:-1], Rm[1:])   # R_i^T @ R_{i+1}
+    tr = np.clip((np.trace(rel, axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)
+    return np.degrees(np.arccos(tr))
+
+
+def rot_steps_gt(q):
+    dot = np.clip(np.abs((q[:-1] * q[1:]).sum(1)), 0.0, 1.0)
+    return np.degrees(2.0 * np.arccos(dot))
 
 
 def umeyama(src, dst):
@@ -96,16 +123,33 @@ def main():
     n_frz = int(frz.sum())
     frz_prec = round(100.0 * float((frz & gstill).sum()) / n_frz, 1) if n_frz else None
     frz_rec = round(100.0 * float((frz & gstill).sum()) / max(int(gstill.sum()), 1), 1) if n_frz else None
+    # ROTATION CHANNEL (report-only, no pass bar yet): the whole battery above reads camera POSITIONS,
+    # but this RCM platform is rotation-dominant (~5.7x the image flow on E3). Relative-rotation steps
+    # are gauge-free (no Sim3), and rotation has no scale ambiguity -> rot_path_ratio is an ABSOLUTE
+    # over/under-travel measure, unlike the translation path-ratio which rides on the Sim3 scale.
+    rot = {}
+    Rm, gq = load_est_rot(a.est), load_gt_quat(a.gt)
+    if Rm is not None and gq is not None:
+        er, gr = rot_steps_est(Rm[:n]), rot_steps_gt(gq[:n])
+        rrho = abs(spearman(er, gr))
+        rthr = max(float(np.median(gr)), 1e-4); rmv, rst = gr > rthr, gr <= rthr
+        r_ract = float(np.median(er[rmv]) / (np.median(er[rst]) + 1e-9)) if rmv.any() and rst.any() else 0.0
+        rot = dict(rot_rho=round(rrho, 3), rot_path_ratio=round(float(er.sum() / (gr.sum() + 1e-12)), 2),
+                   rot_moving_still_ratio=round(r_ract, 2),
+                   est_rot_still_deg=round(float(np.median(er[rst])) if rst.any() else 0.0, 4),
+                   est_rot_moving_deg=round(float(np.median(er[rmv])) if rmv.any() else 0.0, 4))
     res = dict(name=a.name, n=int(n), sim3_scale=round(float(s), 4), activation_rho=round(rho, 3),
                moving_still_ratio=round(r_act, 2), path_ratio=round(float(pathr), 2),
                est_still_step_mm=round(est_still_mm, 3), est_moving_step_mm=round(est_moving_mm, 3),
                gt_still_step_mm=round(gt_still_mm, 3), n_frozen=n_frz,
                freeze_precision=frz_prec, freeze_still_recall=frz_rec,
                D1_timing_pass=d1, D2_overtravel_pass=d2,
-               flow_ok=bool(d1 and d2))
+               flow_ok=bool(d1 and d2), **rot)
     print(f"[flow_diag] {a.name}: activation rho={rho:.2f} moving/still={r_act:.1f} (D1 {'PASS' if d1 else 'FAIL'}) | "
           f"path-ratio={pathr:.2f} still/moving jitter={est_still_mm:.3f}/{est_moving_mm:.3f}mm (D2 {'PASS' if d2 else 'FAIL'})"
-          + (f" | frozen={n_frz} prec={frz_prec}% recall={frz_rec}%" if n_frz else ""))
+          + (f" | frozen={n_frz} prec={frz_prec}% recall={frz_rec}%" if n_frz else "")
+          + (f" | ROT rho={rot['rot_rho']:.2f} path={rot['rot_path_ratio']:.2f} mv/st={rot['rot_moving_still_ratio']:.1f}"
+             if rot else ""))
     if a.out:
         json.dump(res, open(a.out, 'w'), indent=2)
     if a.plot:
