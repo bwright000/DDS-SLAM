@@ -317,7 +317,8 @@ def depth_pooled_weight(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
 
 
 def region_vote(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
-                n_groups=12, still_floor_px=0.5, mad_c=2.5, min_px=50, min_regions=5, seed=0):
+                n_groups=12, still_floor_px=0.5, mad_c=2.5, min_px=50, min_regions=5, seed=0,
+                flow=None):
     """GATE v2 -- the DINO-region VOTE egomotion detector ('bring every region onto the same plane, ask
     what it's doing, compare the votes, decide'). Supersedes agreement_gate (raw-px deadband, no depth,
     F degenerate at endo baselines) and depth_pooled_weight (x-depth breaks on ROTATION, the E3 regime).
@@ -346,7 +347,8 @@ def region_vote(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
     than min_regions valid regions (caller: track normally)."""
     import cv2
     from sklearn.cluster import KMeans
-    flow = _raft_flow(model, tf, ref_bgr, cur_bgr, device)                  # [H,W,2]
+    if flow is None:                                                        # k-sweep callers precompute + share it
+        flow = _raft_flow(model, tf, ref_bgr, cur_bgr, device)              # [H,W,2]
     H, W = flow.shape[:2]
     gh, gw, C = dino_g.shape
     X = dino_g.reshape(-1, C); X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)

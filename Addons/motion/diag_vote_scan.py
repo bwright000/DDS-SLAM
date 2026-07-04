@@ -71,6 +71,11 @@ def main():
     ap.add_argument('--video', action='store_true',
                     help='ALSO write <out>_votes.mp4: the DEMOCRACY overlay -- district boundaries + '
                          'per-district vote arrows (color=trust) + tally banner, on the real frames')
+    ap.add_argument('--k_list', default='',
+                    help='K-SWEEP: comma list of extra district counts (e.g. "6,24"). RAFT flow + DINO '
+                         'grid are computed ONCE per frame and shared; only KMeans+pooling repeat, so '
+                         'extra k are nearly free. Each k dumps <out>_votes_k<K>.npz for offline replay. '
+                         'The primary n_groups (12) keeps the json/csv/video outputs.')
     a = ap.parse_args()
 
     import torch
@@ -93,6 +98,10 @@ def main():
     NG = a.n_groups
     dump = dict(frame=[], gt_mm=[], flow=[], depth=[], centroid=[], ok=[], resid=[], trust=[], sampson=[])
     vw = None   # --video writer, opened lazily on the first frame
+    from Addons.motion.flow_track import _raft_flow
+    k_extra = [int(k) for k in a.k_list.split(',') if k.strip()] if a.k_list else []
+    kdump = {k: dict(frame=[], gt_mm=[], flow=[], depth=[], centroid=[], ok=[], resid=[], trust=[])
+             for k in k_extra}
     for t in range(a.stride, len(files), a.every):
         cur = cv2.imread(files[t]); ref = cv2.imread(files[t - a.stride])
         depth = load_depth(dfiles[t - a.stride])                       # REF-frame depth (matches ref pixels)
@@ -101,9 +110,23 @@ def main():
         cam, dis, samp = agreement_gate(ref, cur, dg, raft, tf, dev, n_groups=NG,
                                         ransac_thresh=1.0, deadband=a.deadband, return_detail=True)
         old_track = bool(cam > a.cam_thresh and dis <= a.disagree_thresh)
-        # NEW vote (flow computed ref->cur inside; depth = ref frame)
+        # NEW vote. flow computed ONCE and shared across the k-sweep (depth = ref frame).
+        _flow = _raft_flow(raft, tf, ref, cur, dev)
         info, w, lab = region_vote(ref, cur, depth, dg, raft, tf, dev,
-                                   n_groups=NG, still_floor_px=a.still_floor_px)
+                                   n_groups=NG, still_floor_px=a.still_floor_px, flow=_flow)
+        for kk in k_extra:
+            ik, _, _ = region_vote(ref, cur, depth, dg, raft, tf, dev,
+                                   n_groups=kk, still_floor_px=a.still_floor_px, flow=_flow)
+            kd = kdump[kk]
+            kd['frame'].append(t); kd['gt_mm'].append(float(gstep[min(t, len(gstep) - 1)]))
+            if ik is None:
+                z2 = np.zeros((kk, 2)).tolist(); z1 = np.zeros(kk).tolist()
+                kd['flow'].append(z2); kd['depth'].append(z1); kd['centroid'].append(z2)
+                kd['ok'].append(np.zeros(kk, bool).tolist()); kd['resid'].append(z1); kd['trust'].append(np.ones(kk).tolist())
+            else:
+                kd['flow'].append(ik['region_flow']); kd['depth'].append(ik['region_depth'])
+                kd['centroid'].append(ik['region_centroid']); kd['ok'].append(ik['region_ok'])
+                kd['resid'].append(ik['region_resid']); kd['trust'].append(ik['region_trust'])
         if info is None:
             info = dict(moving=True, confidence=0.0, mag=0.0, turn=0.0, slide=0.0, zoom=0.0,
                         n_valid=0, n_inliers=0,                        # degenerate -> track (never freeze blind)
@@ -167,6 +190,11 @@ def main():
     np.savez_compressed(a.out + '_votes.npz', stride=a.stride, every=a.every,
                         wh=np.array(cur.shape[:2][::-1]),               # [W,H] for centroid normalisation
                         **{k: np.asarray(v) for k, v in dump.items()})
+    for kk, kd in kdump.items():
+        np.savez_compressed(a.out + f'_votes_k{kk}.npz', stride=a.stride, every=a.every,
+                            wh=np.array(cur.shape[:2][::-1]),
+                            **{k: np.asarray(v) for k, v in kd.items()})
+        print('wrote', a.out + f'_votes_k{kk}.npz')
     if vw is not None:
         vw.release(); print('wrote', a.out + '_votes.mp4')
 
