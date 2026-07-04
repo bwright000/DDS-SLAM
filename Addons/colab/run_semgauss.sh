@@ -179,13 +179,29 @@ build_env(){
   PYTHONPATH= "$ENV_PY" -c "import torch,numpy; print('[env] torch',torch.__version__,'numpy',numpy.__version__,'OK')" \
      || { echo "FATAL: torch import broken (mkl/numpy ABI) - see error above"; exit 30; }
   echo "[env] pip deps (explicit; requirements.txt is a conda-export -> pip cannot read it)"
-  printf 'numpy<2\n' > /tmp/semgauss_constraints.txt        # a dep otherwise pulls numpy 2.x -> torch ABI break
+  # 🚨 PIN torch + numpy in the constraints. timm/kornia/torchmetrics/lpips all `install_require` torch,
+  # and pip WILL upgrade the conda torch 1.12.1/cu116 to a cu130 torch-2.x wheel to satisfy their LATEST
+  # release -> that mismatches cuda-toolkit 11.6 and the rasterizer build dies ("detected CUDA 11.6
+  # mismatches PyTorch 13.0"). Pinning torch here makes pip BACKTRACK to torch-1.12-compatible dep
+  # versions instead of bumping torch. (numpy pin: a dep otherwise pulls numpy 2.x -> torch ABI break.)
+  printf 'numpy<2\ntorch==1.12.1\ntorchvision==0.13.1\ntorchaudio==0.12.1\n' > /tmp/semgauss_constraints.txt
   PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/semgauss_constraints.txt ninja wheel setuptools pybind11 || true
   PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/semgauss_constraints.txt \
      "numpy<2" timm kornia opencv-python lpips pytorch-msssim torchmetrics open3d==0.16.0 \
      plyfile imageio natsort matplotlib wandb trimesh \
      || echo "[env] WARN some pip deps failed (inspect above - open3d 0.16.0 / py3.10 is the likely landmine)"
-  PYTHONPATH= "$ENV_PY" -m pip install -q "numpy<2" || true   # re-assert: a dep may have bumped it
+  PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/semgauss_constraints.txt "numpy<2" || true
+  # DEFENSIVE drift-guard: if torch still drifted off 1.12/cu116 (unpinned dep, or an env corrupted by a
+  # prior run), force conda back -> else the cu116 rasterizer build fails. cu116 wheel comes from conda,
+  # NOT pip (pip's torch==1.12.1 is cpu/cu102). --force-reinstall overrides conda's "already installed".
+  PYTHONPATH= "$ENV_PY" -c "import torch;v=torch.__version__;c=str(torch.version.cuda);assert v.startswith('1.12') and c.startswith('11'),v+'/'+c" 2>/dev/null \
+     || { echo "[env] torch drifted off 1.12.1/cu116 -> conda --force-reinstall (repairs a corrupted env)";
+          conda install -y -n "$ENV_NAME" -c pytorch -c conda-forge --force-reinstall \
+             pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.6 "mkl<2024" \
+             || { echo "FATAL: could not restore torch 1.12.1/cu116"; exit 30; }
+          # re-run the pip deps now that torch is pinned-correct (they were built against the wrong torch)
+          PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/semgauss_constraints.txt --force-reinstall --no-deps \
+             timm kornia torchmetrics || echo "[env] WARN dep re-pin partial"; }
   # Build the IN-REPO rasterizer for THIS GPU's compute capability (+PTX). glm is vendored under
   # third_party/glm (setup.py -I's it) -> NO --recursive clone. sm_80-only kernels give
   # "numel: integer multiplication overflow" off an A100 -> match the live GPU.
