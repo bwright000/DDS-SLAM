@@ -232,7 +232,9 @@ build_env(){
     echo "[env] WARN g++-10 unavailable -> rasterizer build may fail (GCC11 vs CUDA11.6)"
   fi
   echo "[env] in-repo rasterizer build (VERBOSE; arch=$ARCH) -> $SEMGAUSS/diff-gaussian-rasterization-w-depth_sem_gauss"
-  PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="$ARCH" \
+  # `env` prefix: $HOSTENV comes from expansion, and bash only honors VAR=val as an assignment when it's
+  # a LITERAL token at parse time (expanded, it's parsed as the command name). `env` accepts them as args.
+  env PYTHONPATH= CUDA_HOME="$ENV_ROOT" PATH="$ENV_ROOT/bin:$PATH" TORCH_CUDA_ARCH_LIST="$ARCH" \
      CPATH="${PYBIND_INC}${CPATH:+:$CPATH}" $HOSTENV \
      "$ENV_PY" -m pip install --no-build-isolation --force-reinstall --no-deps -v \
      "$SEMGAUSS/diff-gaussian-rasterization-w-depth_sem_gauss" 2>&1 | tee /content/semgauss_rasterizer_build.log
