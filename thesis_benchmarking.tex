@@ -163,6 +163,103 @@ high-frequency texture (lower LPIPS) at the cost of local splat artefacts.}
 \end{figure}
 
 % ---------------------------------------------------------------------------
+\subsection{SemGauss-SLAM}
+\label{sec:bench_semgauss}
+
+SemGauss-SLAM \cite{semgauss} is the semantic-feature-field Gaussian
+representative. It shares the SplaTAM lineage with SGS-SLAM --- the same
+tracking-by-rasterisation, keyframe mapping and densify-and-prune machinery ---
+which makes the pair a controlled comparison: the one substantive difference is
+that SemGauss-SLAM attaches a 16-dimensional semantic feature to every
+Gaussian, rasterises it as an additional feature image, and distils it against
+a DINOv2 segmentation head during mapping. It was onboarded onto the identical
+five rectified snippets with only per-dataset values changed (intrinsics,
+depth scale, class count); every optimisation hyperparameter is the authors'
+Replica value verbatim. The segmentation head is our in-domain four-class
+DINOv2 head with the benchmark snippet held out of its training, and semantics
+run in the authors' default self-supervised mode (no ground-truth masks enter
+any loss). Unlike SGS-SLAM's configuration, SemGauss-SLAM exports its full
+camera state, so it is scored on \emph{both} halves of the problem: Sim(3) ATE,
+path ratio and aligned $|r|_{\mathrm{dom}}$ on its native trajectory, and
+every-frame renders under the identical PSNR/SSIM/LPIPS and Depth-$L_1$
+pipeline (Table~\ref{tab:bench_semgauss}).
+
+\begin{table}[t]
+\centering
+\caption{SemGauss-SLAM on the CRCD benchmark, scored identically to DDS-SLAM:
+native trajectory under Sim(3) (ATE in mm) and every-frame renders. LPIPS on
+three snippets awaits a rescore (scorer library missing on the compute host at
+run time; renders retained). G3\_001 exceeds an A100-80GB before half sequence
+(see text) and is scored on its first 750 frames against the matching
+ground-truth prefix.}
+\label{tab:bench_semgauss}
+\small
+\begin{tabular}{l r rrrr rrrr}
+\toprule
+Snippet & $N$ & ATE$_{\mathrm{mean}}$ & ATE$_{\mathrm{max}}$ & path ratio &
+$|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
+\midrule
+C1\_001 &  360 & 5.98 & 14.38 &  3.25 & 0.76 & 20.57 & 0.771 & 0.344 & 22.5 \\
+C2\_001 &  730 & 7.25 & 21.78 & 13.14 & 0.80 & 16.31 & 0.674 & ---   & 44.2 \\
+C3\_001 & 1527 & 8.14 & 25.75 & 23.60 & 0.90 & 17.78 & 0.783 & ---   & 24.6 \\
+E3\_005 &  265 & 5.12 & 16.84 &  1.70 & 0.34 & 17.31 & 0.726 & ---   & 50.0 \\
+G3\_001 & 750$^{\dagger}$ & \multicolumn{8}{c}{\emph{in progress}} \\
+\midrule
+mean (4) & --- & 6.62 & 19.69 & 10.42 & 0.70 & 17.99 & 0.739 & --- & 35.3 \\
+\bottomrule
+\multicolumn{10}{l}{\footnotesize $^{\dagger}$first 750 of 1987 frames
+(memory ceiling, see text); evaluated against the corresponding GT prefix.}
+\end{tabular}
+\end{table}
+
+Against its architectural sibling the pattern is uniform: SemGauss-SLAM renders
+1--2\,dB below SGS-SLAM on every shared snippet (20.6 vs.\ 22.5 on C1\_001,
+16.3 vs.\ 17.5 on C2\_001, 17.8 vs.\ 18.8 on C3\_001, 17.3 vs.\ 19.2 on
+E3\_005) --- the per-Gaussian feature field buys dense distilled semantics and
+costs a consistent photometric margin. Its tracking, however, is genuinely
+comparable where SGS-SLAM's configuration offers none: Sim(3) ATE of
+5--8\,mm with dominant-axis correlations of 0.76--0.90 on the C-snippets,
+degrading to $|r|_{\mathrm{dom}}=0.34$ on E3\_005 --- the same sub-SNR
+collapse every system shows on that snippet, and the case the path-ratio and
+correlation columns exist to expose.
+
+The G3\_001 failure is the section's most instructive result, because it is a
+\emph{scaling} property rather than a crash. On an A100-80GB the run exhausted
+memory at frame 863 of 1987 with 76.5\,GiB allocated against 76.8 reserved ---
+genuine capacity exhaustion, not fragmentation. The driver is not sequence
+length but densification rate: SplaTAM-family methods add Gaussians wherever
+the current map fails to explain the frame, so the map grows with
+newly-revealed surface, and G3\_001's exploratory camera and tool activity
+never let it plateau. The checkpoint counts make the mechanism explicit:
+C1\_001, C2\_001 and C3\_001 finish with 1.75--1.78\,M Gaussians (C3\_001 over
+its full 1527 frames), E3\_005 with 2.77\,M --- while G3\_001 had accumulated
+11.0\,M by frame ${\sim}600$, six times C3\_001's final count at a third of
+the sequence. SGS-SLAM completed the same snippet on the same GPU: its
+Gaussians are roughly $3\times$ lighter, carrying no 16-d feature vector, no
+16-channel rasterisation buffers and no corresponding gradients. The authors'
+configuration exposes no Gaussian budget --- Replica never needed one --- so
+the ceiling is a property of the method, not of our port: the semantic feature
+field trades memory scalability for its dense semantics, and an exploratory
+endoscopic sequence is precisely the regime that collects the bill. The
+main-table entry is therefore the faithful run over the first 750 frames,
+evaluated against the matching ground-truth prefix; a pruning-tightened
+variant (densification gate 0.5$\rightarrow$0.25, prune threshold
+0.005$\rightarrow$0.05, pruning throughout the mapping window) is additionally
+run as an explicitly non-faithful ablation to quantify the memory--quality
+trade of that feature field, and is reported as a side note rather than a
+benchmark row.
+
+% TODO figure once plotted from vram_samples.txt + checkpoint counts:
+% \begin{figure}[t]
+% \centering
+% \includegraphics[width=0.9\linewidth]{figures/semgauss_gaussian_growth.pdf}
+% \caption{Gaussian count and VRAM growth, G3\_001 vs.\ C3\_001. C3\_001
+% plateaus below 2M Gaussians; G3\_001's exploratory camera never lets
+% densification saturate, crossing 11M (${>}$80\,GB) before half sequence.}
+% \label{fig:semgauss_growth}
+% \end{figure}
+
+% ---------------------------------------------------------------------------
 \subsection{SemanticSuPer}
 \label{sec:bench_semsup}
 
