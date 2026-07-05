@@ -263,7 +263,7 @@ crcd_ep_sid(){ local n; n=$(echo "$1"|tr 'a-z' 'A-Z'); [[ "$n" =~ ^[A-Z][0-9]_[0
 # loaded .npy as METRIC depth (skip disp_to_depth); render_img works without pins + dumps the clean
 # render to results/<model>/render/<t>.png for PSNR (the upstream only logs renders to TensorBoard).
 ss_patch_crcd(){
-  ( cd "$SS_REPO" && git checkout -- utils/data_loader.py super/nodes.py super/deform_mesh.py utils/labels.py utils/utils.py 2>/dev/null ) || true  # clean slate -> idempotent
+  ( cd "$SS_REPO" && git checkout -- utils/data_loader.py super/nodes.py super/deform_mesh.py utils/labels.py utils/utils.py super/loss.py 2>/dev/null ) || true  # clean slate -> idempotent
   PYTHONPATH= "$SS_ENV_PY" - "$SS_REPO" <<'PY'
 import io, os, sys
 R = sys.argv[1]
@@ -347,6 +347,17 @@ edit('utils/data_loader.py', '[DDS-crcd-kernels]', "            kernels = [3, 3,
      replace="            kernels = [3] * opt.num_classes  # [DDS-crcd-kernels]\n")
 edit('super/deform_mesh.py', '[DDS-crcd-kernels]', "                        kernels = [3, 3, 3]\n",
      replace="                        kernels = [3] * self.opt.num_classes  # [DDS-crcd-kernels]\n")
+
+# [DDS-crcd-emptyvalid] C2_001 crash @ frame 56/730: bilinear_sample got ZERO valid correspondences
+# (SemSup is a STATIC-camera surfel tracker; C2 = the largest-camera-motion snippet -> all projected
+# samples invalid) and `U_nm_valid.view(0, -1)` is ambiguous -> RuntimeError. Guard the empty case:
+# reshape(0,1) keeps shapes sane, downstream selections are empty, and losses.sum() over an empty
+# tensor is 0.0 (NOT NaN; loss.py:401) -> the data term simply contributes nothing that frame and the
+# tracker continues on its remaining terms (ARAP/rot). Math untouched whenever samples exist.
+edit('super/loss.py', '[DDS-crcd-emptyvalid]',
+     "        U_nm_valid = U_nm_valid.view(len(U_nm_valid), -1)\n",
+     replace=("        # [DDS-crcd-emptyvalid] empty (0-correspondence) case: view(0,-1) is ambiguous -> crash\n"
+              "        U_nm_valid = U_nm_valid.reshape(len(U_nm_valid), -1) if len(U_nm_valid) > 0 else U_nm_valid.reshape(0, 1)\n"))
 
 # id2color palette is sized for 3 Super classes (Beef/Chicken/Tool) -> id2color[3] crashes for CRCD's
 # 4 classes. Replace with an >=8-row palette (viz only; tracking/metrics unaffected).
