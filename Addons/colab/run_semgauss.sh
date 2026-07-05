@@ -194,13 +194,19 @@ build_env(){
   PYTHONPATH= "$ENV_PY" -c "import torch,numpy; print('[env] torch',torch.__version__,'numpy',numpy.__version__,'OK')" \
      || { echo "FATAL: torch import broken (mkl/numpy ABI) - see error above"; exit 30; }
   echo "[env] pip deps (explicit; requirements.txt is a conda-export -> pip cannot read it)"
-  # 🚨 PIN torch + numpy in the constraints. timm/kornia/torchmetrics/lpips all `install_require` torch,
-  # and pip WILL upgrade the conda torch 1.12.1/cu116 to a cu130 torch-2.x wheel to satisfy their LATEST
-  # release -> that mismatches cuda-toolkit 11.6 and the rasterizer build dies ("detected CUDA 11.6
-  # mismatches PyTorch 13.0"). Pinning torch here makes pip BACKTRACK to torch-1.12-compatible dep
-  # versions instead of bumping torch. (numpy pin: a dep otherwise pulls numpy 2.x -> torch ABI break.)
-  printf 'numpy<2\ntorch==1.12.1\ntorchvision==0.13.1\ntorchaudio==0.12.1\n' > /tmp/semgauss_constraints.txt
-  PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/semgauss_constraints.txt ninja wheel setuptools pybind11 || true
+  # 🚨 PIN torch + numpy + setuptools in the constraints.
+  #  - torch: timm/kornia/torchmetrics/lpips all `install_require` torch, and pip WILL upgrade the conda
+  #    torch 1.12.1/cu116 to a cu130 torch-2.x wheel to satisfy their LATEST release -> mismatches
+  #    cuda-toolkit 11.6 and the rasterizer build dies. Pinning makes pip backtrack to compat deps.
+  #  - setuptools<81: setuptools>=81 REMOVED pkg_resources, which torch 1.12's cpp_extension.py imports
+  #    at build time -> "ModuleNotFoundError: No module named 'pkg_resources'" on a fresh instance that
+  #    pulled new setuptools. Pin + force it below (the env may already have >=81 from a failed build).
+  #  - numpy<2: a dep otherwise pulls numpy 2.x -> torch ABI break.
+  printf 'numpy<2\ntorch==1.12.1\ntorchvision==0.13.1\ntorchaudio==0.12.1\nsetuptools<81\n' > /tmp/semgauss_constraints.txt
+  PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/semgauss_constraints.txt ninja wheel "setuptools<81" pybind11 || true
+  # hard-assert pkg_resources is importable (the build needs it); downgrade setuptools if a stale >=81 lingers
+  PYTHONPATH= "$ENV_PY" -c "import pkg_resources" 2>/dev/null \
+     || PYTHONPATH= "$ENV_PY" -m pip install -q --force-reinstall "setuptools<81" || echo "[env] WARN pkg_resources still missing"
   PYTHONPATH= "$ENV_PY" -m pip install -q -c /tmp/semgauss_constraints.txt \
      "numpy<2" timm kornia opencv-python lpips pytorch-msssim torchmetrics open3d==0.16.0 \
      plyfile imageio natsort matplotlib wandb trimesh \
