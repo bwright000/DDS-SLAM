@@ -207,13 +207,16 @@ for ln in open(f"{DD}/rectified_calib.txt"):
     if len(p) >= 2 and p[0] in ("fx", "fy", "cx", "cy"):
         intr[p[0]] = float(p[1])
 assert all(k in intr for k in ("fx", "fy", "cx", "cy")), intr
-# CRCD metric depth is ~0.1m. The GT-pose ablation (SNI_GT_POSE=1) proved the SDF/geometry forms fine at
-# this scale (sharp rendered depth, PSNR 9->11.2) -> the earlier BLACK renders were TRACKER over-travel
-# (est path ~2.6x GT), NOT scale. SNI_SCALE is REFUTED as a fix: the tracker render-loss is scale-INVARIANT
-# (scale=8 gave byte-identical Sim3 + worse PSNR + OOM). The REMAINING issue is a COLOUR wash (grey RGB,
-# sharp depth): the RGB decoder cats the DINO semantic feature (decoders.py:117-119), so colour rides on the
-# seg head. GT_SEM couples head+target -> GT_SEM=1 (Replica head + GT-mask target) == June's coloured config;
-# GT_SEM=0 (loso 4-class head + DINO argmax) == the wash. Under investigation.
+# CRCD metric depth is ~0.1m. SETTLED VERDICTS (trilinear DDS/SNI/SGS config diff, 2026-07-04/05):
+#  - RENDER (PSNR ~11, grey wash / empty-ray streaks) = ARCHITECTURAL, accept + report. Root cause =
+#    SNI's UN-normalized bg-less compositing (Renderer.py:139 Sw*rgb, no /Sw, no bg -> empty ray = black;
+#    DDS normalizes /Sw, SGS rasterizes C+T*bg -> both complete), compounded by the un-masked mapping
+#    colour loss (Mapper.py:362) and RGB<-s_feat coupling (decoders.py:117). Config-miss audit found NO
+#    fixable divergence (scale/intrinsics/bound/frame all shared-correct). Do NOT config-chase PSNR.
+#  - SNI_SCALE: REFUTED as a fix (tracker render-loss is scale-invariant; scale=8 = byte-identical Sim3).
+#  - TRACKING over-travel: driver = lr x iters (NOT const_speed: all 3 methods use const-velocity).
+#    lr_T/R=1e-4 is dataset-necessary (path-ratio 11x vs 23x at authors' 1e-3; DDS uses 1e-4 on CRCD) ->
+#    restored in the fork's crcd_sni_base.yaml. SNI's honest entry = tracking metrics + render-weak note.
 _scale = float(os.environ.get("SNI_SCALE", "1"))          # REFUTED as a fix (see above). Default off; kept for experiments.
 _gtpose = os.environ.get("SNI_GT_POSE", "0") == "1"       # ablation: map+track at GT poses (render ceiling)
 # T4 RESOURCE CAP (not a faithfulness knob): pixels is a memory/quality knob. The authors' faithful
