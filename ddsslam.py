@@ -88,7 +88,7 @@ class DDSSLAM():
             self._dino = None
             with torch.random.fork_rng(devices=(list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [])):
                 self._raft, self._raft_tf = load_raft(self.device, bool(_ft.get('raft_small', False)))
-                if _ft.get('agreement', False) or _ft.get('residual', 'sampson') == 'rigid' or _ft.get('mode', '') in ('depth_pool', 'solve_pnp', 'vote'):   # agreement gate, L0 region-pool, and the depth_pool/solve_pnp/vote modes all need DINO (fork_rng -> parity-safe)
+                if _ft.get('agreement', False) or _ft.get('residual', 'sampson') == 'rigid' or _ft.get('mode', '') in ('depth_pool', 'solve_pnp', 'vote', 'dtrust'):   # agreement gate, L0 region-pool, and the depth_pool/solve_pnp/vote/dtrust modes all need DINO (fork_rng -> parity-safe)
                     from Addons.motion.flow_track import load_dino
                     self._dino = load_dino(self.device)
             self._flow_buf = deque(maxlen=int(_ft.get('ref_stride', 8)))
@@ -1081,6 +1081,26 @@ class DDSSLAM():
                     elif frame_id % 30 == 0:
                         print(f"[vote_gate] f{frame_id}: q10={_q10:.2f} dis3={_dis3:.2f} -> track "
                               f"(trust={'on' if _ft.get('vote_trust', False) else 'off'})")
+                elif _mode == 'dtrust':
+                    # DEROT-TRUST (bake-off synthesis): de-rotate (3-dof field fit) -> common-plane
+                    # depth-normalise the residual -> deviation from the single consensus parallax
+                    # vector -> ABSOLUTE-floored trust. Always-on soft down-weight, no freeze.
+                    # Offline pre-check: mover AUC 0.65/0.95 (E3/C1), busy-still trust 0.28/0.08.
+                    from Addons.motion.flow_track import derot_trust_weight, dino_grid
+                    _dg = dino_grid(cur_bgr, self._dino, self.device)
+                    _wfull, _dlab, _dinfo = derot_trust_weight(
+                        ref_bgr, cur_bgr, ref_depth, _dg, self._raft, self._raft_tf, self.device,
+                        fx=float(self.dataset.fx), n_groups=int(_ft.get('n_groups', 12)),
+                        floor_px=float(_ft.get('floor_px', 1.0)), w_min=float(_ft.get('w_min', 0.1)))
+                    self._trust_map = _wfull
+                    track_w_map = torch.from_numpy(_wfull[iH:-iH, iW:-iW])
+                    _wc = _wfull[iH:-iH, iW:-iW]
+                    print(f"[dtrust] f{frame_id}: rot={_dinfo.get('rot_deg', 0.0):.2f}deg "
+                          f"w_mean={float(_wc.mean()):.3f} frac_dn={float((_wc < 0.5).mean()):.3f} (ref {ref_id})")
+                    self._flowlog(['frame', 'rot_deg', 'w_mean', 'w_min', 'frac_dn'],
+                                  [frame_id, round(_dinfo.get('rot_deg', 0.0), 3),
+                                   round(float(_wc.mean()), 4), round(float(_wc.min()), 4),
+                                   round(float((_wc < 0.5).mean()), 4)])
                 elif _ft.get('gate', False):
                     if _ft.get('agreement', False):
                         # PER-REGION AGREEMENT (the probe in the loop): pool flow into DINO regions, do the

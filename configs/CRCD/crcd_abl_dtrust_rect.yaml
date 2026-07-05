@@ -1,0 +1,16 @@
+# DEROT-TRUST (the bake-off synthesis, isolated): de-rotate the flow with the validated 3-dof
+# rotation fit (est/GT gain 1.02/0.99), depth-normalise the RESIDUAL to the median-depth plane
+# (valid there -- the dispersion test proved x-depth helps translation and hurts rotation), score
+# deviation from the single consensus parallax vector against an ABSOLUTE 1px floor (the v1
+# deadband lesson -- no scene-relative MAD renormalisation). Districts that deviate = independent
+# movers -> low per-ray trust in the pose solve. No freeze; tracking runs every frame.
+# Offline pre-check (GT-still mover AUC): 0.65/0.95 E3/C1 vs vote_trust 0.59/0.61, dpool 0.42/0.63;
+# busy-still mean trust 0.28/0.08 vs vote_trust's 0.81/0.90 (renormalisation fixed).
+inherit_from: configs/CRCD/crcd_abl_base_rect.yaml
+flow_track:
+  enable: true
+  mode: dtrust
+  ref_stride: 8
+  n_groups: 12
+  floor_px: 1.0        # THE calibrated constant: absolute deviation floor at the median-depth plane
+  w_min: 0.1

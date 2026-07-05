@@ -1,0 +1,13 @@
+# UNCFIX + DEROT-TRUST -- the combined ship candidate. Two independent distrust signals multiply
+# in the pose solve (scene_rep composes rgb_unc_w * track_ray_w): the corrected sigma^2 weight
+# ("the field couldn't explain this ray historically" -- E3 Depth-L1 19.3->15.7 at n=1) and the
+# derot-trust weight ("no rigid egomotion story explains this district now"). Complementary time
+# bases: sigma^2 is a slow map-memory signal, derot-trust an instantaneous two-frame signal.
+inherit_from: configs/CRCD/crcd_abl_uncfix_rect.yaml
+flow_track:
+  enable: true
+  mode: dtrust
+  ref_stride: 8
+  n_groups: 12
+  floor_px: 1.0
+  w_min: 0.1

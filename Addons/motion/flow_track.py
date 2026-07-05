@@ -464,6 +464,66 @@ def fit_rotation_field(pts, fl, f, c, iters=3, mad_c=2.5, floor_px=0.3):
     return omega, pred, resid, inl
 
 
+def derot_trust_weight(ref_bgr, cur_bgr, depth, dino_g, model, tf, device,
+                       fx=1096.7, n_groups=12, floor_px=1.0, w_min=0.1, min_px=50,
+                       seed=0, flow=None):
+    """DEROT-TRUST -- the bake-off synthesis: per-ray tracking down-weight from the DE-ROTATED,
+    depth-normalised flow residual with an ABSOLUTE pixel floor. Repairs the two measured failures:
+    (a) dpool's x-depth normalisation is rotation-INVALID (rotation flow is depth-blind) -> subtract
+        the 3-dof rotational field first (fit_rotation_field; sensor validated est/GT 1.02/0.99);
+    (b) vote_trust's scene-relative MAD renormalises whole-field deformation to neutral -> deviation
+        is scored against the ABSOLUTE floor_px at the median-depth plane (the v1 deadband lesson).
+    On the residual (translation parallax + scene motion) the common-plane x-depth normalisation is
+    provably valid; districts deviating from the single consensus parallax vector are independent
+    movers -> low trust. Offline pre-check (GT-still mover AUC): 0.65/0.95 vs vote_trust 0.59/0.61,
+    dpool 0.42/0.63; busy-still mean trust 0.28/0.08 vs vote_trust's 0.81/0.90.
+    Returns (w [H,W] float32 trust map, lab [H,W] labels, info dict)."""
+    import cv2
+    from sklearn.cluster import KMeans
+    if flow is None:
+        flow = _raft_flow(model, tf, ref_bgr, cur_bgr, device)
+    H, W = flow.shape[:2]
+    # 3-dof rotation fit on a stride-16 grid; subtract -> residual = translation parallax + scene
+    ys, xs = np.mgrid[0:H:16, 0:W:16]
+    pts = np.stack([xs.ravel(), ys.ravel()], 1).astype(np.float64)
+    fl_g = flow[::16, ::16].reshape(-1, 2)
+    omega, pred, _, _ = fit_rotation_field(pts, fl_g, fx, (W / 2.0, H / 2.0))
+    resid_g = fl_g - pred                                    # de-rotated flow at grid points
+    # DINO districts (identical recipe to region_vote: L2-norm + KMeans, fixed seed)
+    gh, gw, C = dino_g.shape
+    X = dino_g.reshape(-1, C); X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-8)
+    lab = KMeans(n_groups, n_init=4, random_state=seed).fit_predict(X).reshape(gh, gw).astype(np.uint8)
+    lab = cv2.resize(lab, (W, H), interpolation=cv2.INTER_NEAREST)
+    lab_g = lab[ys.ravel(), xs.ravel()]
+    dvalid = (depth > 0) & np.isfinite(depth)
+    RK = np.zeros((n_groups, 2), np.float64); zK = np.zeros(n_groups, np.float64)
+    ok = np.zeros(n_groups, bool)
+    for k in range(n_groups):
+        gm = lab_g == k
+        m = (lab == k) & dvalid
+        if int(gm.sum()) < 8 or int(m.sum()) < min_px:
+            continue
+        RK[k] = np.median(resid_g[gm], axis=0)               # median de-rotated residual VECTOR
+        zK[k] = float(np.median(depth[m]))
+        ok[k] = True
+    w = np.ones((H, W), np.float32)
+    if int(ok.sum()) < 5:                                    # degenerate -> neutral weights
+        return w, lab, dict(rot_deg=float(np.degrees(np.linalg.norm(omega))), n_valid=int(ok.sum()))
+    zmed = float(np.median(zK[ok]))
+    cp = RK * (zK / max(zmed, 1e-9)).reshape(-1, 1)          # common-plane residual vectors
+    cons = np.median(cp[ok], axis=0)                         # the ONE camera-translation story
+    dev = np.linalg.norm(cp - cons, axis=1)                  # deviation from it = independent motion
+    wk = 1.0 / (1.0 + (np.maximum(0.0, dev - floor_px) / floor_px) ** 2)   # ABSOLUTE floor
+    wk = np.clip(wk, w_min, 1.0)
+    for k in range(n_groups):
+        if ok[k]:
+            w[lab == k] = wk[k]
+    info = dict(rot_deg=float(np.degrees(np.linalg.norm(omega))), n_valid=int(ok.sum()),
+                w_mean=float(wk[ok].mean()), w_min=float(wk[ok].min()),
+                cons=[float(cons[0]), float(cons[1])])
+    return w, lab, info
+
+
 def zero_motion_prior(c2w_est, prev_c2w, lam_r, lam_t):
     """[TRACKING, LEAN CORE] Constant-strength zero-motion prior on the per-frame RELATIVE pose (cur vs prev),
     added to the SDF tracking loss to kill noise-driven over-travel/jitter while letting real motion through.
