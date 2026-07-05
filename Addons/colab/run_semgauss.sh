@@ -605,9 +605,13 @@ PY
   ( while true; do nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null; sleep 30; done \
     > "$OUT/vram_samples.txt" ) & local VPID=$!
 
-  # 11) run SemGauss-SLAM
+  # 11) run SemGauss-SLAM.  PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb caps the allocator's block size ->
+  # reclaims fragmentation (SemGauss OOM'd on a T4 with ~0.57GB reserved-but-free while needing 0.16GB).
+  # Pure allocator tuning, NOT a method change -> the alloc conf the OOM message itself recommends.
+  # torch 1.12 -> use max_split_size_mb (expandable_segments needs torch>=2.0). Tune/disable via env.
   say "$UP: SemGauss sem_gauss.py (frames=$(ls "$scene_dir/rgb"/*.png 2>/dev/null | wc -l), num_frames=$NF)"
-  ( cd "$SEMGAUSS" && "$ENV_PY" sem_gauss.py "configs/crcd/bench_${UP}.py" ) 2>&1 | tee "$OUT/run.log"
+  ( cd "$SEMGAUSS" && PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-max_split_size_mb:128}" \
+      "$ENV_PY" sem_gauss.py "configs/crcd/bench_${UP}.py" ) 2>&1 | tee "$OUT/run.log"
   local RC=${PIPESTATUS[0]}; kill $VPID 2>/dev/null
   sort -rn "$OUT/vram_samples.txt" 2>/dev/null | head -1 | xargs -I{} echo "[peak VRAM] {} MiB" | tee -a "$OUT/run.log"
   [ "$RC" -eq 0 ] || { echo "FAILED sem_gauss.py rc=$RC" > "$OUT/status.txt"; touch "$OUT/.FAILED"; say "$UP FAILED (isolated) -> next"; return 1; }
