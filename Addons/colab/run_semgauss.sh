@@ -665,8 +665,19 @@ PY
 
   # 15) DDS eval battery (reuse verbatim; only paths differ). Clear stale APPEND-mode outputs.
   rm -f "$OUT/sim3_metrics.txt" "$OUT/render_eval.txt" "$OUT/render_eval.csv"
+  # NUM_FRAMES-capped run -> est covers a PREFIX of the sequence. sim3_ate would uniform-resample the
+  # full GT onto it (WRONG pairing: prefix vs whole trajectory). Truncate GT to the first n_est
+  # non-comment rows (exact 1:1 prefix pairing). Full runs: counts equal -> untouched.
+  local GT_EVAL="$local_snip/groundtruth.txt"
+  local n_est n_gt; n_est=$(grep -cve '^\s*$' "$OUT/est_c2w_data.txt")
+  n_gt=$(grep -v '^#' "$GT_EVAL" | grep -cve '^\s*$')
+  if [ "$n_est" -lt "$n_gt" ]; then
+    grep -v '^#' "$GT_EVAL" | awk 'NF' | head -n "$n_est" > "$OUT/groundtruth_prefix.txt"
+    GT_EVAL="$OUT/groundtruth_prefix.txt"
+    echo "[$UP] est=$n_est < gt=$n_gt (NUM_FRAMES cap) -> Sim3/video eval vs the first $n_est GT rows (prefix; PARTIAL-SEQUENCE, flag in the table)"
+  fi
   PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/sim3_ate.py" \
-     --est "$OUT/est_c2w_data.txt" --gt "$local_snip/groundtruth.txt" \
+     --est "$OUT/est_c2w_data.txt" --gt "$GT_EVAL" \
      --name "CRCD $UP" --out "$OUT/sim3_metrics.txt" || echo "[$UP] WARN sim3_ate failed"
   PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/eval_rendering.py" \
      --gt_dir "$OUT" --render_dir "$OUT" --sequence "CRCD ($UP)" \
@@ -685,7 +696,7 @@ PY
      --depth_input_dir "$scene_dir/depth" \
      --depth_output_dir "$REN_DEPTH_RAW" \
      --seg_dir "$scene_dir/semantic_remap" --seg_pattern '*.png' --seg_classmap \
-     --trajectory_est "$OUT/est_c2w_data.txt" --trajectory_gt "$local_snip/groundtruth.txt" \
+     --trajectory_est "$OUT/est_c2w_data.txt" --trajectory_gt "$GT_EVAL" \
      --png_depth_scale "$DEPTH_SCALE" --output "$OUT/video.mp4" \
      || echo "[$UP] WARN generate_video failed"
 
