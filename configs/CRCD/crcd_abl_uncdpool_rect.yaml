@@ -1,0 +1,19 @@
+# UNCFIX + DPOOL -- the LOCKED BDDS-SLAM configuration (thesis Reading A, locked 2026-07-06).
+# Two per-ray weights composed multiplicatively in the pose solve (scene_rep: rgb_unc_w * track_ray_w):
+#   (a) corrected sigma^2 uncertainty (uncfix: empty-ray guard + mean-normalisation) -- the slow,
+#       map-memory distrust signal (E3 Depth-L1 19.3->15.7 at n=1);
+#   (b) depth-pooled motion trust (dpool: common-plane v_k = f_k*Z_k, deviation from the median
+#       consensus, MAD scale with ~1px-at-median-depth floor) -- the instantaneous two-frame signal
+#       (best render of the E3 bake-off, moving-ratio 1.27).
+# Both components have individual run evidence; this arm gives the locked COMBINATION its own number.
+# Challenger: crcd_abl_uncdtrust_rect.yaml (de-rotated trust) must beat this arm to replace dpool.
+inherit_from: configs/CRCD/crcd_abl_uncfix_rect.yaml
+flow_track:
+  enable: true
+  mode: depth_pool
+  ref_stride: 8
+  n_groups: 12
+  mad_c: 2.0
+  w_floor_px: 1.0
+  w_min: 0.1
+  raft_small: false
