@@ -1,0 +1,20 @@
+# UNCVOTE_FBA -- the modern re-creation of the old champion, assembled from evidenced parts:
+#   uncfix (corrected sigma^2 down-weight)  -- moving-frame robustifier (canon component, corrected)
+#   + C' vote freeze (q10<2.5 | dis3>0.5)   -- the FIXED gate decision (held-out 4/4: E3 p64 vs the
+#                                              old flow_agree's 28; C1 92/73)
+#   + freeze_ba                              -- re-pin gate-frozen keyframes after global_BA. The old
+#                                              champion (C1 best_s0, 2026-06) proved this pair kills the
+#                                              still side: GT-still path 12.3mm vs our 76-87mm, KF walk
+#                                              on stills 0.109mm vs 1.26mm, ATE mean 1.21 (family best
+#                                              1.45) -- but its gate inverted on E3 (28% precision).
+#                                              C' replaces that decision; this arm tests the assembly.
+# Pre-registered: beat 1.21 on C1 (rebased pipeline should help further) AND hold E3 (no inversion).
+inherit_from: configs/CRCD/crcd_abl_uncfix_rect.yaml
+flow_track:
+  enable: true
+  mode: vote
+  ref_stride: 8
+  n_groups: 12
+  q10_px: 2.5
+  dis3_frac: 0.5
+  freeze_ba: true
