@@ -737,10 +737,18 @@ class DDSSLAM():
         if pose_optimizer is not None and len(frame_ids_all) > 1:
             for i in range(len(frame_ids_all[1:])):
                 self.est_c2w_data[int(frame_ids_all[i+1].item())] = self.matrix_from_tensor(cur_rot[i:i+1], cur_trans[i:i+1]).detach().clone()[0]
-        
+
             if self.config['mapping']['optim_cur']:
                 print('Update current pose')
                 self.est_c2w_data[cur_frame_id] = self.matrix_from_tensor(cur_rot[-1:], cur_trans[-1:]).detach().clone()[0]
+
+            # BA OBSERVABILITY: how far did this BA cycle move the keyframe poses? THE live check
+            # that ba_w bites (the phase-0 fingerprint: unweighted BA walks still keyframes
+            # ~1.3mm/cycle). One line per BA call; no model effect.
+            _nk = len(frame_ids_all) - 1
+            _new_kf = self.matrix_from_tensor(cur_rot[:_nk], cur_trans[:_nk]).detach()
+            _dt = (_new_kf[:, :3, 3] - poses[1:1 + _nk].to(_new_kf.device)[:, :3, 3]).norm(dim=-1) * 1000.0
+            print(f"[ba] f{cur_frame_id}: kf|dt| mean={float(_dt.mean()):.3f}mm max={float(_dt.max()):.3f}mm n={_nk}")
 
         # freeze_ba: re-apply the gate's FIX to gate-fixed KEYFRAMES that BA just re-optimised, so the
         # still-window freeze persists (keyframes anchor the non-keyframes via the relative poses). Kills

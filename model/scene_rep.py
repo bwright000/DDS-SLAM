@@ -702,6 +702,15 @@ class JointEncoding(nn.Module):
             # None unless map_sdf_upweight>0 + route exists + mapping -> base/tracking byte-identical.
             _sw = self.config['training'].get('map_sdf_upweight', 0.0)
             _sdf_rw = (1.0 + _sw * route_w).detach().squeeze() if ((not tracking) and _sw > 0 and route_w is not None) else None
+            # ba_w EXTENSION TO GEOMETRY: in BA the sdf/fs terms (weights 1000/10) carry LIVE pose
+            # gradients -- the field and poses co-optimise, and on deforming rays the static field
+            # cannot fit the moved surface, so the x1000 sdf residual pulls keyframe poses directly.
+            # Weighting only rgb/depth (x5/x0.1) would damp <1% of BA's pose gradient. Apply the SAME
+            # corrected sigma^2 ray weight to sdf/fs when ba_w is on. tracking path untouched (there
+            # the frozen converged map keeps sdf at a flat minimum -- measured ~0% of the budget).
+            if _ba_w_on and (rgb_unc_w is not None):
+                _g_w = rgb_unc_w.detach().reshape(-1)
+                _sdf_rw = _g_w if _sdf_rw is None else _sdf_rw * _g_w
             fs_loss, sdf_loss, sdf_stats = get_sdf_loss(z_vals, target_d, sdf, truncation, 'l2', grad=None, ray_weight=_sdf_rw)
 
             # --- ARM-2 Inc-1: self-supervised aleatoric NLL on the photometric residual.
