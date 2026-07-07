@@ -1,0 +1,10 @@
+# LOCKED MODEL + BA WEIGHTING (the phase-0 fix). The C1 keyframe fingerprint (2026-07-06): steps
+# ONTO keyframes average 1.0-1.3mm vs 0.17-0.26mm at every other phase; 36/36 top-decile spikes are
+# keyframe arrivals; keyframe-only path ratio 4.59; 47mm of GT-metric path injected on provably-STILL
+# frames. Diagnosis: global_BA re-optimises keyframe poses against the deforming scene with ZERO
+# robustification -- every weight we built fires only in tracking. ba_w extends the corrected sigma^2
+# weight (empty-ray guard + mean-norm) into the BA loss. Watch the RENDER in the A/B: the weight also
+# reaches the field update, so deforming regions get less BA supervision (possible softening).
+inherit_from: configs/CRCD/crcd_abl_uncdpool_rect.yaml
+uncertainty:
+  ba_w: true

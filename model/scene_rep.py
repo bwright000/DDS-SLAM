@@ -507,7 +507,7 @@ class JointEncoding(nn.Module):
 
         return ret
     
-    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None, track_ray_w=None, route_w=None, map_ray_w=None, oracle_dx=None):
+    def forward(self, rays_o, rays_d, target_rgb, target_d, global_step=0,target_edge_semantic=None, border=None, notFirstMap=True, UseBorder=False,render_only=False, tracking=False, target_dino=None, target_seg=None, track_ray_w=None, route_w=None, map_ray_w=None, oracle_dx=None, ba=False):
         '''
         Params:
             rays_o: ray origins (Bs, 3)
@@ -590,7 +590,15 @@ class JointEncoding(nn.Module):
             # flags-off base path are byte-identical (rgb_unc_w / depth_unc_w stay None).
             rgb_unc_w = None
             depth_unc_w = None
-            if tracking and getattr(self, 'unc_on', False) and ('sigma2' in rend_dict):
+            # BA-WEIGHT EXTENSION (uncertainty.ba_w, default off): the C1 phase-analysis showed the
+            # dominant residual error is global_BA walking KEYFRAME poses (~1.3mm/cycle, 47mm of
+            # GT-metric path injected on provably-STILL frames) -- the tracker is robustified but BA
+            # re-optimises poses against the deforming scene UNWEIGHTED. ba_w applies the SAME
+            # corrected sigma^2 weight to the BA loss (poses + field share it; the A/B watches the
+            # render for softening). ba=True is set ONLY by global_BA's forward -> current-frame /
+            # first-frame mapping unchanged; flags-off path byte-identical.
+            _ba_w_on = ba and self.config.get('uncertainty', {}).get('ba_w', False)
+            if (tracking or _ba_w_on) and getattr(self, 'unc_on', False) and ('sigma2' in rend_dict):
                 _wmin = self.config.get('uncertainty', {}).get('w_min', 0.1)
                 _wmax = self.config.get('uncertainty', {}).get('w_max', 10.0)
                 _w_ray = torch.clamp(1.0 / rend_dict['sigma2'], _wmin, _wmax).detach()  # [N_rays,1]

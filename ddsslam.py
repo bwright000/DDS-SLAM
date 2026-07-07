@@ -701,7 +701,7 @@ class DDSSLAM():
                         route_w_ba = torch.cat([route_w_ba, route_w_ba[_mv]])
                         if _odx_ba is not None: _odx_ba = torch.cat([_odx_ba, _odx_ba[_mv]])
 
-            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, route_w=route_w_ba, oracle_dx=_odx_ba)
+            ret = self.model.forward(rays_o, rays_d, target_s, target_d, target_edge_semantic=target_edge_semantic, target_dino=target_dino, route_w=route_w_ba, oracle_dx=_odx_ba, ba=True)
 
             loss = self.get_loss_from_ret(ret, smooth=True)
             
