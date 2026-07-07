@@ -1,0 +1,11 @@
+# UNCVOTE_FBA + BA WEIGHTING -- "BA sorted" on the champion assembly. The E3 uncvote_fba_s0
+# autopsy (2026-07-07): best-ever E3 (ATE mean 2.87, |r| 0.756, PSNR 24.02, Depth-L1 14.33) but
+# tracked steps ONTO keyframes average 4.28mm vs 0.53-0.92mm at every other phase (jumps at frames
+# 120,125,...,190 -- the exact 5-frame BA cadence, overshoot not catch-up: p90 12x the GT motion
+# accumulated over the frozen span). freeze_ba pins FROZEN keyframes only; moving-segment keyframes
+# are still re-optimised by global_BA against the deforming scene with no robustification. ba_w
+# (the corrected sigma^2 weight incl. sdf/fs inside BA -- E3 3.45 evidence) closes that hole.
+# Pre-registered: phase-4 tracked steps drop toward ~1mm, E3 < 2.87, path ratio < 3.17.
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_rect.yaml
+uncertainty:
+  ba_w: true

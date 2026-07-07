@@ -35,7 +35,8 @@ declare -A ARM_TMPL=( [base]=configs/CRCD/crcd_improved_rect.yaml [best]=${BEST_
   [oracle_fba]=configs/CRCD/crcd_abl_oracle_fba_rect.yaml [vote_trust]=configs/CRCD/crcd_abl_vote_trust_rect.yaml \
   [vote_both]=configs/CRCD/crcd_abl_vote_both_rect.yaml [dtrust]=configs/CRCD/crcd_abl_dtrust_rect.yaml \
   [uncdtrust]=configs/CRCD/crcd_abl_uncdtrust_rect.yaml [uncdpool]=configs/CRCD/crcd_abl_uncdpool_rect.yaml \
-  [uncdpool_baw]=configs/CRCD/crcd_abl_uncdpool_baw_rect.yaml [uncvote_fba]=configs/CRCD/crcd_abl_uncvote_fba_rect.yaml )   # BEST_CFG= override (T4). Arms: abl_*/l0*/dpool/pnp | prior (DDS_MP_LAM sweep) | cons=epoch-consistent poses | unc/uncfix=canon-confound A/B | still/stillcons=map gate (v1 FAILED) | vote=C' freeze | vote_trust=vote as DOWN-WEIGHT (no freeze) | vote_both=freeze+trust | oracle=GT-perfect freeze (ceiling) | *_fba=+freeze_ba
+  [uncdpool_baw]=configs/CRCD/crcd_abl_uncdpool_baw_rect.yaml [uncvote_fba]=configs/CRCD/crcd_abl_uncvote_fba_rect.yaml \
+  [uncvote_fba_baw]=configs/CRCD/crcd_abl_uncvote_fba_baw_rect.yaml [uncvotetrust_fba]=configs/CRCD/crcd_abl_uncvotetrust_fba_rect.yaml )   # BEST_CFG= override (T4). Arms: abl_*/l0*/dpool/pnp | prior (DDS_MP_LAM sweep) | cons=epoch-consistent poses | unc/uncfix=canon-confound A/B | still/stillcons=map gate (v1 FAILED) | vote=C' freeze | vote_trust=vote as DOWN-WEIGHT (no freeze) | vote_both=freeze+trust | oracle=GT-perfect freeze (ceiling) | *_fba=+freeze_ba
 PARALLEL="${PARALLEL:-1}"; NPROC=$(nproc 2>/dev/null||echo 8); THREADS=$(( NPROC/PARALLEL>0 ? NPROC/PARALLEL : 1 ))
 export OMP_NUM_THREADS=$THREADS MKL_NUM_THREADS=$THREADS OPENBLAS_NUM_THREADS=$THREADS NUMEXPR_NUM_THREADS=$THREADS
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256 LD_LIBRARY_PATH=/usr/lib64-nvidia:${LD_LIBRARY_PATH:-}
@@ -65,7 +66,7 @@ python -c 'from moge.model.v2 import MoGeModel' 2>/dev/null || { say "installing
 python -c "import lpips" 2>/dev/null || pip install -q lpips || true
 # best arm needs the champion config + RAFT/DINOv2 (flow_agree gate). Validate the config + pre-warm the weights
 # ONCE here so parallel best jobs don't each re-download.
-if echo " $ARMS " | grep -qE " (best|vote|vote_trust|vote_both|dtrust|uncdtrust|dpool|uncdpool|uncvote_fba) "; then
+if echo " $ARMS " | grep -qE " (best|vote|vote_trust|vote_both|dtrust|uncdtrust|dpool|uncdpool|uncvote_fba|uncvote_fba_baw|uncvotetrust_fba) "; then
   [ -f configs/CRCD/crcd_best_rect.yaml ] || { say "FATAL: configs/CRCD/crcd_best_rect.yaml missing (best arm)"; exit 1; }
   python - <<'PY' 2>&1 | tail -1 || say "WARN: RAFT/DINO prewarm failed (best/vote arm may redownload per job)"
 import torch; from Addons.motion.flow_track import load_raft, load_dino

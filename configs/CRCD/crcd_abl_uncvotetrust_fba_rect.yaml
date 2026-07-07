@@ -1,0 +1,18 @@
+# UNCVOTETRUST_FBA -- the COMBINER (BDDS-full candidate): both halves of the two-halves
+# decomposition in one model, every pose writer protected.
+#   STILL side : C' vote freeze (q10<2.5 | dis3>0.5) + freeze_ba re-pin -- the best still
+#                detector (held-out 4/4, no E3 inversion) + the proven churn kill.
+#   MOVING side: derot-trust per-ray weights on frames that FALL THROUGH the gate
+#                (trust_fallthrough; reuses the vote's RAFT flow) -- the best motion sensor
+#                (tool-block 0.969 vs 0.169; best weights-only C1 1.45 / E3 3.83).
+#   BA         : ba_w (corrected sigma^2 incl. sdf/fs inside global_BA) -- closes the last
+#                unprotected writer (the 4.28mm keyframe-seam lurches on E3 uncvote_fba).
+# vs uncvote_fba_baw this isolates ONE change: dtrust weights on tracked frames.
+# Pre-registered: E3 <= uncvote_fba_baw (dtrust damps tracked-island overshoot), C1 < 1.45.
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_rect.yaml
+flow_track:
+  trust_fallthrough: true
+  floor_px: 1.0        # the calibrated absolute deviation floor (dtrust constant, untouched)
+  w_min: 0.1
+uncertainty:
+  ba_w: true

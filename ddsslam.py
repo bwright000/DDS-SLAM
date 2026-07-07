@@ -1075,8 +1075,16 @@ class DDSSLAM():
                         track_w_map = torch.from_numpy(_vw[iH:-iH, iW:-iW])
                     _vg_freeze = _ft.get('vote_freeze', True) and (
                         (_q10 < float(_ft.get('q10_px', 2.5))) or (_dis3 > float(_ft.get('dis3_frac', 0.5))))
-                    self._flowlog(['frame', 'q10', 'dis3', 'freeze'],
-                                  [frame_id, round(_q10, 3), round(_dis3, 3), int(_vg_freeze)])
+                    # COMBINER (trust_fallthrough, default off): C' vote owns the freeze DECISION
+                    # (still side); derot-trust owns the per-ray WEIGHTS on frames that fall through
+                    # (moving side). The two-halves decomposition, one model.
+                    _tf_on = _ft.get('trust_fallthrough', False)
+                    if not _tf_on:
+                        self._flowlog(['frame', 'q10', 'dis3', 'freeze'],
+                                      [frame_id, round(_q10, 3), round(_dis3, 3), int(_vg_freeze)])
+                    elif _vg_freeze:
+                        self._flowlog(['frame', 'q10', 'dis3', 'freeze', 'rot_deg', 'w_mean', 'frac_dn'],
+                                      [frame_id, round(_q10, 3), round(_dis3, 3), 1, '', 1.0, 0.0])
                     if _vg_freeze:
                         self.est_c2w_data[frame_id] = self.est_c2w_data[frame_id - 1].detach().clone()
                         self._gate_fixed_pose[frame_id] = self.est_c2w_data[frame_id].detach().clone()
@@ -1086,6 +1094,24 @@ class DDSSLAM():
                         self._vg_frozen = getattr(self, '_vg_frozen', 0) + 1
                         print(f"[vote_gate] f{frame_id}: q10={_q10:.2f} dis3={_dis3:.2f} -> FROZEN total={self._vg_frozen}")
                         return
+                    elif _tf_on:
+                        # fall-through frame: dtrust per-ray weights (reuses the vote's RAFT flow)
+                        from Addons.motion.flow_track import derot_trust_weight
+                        _wfull, _dlab, _dinfo = derot_trust_weight(
+                            ref_bgr, cur_bgr, ref_depth, _dg, self._raft, self._raft_tf, self.device,
+                            fx=float(self.dataset.fx), n_groups=int(_ft.get('n_groups', 12)),
+                            floor_px=float(_ft.get('floor_px', 1.0)), w_min=float(_ft.get('w_min', 0.1)),
+                            flow=_flow)
+                        self._trust_map = _wfull
+                        track_w_map = torch.from_numpy(_wfull[iH:-iH, iW:-iW])
+                        _wc = _wfull[iH:-iH, iW:-iW]
+                        self._flowlog(['frame', 'q10', 'dis3', 'freeze', 'rot_deg', 'w_mean', 'frac_dn'],
+                                      [frame_id, round(_q10, 3), round(_dis3, 3), 0,
+                                       round(_dinfo.get('rot_deg', 0.0), 3),
+                                       round(float(_wc.mean()), 4), round(float((_wc < 0.5).mean()), 4)])
+                        print(f"[vote+dtrust] f{frame_id}: q10={_q10:.2f} dis3={_dis3:.2f} "
+                              f"rot={_dinfo.get('rot_deg', 0.0):.2f}deg w_mean={float(_wc.mean()):.3f} "
+                              f"frac_dn={float((_wc < 0.5).mean()):.3f} (ref {ref_id})")
                     elif frame_id % 30 == 0:
                         print(f"[vote_gate] f{frame_id}: q10={_q10:.2f} dis3={_dis3:.2f} -> track "
                               f"(trust={'on' if _ft.get('vote_trust', False) else 'off'})")
