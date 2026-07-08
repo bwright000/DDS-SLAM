@@ -284,9 +284,39 @@ PY
 }
 
 # ------------------------------------------------------------------- ENV ----
+# patch (f): guard the fork's confidence-map tail in factor_graph.update() for the FILLER graph.
+# The fork appends a confidence-viz block that picks the edge between the two most-recent keyframes
+# (all_nodes topk-2) and upsamples its BA weight into video.confidence_maps. In the trajectory
+# filler's temporary graph EVERY edge is keyframe->fill-frame (trajectory_filler.py:68-69) -> no
+# KF-KF edge exists -> edge_indices empty -> edge_indices[0] IndexError. This is WHY the authors
+# shipped terminate() disabled: their own viz addition breaks their own filler. The block runs AFTER
+# the BA solve and only writes confidence_maps (viz/telemetry; read only by the display path) ->
+# skipping the empty case is POSE-NEUTRAL. Idempotent + fail-loud.
+apply_filler_confidence_guard(){
+  local F="$PERSEUS/SegmentedSLAM/droid_slam/factor_graph.py"
+  [ -f "$F" ] || { echo "[env] FATAL $F missing"; return 1; }
+  python3 - "$F" <<'PY'
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding='utf-8').read()
+MARK = "[DDS-fillguard]"
+if MARK in s:
+    print("[env] filler-confidence guard already applied"); sys.exit(0)
+old = "            edge_index = edge_indices[0]"
+assert s.count(old) == 1, f"anchor not unique/missing ({s.count(old)}x): edge_index = edge_indices[0]"
+new = ("            if edge_indices.numel() == 0:  # [DDS-fillguard] filler graph has no KF-KF edge ->\n"
+       "                self.age += 1              # confidence-viz n/a there; BA solve already done above\n"
+       "                return                     # (pose-neutral: this tail only writes confidence_maps)\n"
+       "            edge_index = edge_indices[0]")
+io.open(p, 'w', encoding='utf-8').write(s.replace(old, new, 1))
+print("[env] patched factor_graph.update -> empty-edge guard on the confidence-viz tail (pose-neutral)")
+PY
+}
+
 build_env(){
   [ -d "$PERSEUS/.git" ] || git clone --recursive "$PERSEUS_URL" "$PERSEUS" || { echo "FATAL clone $PERSEUS_URL"; exit 30; }
   apply_terminate_restore_patch || exit 30
+  apply_filler_confidence_guard || exit 30
   [ "$PERSEUS_NOSEG" = 1 ] && { apply_noseg_stub_patch || exit 30; }
   if [ "${REBUILD_EXT:-0}" != 1 ] && [ -x "$ENV_PY" ] \
      && PYTHONPATH= "$ENV_PY" -c "import droid_backends, lietorch" 2>/dev/null; then
