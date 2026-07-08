@@ -239,16 +239,37 @@ assert old in s, "anchor gone: " + old
 io.open(p, 'w', encoding='utf-8').write(s.replace(old, new, 1))
 print("[env] patched create_circle_mask -> frame-shaped ones mask (broadcast-crash fix, numeric no-op)")
 PY
-  # RECURSIVE lookup: the Box share is a FOLDER (e.g. CAO_BPH_MDE_Segmentation) that users save
-  # wholesale under $WEIGHTS_DRIVE -> the .pth files may be nested. find them wherever they sit.
+  # RECURSIVE lookup: the Box share is a FOLDER (CAO_BPH_MDE_Segmentation) with the lab's OWN
+  # subfolders/filenames (e.g. CAO/Seg/..., CAO/MDE/..., plus BPH variants we don't use). Resolution
+  # order per expected file: (1) explicit override SEG_SRC_SEG / SEG_SRC_MDE (absolute path), (2) exact
+  # expected filename anywhere below WEIGHTS_DRIVE, (3) role heuristic: a UNIQUE *.pth on a CAO path
+  # matching the role (*seg* / *mde*) -- ambiguity (>1 candidate) fails loud, never guesses.
+  # Whatever source is found is COPIED TO the expected name (the code hardcodes its load paths).
+  resolve_weight_src(){ local dest=$1 pat="" ov=""
+    case "$dest" in
+      spie_cao_tumor_segmentation.pth) ov="${SEG_SRC_SEG:-}"; pat='*seg*';;
+      mde_cao_518.pth)                 ov="${SEG_SRC_MDE:-}"; pat='*mde*';;
+    esac
+    [ -n "$ov" ] && [ -f "$ov" ] && { echo "$ov"; return 0; }
+    local hit; hit=$(find "$WEIGHTS_DRIVE" -type f -name "$dest" 2>/dev/null | head -1)
+    [ -n "$hit" ] && { echo "$hit"; return 0; }
+    [ -n "$pat" ] || return 0
+    local cands n
+    cands=$(find "$WEIGHTS_DRIVE" -type f \( -iname '*.pth' -o -iname '*.pt' -o -iname '*.ckpt' \) -ipath '*cao*' -ipath "$pat" 2>/dev/null)
+    n=$(printf '%s' "$cands" | grep -c . || true)
+    if [ "$n" = 1 ]; then echo "$cands"; return 0; fi
+    [ "$n" -gt 1 ] && { echo "[env] AMBIGUOUS candidates for $dest (set SEG_SRC_SEG/SEG_SRC_MDE):" >&2
+                        printf '%s\n' "$cands" | sed 's/^/    /' >&2; }
+    return 0
+  }
   local missing=0 f SRC
   for f in $SEG_WEIGHT_FILES; do
     if [ -f "$SEG_MODELS_DIR/$f" ]; then echo "[env] seg weight present: $f"; continue; fi
-    SRC=$(find "$WEIGHTS_DRIVE" -type f -name "$f" 2>/dev/null | head -1)
+    SRC=$(resolve_weight_src "$f")
     if [ -n "$SRC" ]; then
       mkdir -p "$SEG_MODELS_DIR"; cp -f "$SRC" "$SEG_MODELS_DIR/$f" \
         && echo "[env] seg weight $f <- $SRC" || missing=1
-    else missing=1; echo "[env] seg weight MISSING: $f (searched $WEIGHTS_DRIVE recursively)"; fi
+    else missing=1; echo "[env] seg weight MISSING: $f (searched $WEIGHTS_DRIVE recursively + CAO role heuristic)"; fi
   done
   [ "$missing" = 0 ] || {
     echo "FATAL[env]: seg/MDE weights absent and the Box link is manual-download-only."
@@ -256,8 +277,9 @@ PY
     echo "  2) Save under Drive anywhere below: $WEIGHTS_DRIVE (searched recursively)"
     echo "  3) Re-run: bash Addons/colab/run_perseus.sh env"
     echo "  OR run tracking-identical without them: PERSEUS_NOSEG=1 bash Addons/colab/run_perseus.sh env"
-    echo "  .pth files actually present under $WEIGHTS_DRIVE (if names differ, set SEG_WEIGHT_FILES=...):"
-    find "$WEIGHTS_DRIVE" -type f -name '*.pth' 2>/dev/null | head -10 | sed 's/^/    /'
+    echo "  checkpoint files actually present under $WEIGHTS_DRIVE:"
+    find "$WEIGHTS_DRIVE" -type f \( -iname '*.pth' -o -iname '*.pt' -o -iname '*.ckpt' \) 2>/dev/null | head -15 | sed 's/^/    /'
+    echo "  -> map explicitly with: SEG_SRC_SEG=<abs path to the CAO seg ckpt> SEG_SRC_MDE=<abs path to the CAO MDE ckpt>"
     return 1; }
 }
 
