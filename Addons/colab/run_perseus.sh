@@ -220,6 +220,25 @@ ensure_seg_weights(){
   # (test_one_line_import.py:21-27) but the tree ships it at droid_slam/MDE/application/cao_seg
   # (README placement) -> alias them with a symlink (env wiring, not a method change).
   [ -e "$SLAM/droid_slam/cao_seg" ] || ln -sfn "$SLAM/droid_slam/MDE/application/cao_seg" "$SLAM/droid_slam/cao_seg"
+  # patch (m) [CONFIRMED vs MDE@427605c source]: inference_single multiplies the frame-sized prediction
+  # by create_circle_mask's FIXED np.ones((1080,1080)) (the circle logic is already stubbed to all-ones
+  # upstream; frame_rgb arg ignored). Works on their rig only because their calib crops to 1080x1080;
+  # on CRCD 720x1280 it is (720,1280)*(1080,1080) -> numpy broadcast crash at frame 0. Fix = size the
+  # ones-mask to the frame. NUMERICALLY A NO-OP (x*1 either way) -> pure shape repair, method untouched.
+  local MFILE="$SLAM/droid_slam/MDE/application/cao_seg/src/models/test_one_line_import.py"
+  python3 - "$MFILE" <<'PY' || { echo "FATAL[env]: mask-shape patch anchor missing (MDE submodule moved?) -> inspect $MFILE"; return 1; }
+import io, sys
+p = sys.argv[1]
+s = io.open(p, encoding='utf-8').read()
+MARK = "[DDS-crcd-maskshape]"
+if MARK in s:
+    print("[env] mask-shape patch already applied"); sys.exit(0)
+old = "mask = np.ones((height, width), dtype=np.uint8)"
+new = "mask = np.ones(frame_rgb.shape[:2], dtype=np.uint8)  # [DDS-crcd-maskshape] all-ones (upstream stub) sized to the frame; x*1 no-op"
+assert old in s, "anchor gone: " + old
+io.open(p, 'w', encoding='utf-8').write(s.replace(old, new, 1))
+print("[env] patched create_circle_mask -> frame-shaped ones mask (broadcast-crash fix, numeric no-op)")
+PY
   local missing=0 f
   for f in $SEG_WEIGHT_FILES; do
     if [ -f "$SEG_MODELS_DIR/$f" ]; then echo "[env] seg weight present: $f"; continue; fi
