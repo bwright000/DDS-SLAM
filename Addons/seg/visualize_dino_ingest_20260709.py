@@ -90,24 +90,30 @@ def main():
     sd = torch.load(a.ckpt, map_location='cpu')
     ft.load_state_dict(sd, strict=False); ft.eval()
     VSZ = (a.v3_h // patch * patch, a.v3_w // patch * patch)
-    gh3, gw3 = VSZ[0] // patch, VSZ[1] // patch
 
-    def v3_grid(bgr, layer=None):
+    bb_pristine, _, _, _ = load_dinov3_hf(a.dinov3)          # RAW DINOv3, no fine-tune
+    bb_pristine = bb_pristine.to(device).eval()
+
+    def v3_grid(bgr, wrap, size, layer=None):
+        """Patch grid from any HF-wrapped DINOv3 at an arbitrary /patch-snapped size."""
         im = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-        im = cv2.resize(im, (VSZ[1], VSZ[0]))
+        sh, sw = (size[0] // patch) * patch, (size[1] // patch) * patch
+        im = cv2.resize(im, (sw, sh))
         mean = np.array([0.485, 0.456, 0.406], np.float32); std = np.array([0.229, 0.224, 0.225], np.float32)
         t = torch.from_numpy((im - mean) / std).permute(2, 0, 1)[None].float().to(device)
         with torch.inference_mode():
             if layer is None:
-                tok = ft.backbone.model(pixel_values=t)
-                tok = tok.last_hidden_state[:, 1 + nreg:, :]
+                tok = wrap.model(pixel_values=t).last_hidden_state[:, 1 + nreg:, :]
             else:
-                tok = ft.backbone.model(pixel_values=t, output_hidden_states=True).hidden_states[layer][:, 1 + nreg:, :]
-        return tok[0].cpu().numpy().reshape(gh3, gw3, -1).astype(np.float32)
+                tok = wrap.model(pixel_values=t, output_hidden_states=True).hidden_states[layer][:, 1 + nreg:, :]
+        return tok[0].cpu().numpy().reshape(sh // patch, sw // patch, -1).astype(np.float32)
 
+    im_h, im_w = load_frame(a.rgb_dir, a.offset, a.frames[0]).shape[:2]
     ARMS = {'v2base(gate today)': lambda b: dino_grid(b, base, device),
-            f'v3ft_mid(block{a.mid_block})': lambda b: v3_grid(b, a.mid_block),
-            'v3ft(final)': lambda b: v3_grid(b, None)}
+            'v3RAW@504x896': lambda b: v3_grid(b, bb_pristine, VSZ),
+            f'v3RAW@{im_h}x{im_w}': lambda b: v3_grid(b, bb_pristine, (im_h, im_w)),
+            f'v3ft_mid(block{a.mid_block})': lambda b: v3_grid(b, ft.backbone, VSZ, a.mid_block),
+            'v3ft(final)': lambda b: v3_grid(b, ft.backbone, VSZ)}
     NAMES = {310: 'TAIL-working', 40: 'clean-STILL', 115: 'camera-MOVING'}
 
     frames = [load_frame(a.rgb_dir, a.offset, f) for f in a.frames]
