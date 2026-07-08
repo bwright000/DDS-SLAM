@@ -527,6 +527,13 @@ run_crcd_one(){
      --name "CRCD $UP PERSEUS$VS" --out "$OUT/sim3_metrics.txt" \
      || { echo "FAILED sim3_ate" > "$OUT/status.txt"; touch "$OUT/.FAILED"; return 1; }
 
+  # 7.5) per-run VISUAL (standing rule: every result ships tables + a visual; a tracking-only arm
+  #      has no renders/video -> the Sim3-aligned est-vs-GT trajectory plot is the diagnostic)
+  PYTHONPATH= "$DDS_PY" "$REPO/Addons/eval/plot_traj_sim3.py" \
+     --est "$OUT/est_c2w_data.txt" --gt "$GT_EVAL" \
+     --name "CRCD $UP PERSEUS$VS" --out "$OUT/traj_plot.png" \
+     || echo "[$UP] WARN traj plot failed (metrics unaffected)"
+
   # 8) metrics.json — tracking fields + nulls for render fields (aggregate prints "--")
   PYTHONPATH= "$DDS_PY" - "$OUT" "$UP$VS" "$PERSEUS_NOSEG" "$PERSEUS_BUFFER" <<'PY'
 import json, os, re, sys
