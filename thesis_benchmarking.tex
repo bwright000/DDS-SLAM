@@ -323,6 +323,66 @@ retraction.}
 \end{figure}
 
 % ---------------------------------------------------------------------------
+\subsection{PERSEUS}
+\label{sec:bench_perseus}
+
+PERSEUS \cite{perseus} is the learned dense-bundle-adjustment representative:
+a DROID-SLAM \cite{teed2021droid} derivative in which a recurrent optical-flow
+network drives dense per-keyframe bundle adjustment, extended with semantic
+segmentation and monocular depth submodules that label the reconstructed point
+cloud. It is the only monocular system in the benchmark --- it consumes the
+rectified RGB stream and intrinsics alone, with no depth input --- and the
+only one whose map exists purely in service of tracking. Its entry is
+therefore the mirror image of SGS-SLAM's: tracking-only. It renders nothing,
+so PSNR/SSIM/LPIPS do not apply, and it takes no depth in, so the
+input-versus-output Depth-$L_1$ self-consistency is undefined; its native
+trajectory is up-to-scale, which is precisely the case the Sim(3) protocol
+exists for. Onboarding required no method configuration at all: every DROID
+hyperparameter is the authors' default, and the only dataset-side inputs are
+the calibration file (rectified intrinsics, zero distortion) and a frame
+stride of one (the shipped default of three would emit a third of the poses
+and break frame-exact pairing with ground truth). Two mechanical repairs to
+the published code were necessary and are documented in the runbook: the
+released fork ships its trajectory-export path commented out (as published it
+cannot emit a trajectory), which we restored from the authors' own
+commented-out upstream lines; and the segmentation submodule --- trained on
+central-airway anatomy and hard-coded to a circular endoscope mask --- is
+bypassed with a null stub. The bypass is provably tracking-identical: the
+segmentation mask is stored only for point-cloud labelling and is never
+consumed by the motion filter, factor graph or bundle adjustment, so the
+tracking numbers are unaffected; the semantic half of PERSEUS is simply
+out of domain on colorectal data and is noted as such rather than scored.
+
+\begin{table}[t]
+\centering
+\caption{PERSEUS on the CRCD benchmark: Sim(3) ATE (mm), path ratio and
+aligned $|r|_{\mathrm{dom}}$ on its native monocular trajectory (frame stride
+1, all DROID hyperparameters at the authors' defaults). Render and
+Depth-$L_1$ columns do not apply (Section~\ref{sec:bench_perseus}).}
+\label{tab:bench_perseus}
+\small
+\begin{tabular}{l r rrrr}
+\toprule
+Snippet & $N$ & ATE$_{\mathrm{mean}}$ & ATE$_{\mathrm{max}}$ & path ratio &
+$|r|_{\mathrm{dom}}$ \\
+\midrule
+C1\_001 &  360 & \multicolumn{4}{c}{\emph{in progress}} \\
+C2\_001 &  730 & \multicolumn{4}{c}{\emph{in progress}} \\
+C3\_001 & 1527 & \multicolumn{4}{c}{\emph{in progress}} \\
+E3\_005 &  265 & \multicolumn{4}{c}{\emph{in progress}} \\
+G3\_001 & 1987 & \multicolumn{4}{c}{\emph{in progress}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% TODO on results: PERSEUS is the strongest dedicated tracker in the table by
+% design lineage; the interesting outcome either way --- if it leads, it sets
+% the tracking bar for the render-capable systems; if it over-travels or
+% loses lock on the sub-SNR mm-scale motion, that failure is evidence that
+% CRCD's regime defeats even flow-based dense BA, strengthening the
+% sub-SNR analysis of Section~\ref{sec:bench_summary}.
+
+% ---------------------------------------------------------------------------
 \subsection{Cross-method summary}
 \label{sec:bench_summary}
 
