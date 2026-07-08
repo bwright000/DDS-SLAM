@@ -366,21 +366,38 @@ Depth-$L_1$ columns do not apply (Section~\ref{sec:bench_perseus}).}
 Snippet & $N$ & ATE$_{\mathrm{mean}}$ & ATE$_{\mathrm{max}}$ & path ratio &
 $|r|_{\mathrm{dom}}$ \\
 \midrule
-C1\_001 &  360 & \multicolumn{4}{c}{\emph{in progress}} \\
-C2\_001 &  730 & \multicolumn{4}{c}{\emph{in progress}} \\
-C3\_001 & 1527 & \multicolumn{4}{c}{\emph{in progress}} \\
-E3\_005 &  265 & \multicolumn{4}{c}{\emph{in progress}} \\
-G3\_001 & 1987 & \multicolumn{4}{c}{\emph{in progress}} \\
+C1\_001 &  360 &  1.97 &  4.64 & 3.31 & 0.97 \\
+C2\_001 &  730 &  3.64 & 10.46 & 2.93 & 0.98 \\
+C3\_001 & 1527 & 10.69 & 21.90 & 0.96 & 0.48 \\
+E3\_005 &  265 &  4.84 & 14.83 & 0.51 & 0.18 \\
+G3\_001 & 1987 &  4.87 & 14.63 & 5.03 & 0.52 \\
+\midrule
+mean (5) & --- & 5.20 & 13.29 & 2.55 & 0.63 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-% TODO on results: PERSEUS is the strongest dedicated tracker in the table by
-% design lineage; the interesting outcome either way --- if it leads, it sets
-% the tracking bar for the render-capable systems; if it over-travels or
-% loses lock on the sub-SNR mm-scale motion, that failure is evidence that
-% CRCD's regime defeats even flow-based dense BA, strengthening the
-% sub-SNR analysis of Section~\ref{sec:bench_summary}.
+The results split cleanly along the benchmark's own fault line. On the
+deformation-heavy retraction snippets PERSEUS sets the tracking bar for the
+entire table: C1\_001 at 1.97\,mm with $|r|_{\mathrm{dom}}=0.97$ and C2\_001
+at 3.64\,mm with $|r|_{\mathrm{dom}}=0.98$ --- the latter on the sequence
+that degrades every render-based system, roughly halving the best Gaussian
+ATE (SGS-SLAM offers no trajectory; SemGauss-SLAM: 7.25\,mm at path ratio
+13.1). Its path ratios are equally diagnostic: 0.5--5$\times$ across all five
+snippets, against the 3--24$\times$ of the render-loss trackers --- dense
+flow-based bundle adjustment simply does not over-travel, because its
+correspondences come from a learned matcher rather than from a photometric
+loss chasing noise. On the sub-SNR snippets the failure mode inverts rather
+than repeats: E3\_005 collapses to $|r|_{\mathrm{dom}}=0.18$ with a path
+ratio of \emph{0.51} --- under-travel, not over-travel --- as DROID's motion
+filter gates frames whose optical flow falls below its threshold and the
+estimate simply stops moving with the camera. The same regime that makes
+photometric trackers wander therefore makes a flow tracker freeze; neither
+family observes millimetre-scale motion reliably, which is precisely the
+sub-SNR argument of Section~\ref{sec:bench_summary} made from the opposite
+direction. Benchmark rows are the segmentation-stubbed arm (provably
+tracking-identical, Section above); the faithful segmentation path
+additionally cannot load its own released checkpoint.
 
 % ---------------------------------------------------------------------------
 \subsection{Cross-method summary}
