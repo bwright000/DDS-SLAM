@@ -239,20 +239,25 @@ assert old in s, "anchor gone: " + old
 io.open(p, 'w', encoding='utf-8').write(s.replace(old, new, 1))
 print("[env] patched create_circle_mask -> frame-shaped ones mask (broadcast-crash fix, numeric no-op)")
 PY
-  local missing=0 f
+  # RECURSIVE lookup: the Box share is a FOLDER (e.g. CAO_BPH_MDE_Segmentation) that users save
+  # wholesale under $WEIGHTS_DRIVE -> the .pth files may be nested. find them wherever they sit.
+  local missing=0 f SRC
   for f in $SEG_WEIGHT_FILES; do
     if [ -f "$SEG_MODELS_DIR/$f" ]; then echo "[env] seg weight present: $f"; continue; fi
-    if [ -f "$WEIGHTS_DRIVE/$f" ]; then
-      mkdir -p "$SEG_MODELS_DIR"; cp -f "$WEIGHTS_DRIVE/$f" "$SEG_MODELS_DIR/$f" \
-        && echo "[env] seg weight $f <- $WEIGHTS_DRIVE" || missing=1
-    else missing=1; echo "[env] seg weight MISSING: $f (not in $WEIGHTS_DRIVE)"; fi
+    SRC=$(find "$WEIGHTS_DRIVE" -type f -name "$f" 2>/dev/null | head -1)
+    if [ -n "$SRC" ]; then
+      mkdir -p "$SEG_MODELS_DIR"; cp -f "$SRC" "$SEG_MODELS_DIR/$f" \
+        && echo "[env] seg weight $f <- $SRC" || missing=1
+    else missing=1; echo "[env] seg weight MISSING: $f (searched $WEIGHTS_DRIVE recursively)"; fi
   done
   [ "$missing" = 0 ] || {
     echo "FATAL[env]: seg/MDE weights absent and the Box link is manual-download-only."
     echo "  1) Download from: $SEG_BOX_URL"
-    echo "  2) Upload to Drive as: $WEIGHTS_DRIVE/{$(echo $SEG_WEIGHT_FILES | tr ' ' ',')}"
+    echo "  2) Save under Drive anywhere below: $WEIGHTS_DRIVE (searched recursively)"
     echo "  3) Re-run: bash Addons/colab/run_perseus.sh env"
     echo "  OR run tracking-identical without them: PERSEUS_NOSEG=1 bash Addons/colab/run_perseus.sh env"
+    echo "  .pth files actually present under $WEIGHTS_DRIVE (if names differ, set SEG_WEIGHT_FILES=...):"
+    find "$WEIGHTS_DRIVE" -type f -name '*.pth' 2>/dev/null | head -10 | sed 's/^/    /'
     return 1; }
 }
 
