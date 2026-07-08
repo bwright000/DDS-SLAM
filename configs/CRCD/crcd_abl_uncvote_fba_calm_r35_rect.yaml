@@ -1,0 +1,8 @@
+# CALM + RECALL 3.5 -- the aggressive point of the same offline calibration as calm_r30:
+#   q10_px 2.5 -> 3.5:  E3 recall 78.4 -> 91.2% (prec flat 62.3%); C1 recall 75.8% but precision
+#                       93.4 -> 87.3% (+~14 wrong freezes swallowing ~0.16mm/frame GT motion vs
+#                       ~9 leaked stills saved at ~0.4mm/frame -- net positive by mm accounting,
+#                       but the margin is thin; r30 is the conservative sibling).
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_calm_rect.yaml
+flow_track:
+  q10_px: 3.5

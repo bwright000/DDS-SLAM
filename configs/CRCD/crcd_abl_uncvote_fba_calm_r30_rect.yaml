@@ -1,0 +1,12 @@
+# CALM + RECALL 3.0 -- gate threshold calibrated OFFLINE against GT stills (trust_log x GT sweep,
+# 2026-07-08, C1+E3 uncvote_fba logs):
+#   q10_px 2.5 -> 3.0:  E3 recall 78.4 -> 87.2% at IMPROVED precision (61.2 -> 62.6%);
+#                       C1 recall 72.0 -> 74.2% at precision 93.4 -> 89.7%.
+#   dis3_frac stays 0.5: the dissent branch is C1-POSITIVE (fires 25x at 100% precision on
+#                       busy-stills the quiet-decile misses -- the tool-block frames) and
+#                       E3-inert (5 fires); loosening it only loses recall.
+# The C1 recall ceiling is a SENSOR limit (q10>5px on 20-28% of GT-stills; busy scenes), not a
+# threshold choice -- 3.0 takes the cheap gains without buying the tail.
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_calm_rect.yaml
+flow_track:
+  q10_px: 3.0

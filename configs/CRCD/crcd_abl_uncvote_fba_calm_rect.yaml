@@ -1,0 +1,18 @@
+# CALM = the BA-noise-floor fix on the lead model (audit 2026-07-08). Fresh-Adam-per-cycle takes
+# ~lr-sized steps per coordinate REGARDLESS of gradient magnitude (bias-corrected step-1 = +/-lr
+# exactly), so every keyframe walked lr*4steps*sqrt(3) ~= 0.35mm/cycle on pure sampling noise
+# (2048 rays / ~70 KFs = 29 rays/KF) -- measured [ba] kf|dt| 0.31-0.40mm/cycle in EVERY arm,
+# untouched by ba_w (Adam normalises loss scale away). mapping.lr 1e-4 -> 1e-5 drops the floor 10x
+# on ALL Adam pose writers (global_BA keyframes + current-frame mapping refinement).
+# const_speed off: the const-velocity init EXTRAPOLATES the previous BA kick into the next track
+# (the seam amplifier); GT inter-frame motion (0.16-0.33mm) << tracker reach (~1mm) so a
+# previous-pose init loses nothing. tracking.lr UNTOUCHED (1e-4): the tracker needs its ~1mm/frame
+# reach for post-freeze catch-up and has best-iter selection as its own guard.
+# Pre-registered: [ba] kf|dt| ~0.35 -> ~0.04mm/cycle; seam ratio (onto-KF vs interior steps)
+# 3.4-4.3x -> ~1x; C1 < 1.80, E3 < 2.87; watch for BA under-fitting (renders must not degrade).
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_rect.yaml
+mapping:
+  lr_rot: 0.00001
+  lr_trans: 0.00001
+tracking:
+  const_speed: false

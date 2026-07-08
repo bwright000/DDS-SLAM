@@ -1056,14 +1056,20 @@ class DDSSLAM():
                                                  deadband=float(_ft.get('deadband', 3.0)), return_detail=True)
                     _vinfo, _vw, _ = region_vote(ref_bgr, cur_bgr, ref_depth, _dg, self._raft, self._raft_tf,
                                                self.device, n_groups=int(_ft.get('n_groups', 12)), flow=_flow)
+                    # calibration surface (2026-07-08): the previously HARDCODED gate internals, now
+                    # config-exposed with parity defaults. q_pct = quiet-percentile (10 = decile),
+                    # dis_px = per-district Sampson px above which a district "dissents",
+                    # min_regions = valid-district quorum below which we track (never freeze blind).
+                    _qp = float(_ft.get('q_pct', 10.0)); _dpx = float(_ft.get('dis_px', 3.0))
+                    _mr = int(_ft.get('min_regions', 4))
                     if _vinfo is None:
                         _q10, _dis3 = 99.0, 0.0            # degenerate chamber -> track (never freeze blind)
                     else:
                         _vok = np.asarray(_vinfo['region_ok'], bool)
                         _vmag = np.linalg.norm(np.asarray(_vinfo['region_flow']), axis=-1)
-                        _q10 = float(np.percentile(_vmag[_vok], 10)) if int(_vok.sum()) >= 4 else 99.0
+                        _q10 = float(np.percentile(_vmag[_vok], _qp)) if int(_vok.sum()) >= _mr else 99.0
                         _sv = np.asarray(_samp)[_vok]
-                        _dis3 = float(np.mean(_sv[np.isfinite(_sv)] > 3.0)) if int(_vok.sum()) >= 4 else 0.0
+                        _dis3 = float(np.mean(_sv[np.isfinite(_sv)] > _dpx)) if int(_vok.sum()) >= _mr else 0.0
                     # C' uses the vote signal TWO ways (thesis #3, one signal two consumers):
                     #   vote_freeze (default ON) -> confident-still FREEZE (the gate);
                     #   vote_trust  (default off) -> feed the region trust map w as a per-ray tracking
