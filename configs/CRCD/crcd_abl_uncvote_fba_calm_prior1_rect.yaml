@@ -1,0 +1,9 @@
+# CALM + zero-motion prior (seed lambdas) -- the drift regularizer for what the gate leaves
+# unfrozen (C1: 89 tracked-still frames leak 15.4mm at ~0.17mm/f; moving p90 overshoot 3.5x).
+# Prior penalises the per-frame relative pose; observable DOFs overrule via the SDF curvature.
+# Old lambda-sweep verdict was on the mixed-basis save = void; this re-judges on the calm
+# pipeline. NO tool_mask_track here (CRCD-Published seg masks are EMPTY; keep the arm pure).
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_calm_rect.yaml
+tracking:
+  motion_prior_lam_r: 1.0e+5
+  motion_prior_lam_t: 1.0e+6

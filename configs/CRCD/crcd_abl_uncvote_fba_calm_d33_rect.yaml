@@ -1,0 +1,7 @@
+# CALM + dis3_frac 0.33 -- the aggressive dissent point (>=5/12 districts dissent).
+# Offline: C1 recall 83.5% at precision 94.3 (UP), tail 69/80; BUT E3 swallow 17.5->27.0mm
+# (dissent fires on deforming moving frames = the flow_agree inversion creeping back).
+# The A/B vs d42 decides whether the extra tail coverage beats the E3 cost.
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_calm_rect.yaml
+flow_track:
+  dis3_frac: 0.33

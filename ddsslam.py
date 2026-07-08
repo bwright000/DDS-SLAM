@@ -90,7 +90,10 @@ class DDSSLAM():
                 self._raft, self._raft_tf = load_raft(self.device, bool(_ft.get('raft_small', False)))
                 if _ft.get('agreement', False) or _ft.get('residual', 'sampson') == 'rigid' or _ft.get('mode', '') in ('depth_pool', 'solve_pnp', 'vote', 'dtrust'):   # agreement gate, L0 region-pool, and the depth_pool/solve_pnp/vote/dtrust modes all need DINO (fork_rng -> parity-safe)
                     from Addons.motion.flow_track import load_dino
-                    self._dino = load_dino(self.device)
+                    # dino_backbone (default dinov2_vits14_reg = deployed): 'dinov3_hf' + dino_v3_dir
+                    # runs the RECORDED v2-vs-v3 gate A/B (probe-margin verdict 2026-07-09: v2 wins).
+                    self._dino = load_dino(self.device, backbone=_ft.get('dino_backbone', 'dinov2_vits14_reg'),
+                                           v3_dir=_ft.get('dino_v3_dir', None))
             self._flow_buf = deque(maxlen=int(_ft.get('ref_stride', 8)))
             self._gate_fixed_pose = {}   # frame_id -> the pose the gate FROZE (for freeze_ba: re-apply after BA)
             print(f"[flow_track] ON: RAFT-{'small' if _ft.get('raft_small') else 'large'} "

@@ -1,0 +1,10 @@
+# RECORDED COMPARISON ARM (not a candidate): the gate's districts from RAW DINOv3-B/16 (HF)
+# instead of the deployed DINOv2-S/14-reg. The 2026-07-09 probe-margin harness already ruled
+# for v2 (+0.330 vs raw v3 +0.285 at BOTH resolutions; Gram-anchoring smoothness = higher
+# baseline similarity = less cluster contrast); this arm banks the END-TO-END A/B on the
+# arbiter metrics so the thesis comparison is measured, not inferred. One change vs calm.
+# Needs: pip install -U transformers on the box + Drive-mounted HF dir below (read once at init).
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_calm_rect.yaml
+flow_track:
+  dino_backbone: dinov3_hf
+  dino_v3_dir: /content/drive/MyDrive/Datasets/DiNO

@@ -1,0 +1,8 @@
+# CALM + dis3_frac 0.42 -- the dissent-recall arm (tail fix, conservative point).
+# Offline calibration on the calm logs (GT stills): dis3 quantizes to 1/12 (12 districts);
+# the working-instrument tail sits at EXACTLY 0.50 = 6/12 dissenting, which strict >0.5 misses.
+# >0.42 fires at >=6/12: C1 recall 72.0->77.5% with precision UP (93.4->93.8), swallowed GT
+# motion UNCHANGED (1.1mm), tail coverage 42->55/80; E3 pays only +2.3mm swallow.
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_calm_rect.yaml
+flow_track:
+  dis3_frac: 0.42

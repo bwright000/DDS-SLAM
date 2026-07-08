@@ -67,23 +67,45 @@ def camera_motion(ref_bgr, cur_bgr, model, tf, device):
     return float(np.linalg.norm(gvec))
 
 
-def load_dino(device, backbone='dinov2_vits14_reg'):
-    """DINOv2 (reg) backbone for the per-region grouping (on-the-fly, torch.hub auto-download)."""
+def load_dino(device, backbone='dinov2_vits14_reg', v3_dir=None):
+    """Gate featurizer for the per-region grouping. Default = DINOv2-S/14-reg (torch.hub) -- the
+    DEPLOYED choice, kept after the 2026-07-09 probe-margin verdict (v2 +0.330 vs raw v3 0.285,
+    LOSO-ft mid 0.305, ft final 0.065). backbone='dinov3_hf' loads a RAW HF DINOv3 from v3_dir
+    (config.json + model.safetensors) -- kept ONLY for the recorded end-to-end A/B. patch_size /
+    n_register ride on the returned module so dino_grid stays generic."""
     import torch
+    if backbone == 'dinov3_hf':
+        from transformers import AutoConfig, AutoModel
+
+        class _V3Wrap(torch.nn.Module):
+            def __init__(self, m, nreg):
+                super().__init__()
+                self.m, self.n_register, self.patch_size = m, int(nreg), 16
+
+            def forward_features(self, x):
+                lh = self.m(pixel_values=x.float()).last_hidden_state
+                return {'x_norm_patchtokens': lh[:, 1 + self.n_register:, :]}
+
+        cfg = AutoConfig.from_pretrained(v3_dir)
+        m = AutoModel.from_pretrained(v3_dir)
+        nreg = int(getattr(cfg, 'num_register_tokens', 4) or 0)
+        print(f"[load_dino] RAW DINOv3 (HF) from {v3_dir}: patch=16 n_register={nreg}")
+        return _V3Wrap(m, nreg).to(device).eval()
     return torch.hub.load('facebookresearch/dinov2', backbone).to(device).eval()
 
 
 def dino_grid(rgb_bgr, dino_model, device):
-    """[gh,gw,C] DINO patch grid from an RGB(BGR) frame (patch-14)."""
+    """[gh,gw,C] DINO patch grid from an RGB(BGR) frame (patch size from the model, default 14)."""
     import torch, cv2
+    P = int(getattr(dino_model, 'patch_size', 14))
     im = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
-    H, W = im.shape[:2]; gh, gw = (H // 14) * 14, (W // 14) * 14
+    H, W = im.shape[:2]; gh, gw = (H // P) * P, (W // P) * P
     im = cv2.resize(im, (gw, gh))
     mean = np.array([0.485, 0.456, 0.406], np.float32); std = np.array([0.229, 0.224, 0.225], np.float32)
     t = torch.from_numpy((im - mean) / std).permute(2, 0, 1)[None].float().to(device)
     with torch.inference_mode():
         tok = dino_model.forward_features(t)['x_norm_patchtokens'][0].cpu().numpy()
-    return tok.reshape(gh // 14, gw // 14, -1).astype(np.float32)
+    return tok.reshape(gh // P, gw // P, -1).astype(np.float32)
 
 
 def agreement_gate(ref_bgr, cur_bgr, dino_g, raft_model, raft_tf, device,

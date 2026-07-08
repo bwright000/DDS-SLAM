@@ -1,0 +1,5 @@
+# CALM + zero-motion prior, 10x lambdas -- the stiff point of the mini-sweep (see prior1).
+inherit_from: configs/CRCD/crcd_abl_uncvote_fba_calm_rect.yaml
+tracking:
+  motion_prior_lam_r: 1.0e+6
+  motion_prior_lam_t: 1.0e+7
