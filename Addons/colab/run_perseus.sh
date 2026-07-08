@@ -112,6 +112,12 @@ STAGE_CACHE_DIR=${STAGE_CACHE_DIR:-/content/drive/MyDrive/dds_cache/rect_staged}
 DRIVE_OUT=${DRIVE_OUT:-/content/drive/MyDrive/Outputs/PERSEUS_bench_$DATE}
 FORCE=${FORCE:-0}                                            # 1 = ignore .DONE, redo
 PERSEUS_NOSEG=${PERSEUS_NOSEG:-0}                            # 1 = stub seg/MDE (tracking-identical; header note)
+export PERSEUS_NOSEG                                         # the stub is RUNTIME-gated inside demo.py -> the flag
+                                                             # must reach the child python (export survives either way)
+# 🚨 faithful-mode heads-up: the SHIPPED CAO seg checkpoint is 2-channel but demo.py constructs the
+# model 1-channel (authors' bug #3) -> SegMDEInference load CRASHES unless a compatible ckpt is pinned
+# via SEG_SRC_SEG. Until then, PERSEUS_NOSEG=1 is the runnable arm (tracking-identical, proven).
+[ "$PERSEUS_NOSEG" = 1 ] || echo "[note] faithful seg mode: shipped spie_cao ckpt is 2-ch vs 1-ch constructor -> if the run dies at 'Loading Seg Model', rerun with PERSEUS_NOSEG=1 (tracking-identical)"
 PERSEUS_RECON=${PERSEUS_RECON:-0}                            # 1 = --reconstruction_path <UP> (auto-enables --upsample -> more VRAM)
 PERSEUS_BUFFER=${PERSEUS_BUFFER:-512}                        # demo.py default; keyframe buffer size
 
