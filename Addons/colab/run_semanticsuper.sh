@@ -359,6 +359,19 @@ edit('super/loss.py', '[DDS-crcd-emptyvalid]',
      replace=("        # [DDS-crcd-emptyvalid] empty (0-correspondence) case: view(0,-1) is ambiguous -> crash\n"
               "        U_nm_valid = U_nm_valid.reshape(len(U_nm_valid), -1) if len(U_nm_valid) > 0 else U_nm_valid.reshape(0, 1)\n"))
 
+# [DDS-crcd-nologger] C2_001 crash @ frame 602/730 (AFTER the emptyvalid guard got it past 56):
+# fuseInputData's OWN handling of "no valid index maps" (large camera motion -> fusion can't project)
+# calls self.logger.warning(...), but Surfels never gets a .logger attached (upstream bug) ->
+# AttributeError. A print sibling already logs the message on both sites, and downstream is guarded
+# (add_valid None -> the add-surfels step is skipped at nodes.py:486) -> the frame simply contributes
+# nothing to fusion. Neutralize BOTH broken logger calls (405-407 and 462-464); keep the prints.
+edit('super/nodes.py', '[DDS-crcd-nologger-a]',
+     "            self.logger.warning(f'No valid index maps to add for fusion at frame {self.time}')\n",
+     replace="            pass  # [DDS-crcd-nologger-a] Surfels has no .logger (upstream bug); print above already logs\n")
+edit('super/nodes.py', '[DDS-crcd-nologger-b]',
+     "            self.logger.warning(f'add_valid is None at frame {self.time}')\n",
+     replace="            pass  # [DDS-crcd-nologger-b] Surfels has no .logger (upstream bug); print above already logs\n")
+
 # id2color palette is sized for 3 Super classes (Beef/Chicken/Tool) -> id2color[3] crashes for CRCD's
 # 4 classes. Replace with an >=8-row palette (viz only; tracking/metrics unaffected).
 edit('utils/labels.py', '[DDS-crcd-id2color]',
