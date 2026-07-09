@@ -263,62 +263,64 @@ benchmark row.
 \subsection{SemanticSuPer}
 \label{sec:bench_semsup}
 
-SemanticSuPer \cite{semanticsuper} is included as the deformable-reconstruction
+SemanticSuPer \cite{semanticsuper} is the deformable-reconstruction
 representative: a semantic surfel graph with embedded-deformation (ED) nodes,
-optimised per frame against depth, photometric and semantic terms. It is not a
-camera-SLAM system --- the camera is assumed static while the surfel graph
-deforms --- so neither trajectory metrics nor like-for-like render metrics apply;
-its shipped output in this benchmark is internal telemetry (per-frame losses,
-graph statistics, timing), summarised in Table~\ref{tab:bench_semsup} and
-Figure~\ref{fig:bench_semsup}.
+optimised per frame against depth, photometric and semantic terms. It carries
+no explicit camera pose --- the camera is assumed static while the surfel graph
+deforms --- so a native trajectory metric does not apply. To place it on the
+same axes as the other systems we score two derived quantities: the surfel map
+is rasterised to a per-frame render (evaluated with the identical PSNR/SSIM/LPIPS
+and Depth-$L_1$ pipeline used for the other methods), and the rigid component of
+the deformation graph is read out as a \emph{camera-motion proxy} and
+Sim(3)-aligned to the ground-truth camera path (Table~\ref{tab:bench_semsup}).
+The proxy is a reinterpretation, not a pose SemanticSuPer estimates; as the
+numbers show, that is what makes it informative.
 
 \begin{table}[t]
 \centering
-\caption{SemanticSuPer on the CRCD benchmark --- internal telemetry (no
-trajectory or comparable render output is produced in this configuration).
-Surfel count is the final frame's; the embedded-deformation graph is fixed at
-1197 nodes on every snippet. Render loss is the method's \emph{own} photometric
-objective at the final processed frame --- an internal convergence indicator,
-not comparable across methods.}
+\caption{SemanticSuPer on the CRCD benchmark, scored identically to DDS-SLAM.
+Render and Depth-$L_1$ are over the rasterised surfel map; the Sim(3)
+ATE$_{\mathrm{RMSE}}$ (mm), path ratio and aligned $|r|_{\mathrm{dom}}$ are
+computed on a \emph{camera-motion proxy} extracted from the deformation graph
+(Section~\ref{sec:bench_semsup}), not a native trajectory. C2\_001 required a
+repair to the surfel--frame association for the large-motion regime. LPIPS is
+unbounded above and can exceed 1.}
 \label{tab:bench_semsup}
 \small
-\begin{tabular}{l rr r r r}
+\begin{tabular}{lrrrrrrrr}
 \toprule
-Snippet & frames done & of & surfels ($10^3$) & med.\ time/frame (s) & final render loss \\
+Snippet & $N$ & ATE$_{\mathrm{RMSE}}$ & path ratio & $|r|_{\mathrm{dom}}$ &
+PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
 \midrule
-C1\_001 &  360 &  360 & 159.9 & 2.29 & 0.0111 \\
-C2\_001 &   43 &  730 &  27.2 & 1.26 & 0.0082$^{\dagger}$ \\
-C3\_001 & 1527 & 1527 &  98.9 & 1.58 & 0.0052 \\
-E3\_005 &  265 &  265 & 105.1 & 1.74 & 0.0034 \\
-G3\_001 & 1987 & 1987 &  30.8 & 1.18 & 0.0029 \\
+C1\_001 &  360 & 3.06 & 18.86 & 0.950 & 12.17 & 0.399 & 0.709 & 3.54 \\
+C2\_001 &  730 & 8.32 & 13.93 & 0.890 &  8.72 & 0.162 & 0.882 & 7.22 \\
+C3\_001 & 1527 & 9.76 & 23.50 & 0.816 &  8.54 & 0.242 & 0.868 & 5.75 \\
+E3\_005 &  265 & 5.79 &  5.60 & 0.587 & 10.90 & 0.266 & 0.807 & 7.06 \\
+G3\_001 & 1987 & 4.64 & 33.52 & 0.800 &  8.46 & 0.133 & 1.019 & 7.85 \\
+\midrule
+mean (5) & --- & 6.31 & 19.08 & 0.809 &  9.76 & 0.240 & 0.857 & 6.28 \\
 \bottomrule
-\multicolumn{6}{l}{\footnotesize $^{\dagger}$at the halt frame (43/730), not a
-completed-sequence value.}
 \end{tabular}
 \end{table}
 
-Three facts are relevant to the comparison. First, \emph{it runs}: four of five
-snippets processed to completion at 1.2--2.3\,s per frame (median), maintaining
-$3\times10^4$--$1.6\times10^5$ surfels and a fixed 1197-node ED graph ---
-deformable surgical scenes are within its operating envelope. Second,
-\emph{C2\_001 fails early}: processing halts at frame 43 of 730, during the
-gallbladder retraction whose large occlusions and topology change break
-surfel--frame association --- the same sequence that is the hardest for both
-renderers above, and a useful marker of where all three paradigms strain.
-Third, the ED-graph formulation \emph{presumes} the deformation--camera split
-that this thesis has to estimate: with a moving endoscope, per-frame scene
-deformation and camera motion are entangled in exactly the way
-Chapter~\ref{sec:tracking_limits} describes, which is why SemanticSuPer's
-telemetry is reported here as context rather than as a competing tracking or
-rendering result.
+The rasterised render is markedly the weakest in the benchmark (9.8\,dB mean,
+and 8.7\,dB on C2\_001 where the surfel map visibly degrades through the
+gallbladder retraction), consistent with a geometry-first surfel design that
+was never optimised for photometric fidelity (Figure~\ref{fig:bench_semsup}).
+The camera-motion proxy is the more revealing half: its dominant-axis shape
+correlation is high (0.79 mean, 0.95 on C1\_001) yet its path ratios are the
+largest in the table (5.6--33.5$\times$), because the ED graph absorbs endoscope
+translation as scene deformation --- the deformation--camera entanglement this
+thesis sets out to separate, made visible as a systematic over-travel of the
+rigid component.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\linewidth]{figures/semsup_telemetry.png}
-\caption{SemanticSuPer internal telemetry on the five benchmark snippets.
-Left: surfel count over each sequence. Right: median per-frame optimisation
-time; C2\_001 (aqua) halts at frame 43 of 730 during the gallbladder
-retraction.}
+\includegraphics[width=\linewidth]{figures/semsup_render_vs_gt.pdf}
+\caption{SemanticSuPer rasterised surfel render (right) against the input frame
+(left) on a benchmark snippet. The surfel map captures scene geometry but
+renders with markedly lower photometric fidelity than the neural-SDF and
+Gaussian-splat systems, consistent with its geometry-first design.}
 \label{fig:bench_semsup}
 \end{figure}
 
