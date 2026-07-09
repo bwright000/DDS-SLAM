@@ -15,7 +15,6 @@
 \usepackage{placeins}
 \usepackage{pgfplots}
 \usepackage{pifont}
-\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,calc,shapes.geometric}
 \title{Thesis}
 \author{Benjamin Wright}
 \date{July 2026}
@@ -568,79 +567,7 @@ The quiet-minority test encodes that stillness requires the quietest districts t
 \FloatBarrier
 \begin{figure}[!ht]
     \centering
-    \resizebox{\linewidth}{!}{%
-    \begin{tikzpicture}[
-        font=\small,
-        thumb/.style={inner sep=0pt, outer sep=0pt},
-        cap/.style={font=\scriptsize, text depth=0pt},
-        proc/.style={draw, rounded corners=2pt, align=center, font=\footnotesize,
-                     minimum height=8mm, fill=black!3, inner sep=3pt},
-        decide/.style={draw, diamond, aspect=1.9, align=center, font=\footnotesize,
-                       fill=black!3, inner sep=1pt},
-        out/.style={draw, rounded corners=2pt, align=center, font=\footnotesize,
-                    minimum height=8mm, fill=blue!5, inner sep=3pt},
-        abl/.style={draw, dashed, rounded corners=2pt, align=center, font=\footnotesize,
-                    fill=black!2, text=black!55, inner sep=3pt},
-        fl/.style={-{Latex[length=2mm]}, thick, black!65},
-    ]
-    % ---- inputs ----
-    \node[thumb] (frame) {\includegraphics[width=2.1cm]{figures/pipe_frame.png}};
-    \node[cap, below=0.4mm of frame] {frame pair $(t,\,t{-}\delta)$};
-
-    % ---- feature extractors (stacked) ----
-    \node[thumb, right=1.4cm of frame, yshift=1.55cm] (dist) {\includegraphics[width=2.1cm]{figures/pipe_districts.png}};
-    \node[cap, below=0.4mm of dist] {DINOv2 districts~\cite{Oquab2023}};
-    \node[thumb, below=0.95cm of dist] (flow) {\includegraphics[width=2.1cm]{figures/pipe_flow.png}};
-    \node[cap, below=0.4mm of flow] {RAFT flow~\cite{Teed2020}};
-    \node[thumb, below=0.95cm of flow] (depth) {\includegraphics[width=2.1cm]{figures/pipe_depth.png}};
-    \node[cap, below=0.4mm of depth] {up-to-scale depth};
-
-    % ---- votes ----
-    \node[thumb, right=1.5cm of flow] (votes) {\includegraphics[width=2.1cm]{figures/pipe_votes.png}};
-    \node[cap, below=0.4mm of votes, text width=2.3cm, align=center]
-        {per-district votes $(f_k,Z_k,p_k)$};
-
-    % ---- branch A: attribution / trust (ablated) ----
-    \node[abl, right=1.5cm of votes, yshift=1.5cm, text width=2.9cm] (fit)
-        {egomotion fit \eqref{eq:vote-fit}\\$\rightarrow$ robust trust \eqref{eq:vote-trust}};
-    \node[abl, right=0.8cm of fit, text width=2.4cm] (trust)
-        {per-ray motion trust\\{\scriptsize(alternative consumer, ablated)}};
-
-    % ---- branch B: statistics -> freeze (locked) ----
-    \node[proc, right=1.5cm of votes, yshift=-1.5cm, text width=2.9cm] (stats)
-        {vote statistics\\$q_{10},\ \mathrm{dis3}$ \eqref{eq:vote-stats}};
-    \node[decide, right=0.9cm of stats] (dec) {still?\\\eqref{eq:cprime}};
-
-    % ---- outputs ----
-    \node[out, right=0.9cm of dec, yshift=0.9cm, text width=2.6cm] (freeze)
-        {\textbf{freeze:} copy previous pose, skip solve};
-    \node[out, right=0.9cm of dec, yshift=-0.9cm, text width=2.6cm] (track)
-        {\textbf{track:} normal pose solve};
-    \node[out, below=0.7cm of freeze, text width=2.6cm] (repin)
-        {re-pin frozen keyframes after every BA cycle};
-
-    % ---- arrows ----
-    \draw[fl] (frame) -- (dist.west);
-    \draw[fl] (frame) -- (flow.west);
-    \draw[fl] (frame) -- (depth.west);
-    \draw[fl] (dist.east) -- (votes.north west);
-    \draw[fl] (flow) -- (votes);
-    \draw[fl] (depth.east) -- (votes.south west);
-    \draw[fl, black!45] (votes.east) |- (fit.west);
-    \draw[fl] (votes.east) |- (stats.west);
-    \draw[fl, black!45] (fit) -- (trust);
-    \draw[fl] (stats) -- (dec);
-    \draw[fl] (dec.north) |- (freeze.west) node[pos=0.75, above, font=\scriptsize] {yes};
-    \draw[fl] (dec.south) |- (track.west) node[pos=0.75, below, font=\scriptsize] {no};
-    \draw[fl] (freeze.south) -- (repin.north);
-
-    % ---- locked / ablated grouping ----
-    \begin{scope}[on background layer]
-        \node[draw=blue!40, dashed, rounded corners, fit=(stats)(dec)(freeze)(track)(repin),
-              inner sep=4pt, label={[blue!55, font=\scriptsize\bfseries]below:locked configuration}] {};
-    \end{scope}
-    \end{tikzpicture}%
-    }
+    \includegraphics[width=\linewidth]{figures/vote_pipeline.png}
     \caption{The label-free motion-attribution pipeline. A frame pair yields DINOv2~\cite{Oquab2023} semantic districts, dense optical flow~\cite{Teed2020}, and up-to-scale depth; each valid district casts one median vote $(f_k, Z_k, p_k)$. The votes feed two consumers. A depth-signature egomotion fit \eqref{eq:vote-fit} separates camera motion from independent movers and yields a robust per-district trust \eqref{eq:vote-trust}; painted into a dense per-ray weight, this is an \emph{alternative} tracking consumer, evaluated in the ablations and not retained. The locked configuration instead uses two vote statistics \eqref{eq:vote-stats} --- the quiet-minority $q_{10}$ and the majority-incoherence $\mathrm{dis3}$ --- to make the still/moving decision \eqref{eq:cprime}: on confident-still frames the pose is copied and the solve skipped, and the frozen keyframes are re-pinned after every bundle-adjustment cycle so the decision persists in the trajectory. Thumbnails are real outputs on C\_1/001 frame~150.}
     \label{fig:vote_pipeline}
 \end{figure}
