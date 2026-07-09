@@ -509,8 +509,8 @@ Two guards make the weight well-behaved. First, on rays where the map holds no c
 
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=0.85\linewidth]{figures/uncertainty_downweight.pdf}
-    \caption{Uncertainty-aware down-weighting. A lightweight head predicts a per-ray variance $\sigma^2$ from the geometry feature $h$, trained by the aleatoric NLL \eqref{eq:nll}. The learned variance is applied as a per-ray trust weight $w = 1/\sigma^2$ \eqref{eq:unc-weight} that attenuates unreliable rays in both halves of the system: the mapping loss and the tracking pose solve.}
+    \includegraphics[width=\linewidth]{figures/uncertainty_downweight.png}
+    \caption{The learned uncertainty in operation on the evaluation sequences (input frame above, volume-rendered $\sigma^2$ below; inferno colormap, bright $=$ uncertain). Trained only by the aleatoric NLL \eqref{eq:nll} --- with no segmentation labels --- the head localises its variance on exactly the content the static field cannot explain: the instruments and the grasped, deforming tissue (C\_1/001), and the retracted gallbladder and working tool (E\_3/005), while the surrounding static anatomy remains confident (dark). This spatial pattern is what makes the per-ray weight \eqref{eq:unc-weight} an effective tracking robustifier: the down-weighted rays are the ones carrying the camera/scene motion ambiguity.}
     \label{fig:uncertainty_downweight}
 \end{figure}
 
