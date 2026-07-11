@@ -18,7 +18,10 @@ COL = {'rgb': 0, 'pca_tail': 1, 'sim_tail': 2, 'pca_still': 3, 'sim_still': 4,
        'pca_move': 5, 'sim_move': 6}
 
 def tile(sheet, row, col):
-    return sheet.crop((col * TW, row * THT, (col + 1) * TW, (row + 1) * THT))
+    t = sheet.crop((col * TW, row * THT, (col + 1) * TW, (row + 1) * THT))
+    if col > 0:                       # trim the burned-in dev label strip on feature tiles
+        t = t.crop((0, 30, TW, THT))
+    return t
 
 def main():
     sheet = Image.open(sys.argv[1])
