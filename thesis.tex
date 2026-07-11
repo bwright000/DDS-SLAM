@@ -395,7 +395,7 @@ with $\delta_i = z_{i+1} - z_i$ the inter-sample spacing, so that mass accumulat
 Co-SLAM~\cite{Wang2023} is the real-time neural-SDF SLAM substrate that DDS-SLAM extends. Its field maps a point $x \in \mathbb{R}^3$ to a truncated signed-distance value $s(x)$ and a view-independent colour $c(x)$, replacing NeRF's density with geometry that can be supervised directly from depth.
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=\linewidth]{figures/coslam_architecture.pdf}
+    \includegraphics[width=\linewidth]{figures/coslam_architecture.png}
     \caption{The Co-SLAM neural-SDF pipeline. A query point is jointly encoded by a multiresolution hash grid and a one-blob coordinate encoding \eqref{eq:joint-enc}; a geometry decoder returns the signed distance $s$ and feature $h$ and a colour decoder the radiance $c$ \eqref{eq:decoders}. Volume rendering \eqref{eq:sdf-weights}--\eqref{eq:nerf-render} yields the colour and depth that supervise both tracking (pose against a frozen map) and mapping (field and keyframe poses).}
     \label{fig:coslam_arch}
 \end{figure}
@@ -530,7 +530,7 @@ where $p_0$ is the image principal point and $r_{\text{norm}}$ a normalising rad
 
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=0.8\linewidth]{figures/depth_signature.pdf}
+    \includegraphics[width=0.8\linewidth]{figures/depth_signature.png}
     \caption{The depth signature that makes the egomotion fit \eqref{eq:vote-fit} identifiable. A camera turn (rotation) shifts near and far districts equally; a lateral slide moves near districts more, as $1/Z$; forward motion expands the field radially. Fitting the three simultaneously separates the motion types and cancels the unknown global depth scale.}
     \label{fig:depth_signature}
 \end{figure}
@@ -556,6 +556,14 @@ The minority test encodes that stillness requires the quietest districts to agre
 
 \paragraph{Freeze mechanics.} When \eqref{eq:cprime} reports the camera still, the pose is copied from the previous frame, the solve is skipped, and the frame's relative pose against its anchoring keyframe is refreshed so the bookkeeping stays consistent; mapping still runs. Keyframe poses anchor the non-keyframes between them, and the global bundle adjustment re-optimises every keyframe on every cycle, so an unprotected frozen keyframe would drift and silently carry its whole block of anchored frames with it, undoing the freeze after the fact. Gate-frozen keyframes are therefore re-pinned to their frozen pose after every bundle-adjustment cycle. This re-pin prevents the pose from jumping massively after each bundle-adjustment cycle; as otherwise BA would attempt to re-optimise a frozen pose; thus moving it.
 
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=\linewidth]{figures/motion_agreement.png}
+    \caption{The gate's evidence on three real benchmark frames, one per decision path. Top (C\_1/001, camera still): every district vote is near zero - the quiet minority holds and the pose is frozen. Middle (C\_2/001, camera moving): the votes are large and consistent with a single rigid story - the frame is tracked. Bottom (E\_3/005, tissue being worked): the votes are large but the majority of districts dissent from every rigid story in the epipolar sense - the frame is frozen. Districts are the deployed k-means clustering of the ViT patch tokens; panel statistics are recomputed offline with a dense-flow proxy for illustration, and the live per-frame values are logged by the gate itself.}
+    \label{fig:motion_agreement}
+\end{figure}
+\FloatBarrier
+
 \paragraph{Threshold calibration.} The thresholds in \eqref{eq:cprime} are calibrated offline rather than tuned in the loop. The gate logs its per-frame statistics $(q_{10}, \mathrm{dis3})$ during a run; sweeping these logs against the ground-truth camera motion yields the precision and recall of every candidate operating point $(\tau_q, \tau_d)$. One discretisation detail matters in practice: with $K = 12$ districts, $\mathrm{dis3}$ is quantised to twelfths, so a strict inequality at $\tau_d = 0.5$ silently excludes frames on which exactly half the districts dissent; candidate thresholds must be placed between attainable values of the statistic, not on them.
 
 \paragraph{Featuriser choice.} The districts are built from a frozen self-supervised backbone. This was measured two ways: how well a backbone separates an independently-moving region in feature space, and whether that separation actually changes the freeze decision. For the first, a probe-margin test scored each backbone by the mean cosine similarity of a probe patch on the mover to the rest of the moving region, minus its similarity to everything else. DINOv2-S/14 (register variant)~\cite{Oquab2023} scored highest at $+0.33$, base DINOv3-B/16~\cite{Simeoni2025} $+0.29$, and a DINOv3 backbone fine-tuned for surgical segmentation only $+0.07$ at its final layer. The fine-tuned collapse is expected - a segmentation objective pulls all features of a class together, which removes the intra-tissue variation the clustering relies on. The first result is therefore that the featuriser should not be fine-tuned; a raw backbone is creating a better set of features than one fine tuned, images of the features and their cosine similarities are shown in...
@@ -574,7 +582,7 @@ to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the ro
 \FloatBarrier
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=\linewidth]{figures/vote_pipeline.pdf}
+    \includegraphics[width=\linewidth]{figures/vote_pipeline.png}
     \caption{The label-free motion-attribution pipeline. A frame pair yields self-supervised ViT semantic districts, dense optical flow~\cite{Teed2020}, and up-to-scale depth; each district casts one median vote $(f_k, Z_k, p_k)$. A robust depth-signature fit \eqref{eq:vote-fit} separates camera motion from independent movers, which fall out as outliers through the fit residual \eqref{eq:vote-trust}. Two vote statistics \eqref{eq:vote-stats} give the still/moving decision \eqref{eq:cprime} that gates the pose solve; frozen keyframes are re-pinned after every bundle-adjustment cycle so the decision persists in the trajectory.}
     \label{fig:vote_pipeline}
 \end{figure}
@@ -598,7 +606,7 @@ since bias correction makes $\hat{m}/\sqrt{\hat{v}}$ a unit-magnitude, sign-like
 
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=0.9\linewidth]{figures/ba_noise_floor.pdf}
+    \includegraphics[width=0.9\linewidth]{figures/ba_noise_floor.png}
     \caption{Optimiser-induced pose drift in bundle adjustment. Left: per-cycle keyframe displacement across configurations --- flat at the Adam floor $\eta S \sqrt{3}$ \eqref{eq:adam-floor} regardless of scene or robustification, and reduced tenfold by the corrected pose learning rate. Right: the trajectory fingerprint --- estimated step size by frame phase relative to the keyframe cadence, before and after the correction; the accumulated keyframe drift is absorbed at block boundaries, producing the $3.4$--$4.3\times$ boundary steps the correction removes.}
     \label{fig:ba_noise_floor}
 \end{figure}
@@ -738,6 +746,14 @@ The main observations:
 \item \textbf{Rendering is preserved, not traded.} Across the five sequences the rendering battery stays level with the base (mean PSNR $24.9$, LPIPS $0.42$): the tracking gains do not come at reconstruction cost, consistent with the design in which the map continues training on frozen frames.
 \item \textbf{The deforming sequence remains the hardest.} E\_3/005 improves ($-18\%$) but keeps the weakest shape correlation ($0.46$), and its single-seed spread is the widest we observe. The gate's remaining error there is concentrated in a segment where the true camera motion sits below the optical-flow noise floor, which no threshold on a flow statistic can recover - the honest limit of the approach.
 \end{itemize}
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=\linewidth]{figures/bdds_traj_c2.png}
+    \caption{Estimated trajectory against ground truth on C\_2/001, the largest-travel held-out sequence, both Sim(3)-aligned and shown on the ground-truth dominant plane. The base estimate (left) follows the true path's shape but oscillates violently around it, accumulating $6.3\times$ the true path length; BDDS-SLAM (right) removes the oscillation ($1.9\times$) and halves the trajectory error, on a sequence it never saw during development.}
+    \label{fig:bdds_traj_c2}
+\end{figure}
+\FloatBarrier
 
 Single-seed caveat: per the protocol above, these are screening-grade numbers; the three-seed re-run of the final configuration is the confirmation step, with the base seed spread ($\pm 0.76$\,mm on E\_3/005) as the noise floor.
 

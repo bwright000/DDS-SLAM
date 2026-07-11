@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="560" viewBox="0 0 1500 560" font-family="Arial, Helvetica, sans-serif">
+<rect width="1500" height="560" fill="#ffffff"/>
+<defs><marker id="ar" markerWidth="10" markerHeight="10" refX="7.5" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L7,3 L0,6 Z" fill="#9aa0a6"/></marker></defs>
+<text x="750" y="30" font-size="19" font-weight="700" fill="#202124" text-anchor="middle">the depth signature of each motion type</text>
+<rect x="40" y="90" width="440" height="400" rx="12" fill="#fafafb" stroke="#c8ccd0"/>
+<text x="260" y="120" font-size="15" font-weight="700" fill="#202124" text-anchor="middle">camera turn  (u)</text>
+<text x="260" y="516" font-size="12" fill="#5f6368" text-anchor="middle">depth-blind: every district shifts equally</text>
+<circle cx="160" cy="390" r="46" fill="#4a72b0" stroke="#4a72b0" stroke-width="3"/>
+<path d="M211,390 L271,390" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="340" cy="350" r="40" fill="#4a72b0" stroke="#4a72b0" stroke-width="3"/>
+<path d="M385,350 L445,350" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="190" cy="210" r="24" fill="none" stroke="#c2571a" stroke-width="3"/>
+<path d="M219,210 L279,210" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="370" cy="240" r="20" fill="none" stroke="#c2571a" stroke-width="3"/>
+<path d="M395,240 L455,240" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<rect x="530" y="90" width="440" height="400" rx="12" fill="#fafafb" stroke="#c8ccd0"/>
+<text x="750" y="120" font-size="15" font-weight="700" fill="#202124" text-anchor="middle">lateral slide  (v)</text>
+<text x="750" y="516" font-size="12" fill="#5f6368" text-anchor="middle">depth-scaled: near districts move more, as 1/Z</text>
+<circle cx="650" cy="390" r="46" fill="#4a72b0" stroke="#4a72b0" stroke-width="3"/>
+<path d="M701,390 L779,390" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="830" cy="350" r="40" fill="#4a72b0" stroke="#4a72b0" stroke-width="3"/>
+<path d="M875,350 L953,350" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="680" cy="210" r="24" fill="none" stroke="#c2571a" stroke-width="3"/>
+<path d="M709,210 L735,210" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="860" cy="240" r="20" fill="none" stroke="#c2571a" stroke-width="3"/>
+<path d="M885,240 L911,240" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<rect x="1020" y="90" width="440" height="400" rx="12" fill="#fafafb" stroke="#c8ccd0"/>
+<text x="1240" y="120" font-size="15" font-weight="700" fill="#202124" text-anchor="middle">forward motion  (d)</text>
+<text x="1240" y="516" font-size="12" fill="#5f6368" text-anchor="middle">depth-scaled radial: the field expands from the centre</text>
+<circle cx="1240" cy="290" r="4" fill="#5f6368"/>
+<text x="1240" y="310" font-size="10" fill="#5f6368" text-anchor="middle">principal point</text>
+<circle cx="1140" cy="390" r="46" fill="#4a72b0" stroke="#4a72b0" stroke-width="3"/>
+<path d="M1104,426 L1057,473" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="1320" cy="350" r="40" fill="#4a72b0" stroke="#4a72b0" stroke-width="3"/>
+<path d="M1356,377 L1409,417" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="1170" cy="210" r="24" fill="none" stroke="#c2571a" stroke-width="3"/>
+<path d="M1151,188 L1135,170" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="1350" cy="240" r="20" fill="none" stroke="#c2571a" stroke-width="3"/>
+<path d="M1373,230 L1395,220" stroke="#9aa0a6" stroke-width="4" fill="none" marker-end="url(#ar)"/>
+<circle cx="48" cy="58" r="8" fill="#4a72b0"/><text x="66" y="62" font-size="12" fill="#202124">near district (small Z)</text>
+<circle cx="258" cy="58" r="8" fill="none" stroke="#c2571a" stroke-width="3"/><text x="276" y="62" font-size="12" fill="#202124">far district (large Z)</text>
+<text x="470" y="62" font-size="12" fill="#5f6368">arrows: observed optical flow f_k</text>
+</svg>
