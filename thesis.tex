@@ -483,7 +483,7 @@ BDDS-SLAM is the extension of DDS-SLAM developed in this thesis. The base  Secti
 
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=\linewidth]{figures/bdds_overview.pdf}
+    \includegraphics[width=\linewidth]{figures/bdds_overview.png}
     \caption{Overview of BDDS-SLAM. The Co-SLAM/DDS-SLAM neural-SDF substrate is augmented with three flag-gated contributions: a learned aleatoric uncertainty that down-weights unreliable rays in both mapping and tracking (Section~\ref{sec:uncertainty}); a label-free motion attribution that separates camera ego-motion from independent scene motion and freezes the pose on confident-still frames, a decision re-pinned after every bundle-adjustment cycle (Section~\ref{sec:motion}); and a corrected bundle-adjustment pose step that removes an optimiser-induced keyframe drift (Section~\ref{sec:ba_floor}).}
     \label{fig:bdds_overview}
 \end{figure}
