@@ -262,6 +262,19 @@ run_one(){ local NAME=$1 SD="$SNI_REPO/data/CRCD/$NAME" OUTD="$SNI_REPO/output/C
   mkdir -p "$DST"
   [ -f "$DST/.DONE" ] && [ "${FORCE:-0}" != 1 ] && { say "$NAME done -> skip"; return 0; }
   stage_bridge "$NAME" || { echo "FAILED stage" > "$DST/status.txt"; return 1; }
+  # POSE-AWARE BOUND (default on): the staged bound.yaml is the camera-RELATIVE depth range (~0.1 m),
+  # but SNI anchors frame 0 to the absolute GT c2w (camera z~0.74) -> the tissue lands ~6x outside the
+  # box -> normalize_3d clamps every sample -> SDF forms no surface (marching_cubes fails on EVERY
+  # snippet) -> tracker gets no depth constraint (t_z freezes, const-vel runaway) -> empty renders.
+  # Recompute the box by unprojecting depth through the SAME poses+flip SNI uses (Addons/eval verified
+  # against common.py/datasets.py). Overwrites $DD/bound.yaml, which mk_sni_cfg reads next.
+  if [ "${SNI_POSEAWARE_BOUND:-1}" = 1 ]; then
+    local DD="/content/rect_staged/$NAME"
+    python3 "$REPO/Addons/eval/sni_poseaware_bound.py" \
+        --data_dir "$SD" --calib "$DD/rectified_calib.txt" --out "$DD/bound.yaml" \
+        --png_depth_scale 10000 \
+      || echo "[$NAME] WARN pose-aware bound failed -> falling back to staged bound.yaml"
+  fi
   if [ "$GT_SEM" != 1 ]; then   # stage THIS snippet's held-out head (sequential runs -> overwrite is safe)
     local HEAD; HEAD=$(seg_head_for "$NAME") || { echo "FAILED no seg head" > "$DST/status.txt"; return 1; }
     cp -f "$HEAD" "$SNI_REPO/seg/dinov2_crcd.pth"
