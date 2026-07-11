@@ -185,7 +185,7 @@ G\_3 & 001 & 1987 & 33.10 & 353 & 31.57 & 23.09 & 26.2 &  5.36 &  4.14 & 232.35 
 \FloatBarrier
 \subsubsection{Comparison with existing segmentation datasets}
 \label{sec:dataset_comparison}
-When comparing the aforementioned to existing cholecystectomy datasets, five such others exist --- CholecSeg8k~\cite{Hong2020}, CholecInstanceSeg~\cite{Alabi2025}, Endoscapes2023~\cite{Murali2023}, CRCD (Expanded)~\cite{Oh2025}, and HeiSurF/HeiChole~\cite{Carstens2023} --- and they differ along axes that matter directly for deformable surgical SLAM: subject (in-vivo human versus ex-vivo porcine), imaging modality (monocular versus stereo), the availability of camera-pose ground truth, and whether the sliding-interface event central to this thesis, the separation of the gallbladder from the liver bed, is captured at all. Table~\ref{tab:dataset_comparison} summarises the comparison.
+When comparing the aforementioned to existing cholecystectomy datasets, five such others exist --- CholecSeg8k~\cite{Hong2020}, CholecInstanceSeg~\cite{Alabi2025}, Endoscapes2023~\cite{Murali2024}, CRCD (Expanded)~\cite{Oh2024}, and HeiSurF/HeiChole~\cite{Wagner2023} --- and they differ along axes that matter directly for deformable surgical SLAM: subject (in-vivo human versus ex-vivo porcine), imaging modality (monocular versus stereo), the availability of camera-pose ground truth, and whether the sliding-interface event central to this thesis, the separation of the gallbladder from the liver bed, is captured at all. Table~\ref{tab:dataset_comparison} summarises the comparison.
 
 \begin{table}[!ht]
 \centering
@@ -693,7 +693,7 @@ accumulated over all pixels of the evaluation set. Generalisation is judged unde
 
 \subsubsection{Evaluation sequences}
 
-All experiments in this section are conducted on the CRCD-derived sequence dataset of Section~\ref{sec:data_packs}. From the twenty published snippets we select five for systematic evaluation, drawn from five episodes and chosen to span the distinct operating regimes a surgical SLAM system must handle (Table~\ref{tab:eval_sequences}; motion statistics follow the conventions of Table~\ref{tab:motion}).
+All experiments in this section are conducted on the CRCD sequence dataset of Section~\ref{sec:data_packs}. From the twenty published snippets we select five for evaluation, drawn from five episodes and chosen to span the distinct problems a surgical SLAM system must handle (Table~\ref{tab:eval_sequences}; motion statistics follow Table~\ref{tab:motion}).
 
 \begin{table}[!ht]
 \centering \caption{Evaluation sequences and their roles. Frames and motion statistics are taken from Table~\ref{tab:motion}; ``still'' is the fraction of frames below the motion-frame velocity thresholds of Section~\ref{sec:motion_analysis}.}
@@ -705,15 +705,15 @@ All experiments in this section are conducted on the CRCD-derived sequence datas
 
 \subsubsection{Data preparation}
 
-Sequences are consumed through a staging pipeline executed once per sequence and cached, so that every method variant trains on byte-identical inputs. Frames are rectified with the published ECM stereo calibration (Section~\ref{sec:data_packs}); per-frame depth is generated with MoGe-2 on the rectified left frames and anchored to metric scale by semi-global stereo matching on the rectified pairs at 120-frame intervals, with a consistency gate rejecting sequences whose anchors disagree (I.e., where the scaling changes significantly between intervals.); scene bounds are derived from the resulting metric depth; and the published semantic rasters are rectified alongside the imagery, providing the four-class map (background, liver, gallbladder, instrument) consumed by the semantic and instrument-masking components.
+Sequences are consumed through a staging pipeline executed once per sequence and cached. Frames are rectified with the published ECM stereo calibration (Section~\ref{sec:data_packs}); per-frame depth is generated with MoGe-2 on the rectified left frames and anchored to metric scale by stereo matching on the rectified pairs at 120-frame intervals, with a consistency gate rejecting sequences whose anchors disagree (I.e., where the scaling changes significantly between intervals.); scene bounds are derived from the resulting metric depth; and the published semantic rasters are rectified alongside the imagery, providing the four-class map (background, liver, gallbladder, instrument) consumed by the semantic and instrument-masking components.
 
 \subsubsection{Implementation}
 
-All experiments run a single code base forked from the public DDS-SLAM release~\cite{Shan2024}, with every modification gated behind a configuration flag that defaults to \emph{off}. A bit-identical regression gate (identical random-number state after model construction, identical parameter counts, identical \texttt{state\_dict} keys against the upstream commit) guarantees that the unmodified configuration reproduces the released implementation exactly, so the baseline serves as a provably untouched control and every measured difference is attributable to exactly one enabled component. Experiments execute on Google Colab GPUs (Tesla T4, 15\,GB; A100, 40\,GB for the largest configurations) under PyTorch~2.x / CUDA~12.x, with the tiny-cuda-nn hash-encoding backend rebuilt for the resident GPU architecture. TF32 tensor-core arithmetic is disabled throughout: the SDF and pose optimisation are precision-sensitive, and TF32 introduced run-to-run nondeterminism on A100-class hardware. Comparisons in this work-in-progress are reported at a single seed ($n{=}1$) as screening-grade results; the target protocol reports the mean over three seeds ($n{=}3$) with the baseline seed spread as the noise floor, and single-seed numbers are re-run at $n{=}3$ before any final claim is drawn. Every run emits a fixed artifact set (rendered frames, the estimated trajectory, per-frame diagnostics, and a composite diagnostic video), and all evaluation is performed by a common tool chain (Section~\ref{sec:eval_metrics}) applied identically to every arm.
+All experiments run a single code base forked from the public DDS-SLAM release~\cite{Shan2024}, with every modification gated behind a configuration flag that defaults to \emph{off}. A bit-identical regression gate (identical random-number state after model construction, identical parameter counts, identical \texttt{state\_dict} keys against the upstream commit) guarantees that the unmodified configuration reproduces the released implementation exactly, so the baseline serves as a provably untouched control and every measured difference is attributable to exactly one enabled component. Experiments are executed on Google Colab GPUs (Tesla T4, 15\,GB; A100, 40\,GB for the largest configurations) under PyTorch~2.x / CUDA~12.x, with the tiny-cuda-nn hash-encoding backend rebuilt for the resident GPU architecture. TF32 tensor-core arithmetic is disabled throughout: the SDF and pose optimisation are precision-sensitive, and TF32 introduced run-to-run nondeterminism on A100-class hardware. Every run emits a fixed artifact set (rendered frames, the estimated trajectory, per-frame diagnostics, and a composite diagnostic video), and all evaluation is performed by a common tool chain (Section~\ref{sec:eval_metrics}) applied identically to every arm.
 \subsection{Evaluation of Tracking and Reconstruction}
 \label{sec:results_main}
 
-The final BDDS-SLAM configuration was locked using only the two design sequences (C\_1/001 and E\_3/005): every threshold, learning rate and component decision of Sections~\ref{sec:uncertainty}--\ref{sec:ba_floor} was calibrated there. The remaining three sequences (C\_2/001, C\_3/001, G\_3/001) were then run once, unseen, as a held-out generalisation test against the unmodified DDS-SLAM base under the identical staging and evaluation pipeline. Table~\ref{tab:results_main} reports the full battery.
+The final BDDS-SLAM configuration was locked using only the two test sequences (C\_1/001 and E\_3/005). The remaining three sequences (C\_2/001, C\_3/001, G\_3/001) were then run once, unseen, as a held-out generalisation test against the unmodified DDS-SLAM base under the identical staging and evaluation pipeline - Due to the nature of the freezing mechanism - its important to use a single set of hyperparameters; rather than a unique set for each sequence. Table~\ref{tab:results_main} reports the full battery.
 
 \begin{table}[!ht]
 \centering
@@ -727,17 +727,17 @@ The final BDDS-SLAM configuration was locked using only the two design sequences
 Sequence & Role & $N$ & base & BDDS & $\Delta$ & path ratio & $|r|_{\mathrm{dom}}$ &
 PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
 \midrule
-C\_1/001 & design   &  360 & 1.80 & \textbf{1.43} & $-21\%$ & 2.23 & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
-E\_3/005 & design   &  265 & 4.45 & \textbf{3.63} & $-18\%$ & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
-C\_2/001 & held-out &  730 & 6.99 & \textbf{3.41} & $-51\%$ & 1.88 & 0.951 & 21.84 & 0.762 & 0.481 & 11.68 \\
-C\_3/001 & held-out & 1527 & 7.55 & \textbf{6.09} & $-19\%$ & 3.05 & 0.820 & 24.39 & 0.828 & 0.424 & 10.67 \\
-G\_3/001 & held-out & 1987 & 3.51 & \textbf{2.15} & $-39\%$ & 5.93 & 0.976 & 28.78 & 0.909 & 0.300 & 15.03 \\
+C\_1/001 & test   &  360 & 1.80 & \textbf{1.43} & $-21\%$ & 2.23 & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
+E\_3/005 & test   &  265 & 4.45 & \textbf{3.63} & $-18\%$ & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
+C\_2/001 & eval. &  730 & 6.99 & \textbf{3.41} & $-51\%$ & 1.88 & 0.951 & 21.84 & 0.762 & 0.481 & 11.68 \\
+C\_3/001 & eval. & 1527 & 7.55 & \textbf{6.09} & $-19\%$ & 3.05 & 0.820 & 24.39 & 0.828 & 0.424 & 10.67 \\
+G\_3/001 & eval. & 1987 & 3.51 & \textbf{2.15} & $-39\%$ & 5.93 & 0.976 & 28.78 & 0.909 & 0.300 & 15.03 \\
 \midrule
 mean (5) & & --- & 4.86 & \textbf{3.34} & $-31\%$ & 3.32 & 0.839 & 24.94 & 0.825 & 0.419 & 12.63 \\
 \bottomrule
 \end{tabular}}
 \end{table}
-
+\FloatBarrier
 BDDS-SLAM improves tracking on all five sequences, with the largest gain on a sequence it never saw during development ($-51\%$ on C\_2/001, alongside $-19\%$ and $-39\%$ on the other two held-out sequences; the longest of these, G\_3/001 at 1987 frames, produces the best result of the five at $2.15$\,mm). This behaviour was expected - the held-out set is $54$--$82\%$ camera-still, which is the regime the freeze, its bundle-adjustment re-pin and the corrected pose step were built to handle. The shape of the trajectory improves alongside its error: the aligned dominant-axis correlation on the held-out sequences reaches $0.95$--$0.98$ (C\_2, G\_3) against $0.86$--$0.93$ for the base, and the path ratio on C\_2/001 falls from $6.3$ to $1.9$. As Figure~\ref{fig:bdds_traj_c2} shows, the base estimate oscillates around the true path while the BDDS-SLAM estimate follows it.
 
 These gains carry no observable reconstruction cost. Across the five sequences the rendering battery stays level with the base (mean PSNR $24.9$, LPIPS $0.42$), consistent with the design choice to keep the map training on frozen frames. The deforming sequence remains the hardest: E\_3/005 improves by $18\%$ but keeps the weakest shape correlation ($0.46$) and the widest single-seed spread of the five. Most of its remaining error sits in a segment where the true camera motion falls below the optical-flow noise floor; no threshold on a flow statistic can recover motion the flow cannot see, and this sets the practical limit of the gate. Both points are returned to in Section~\ref{sec:discussion}.
@@ -750,7 +750,7 @@ These gains carry no observable reconstruction cost. Across the five sequences t
 \end{figure}
 \FloatBarrier
 
-Single-seed caveat: per the protocol above, these are screening-grade numbers; the three-seed re-run of the final configuration is the confirmation step, with the base seed spread ($\pm 0.76$\,mm on E\_3/005) as the noise floor.
+These comparisons are reported at a single seed; the three-seed re-run of the final configuration is the confirmation step, with the base seed spread ($\pm 0.76$\,mm on E\_3/005) as the noise floor.
 
 \subsection{Comparison with the SoTA benchmark}
 \label{sec:results_sota}
