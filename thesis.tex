@@ -395,7 +395,7 @@ with $\delta_i = z_{i+1} - z_i$ the inter-sample spacing, so that mass accumulat
 Co-SLAM~\cite{Wang2023} is the real-time neural-SDF SLAM substrate that DDS-SLAM extends. Its field maps a point $x \in \mathbb{R}^3$ to a truncated signed-distance value $s(x)$ and a view-independent colour $c(x)$, replacing NeRF's density with geometry that can be supervised directly from depth.
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=\linewidth]{figures/coslam_architecture.png}
+    \includegraphics[width=\linewidth]{figures/fig_coslam_architecture.png}
     \caption{The Co-SLAM neural-SDF pipeline. A query point is jointly encoded by a multiresolution hash grid and a one-blob coordinate encoding \eqref{eq:joint-enc}; a geometry decoder returns the signed distance $s$ and feature $h$ and a colour decoder the radiance $c$ \eqref{eq:decoders}. Volume rendering \eqref{eq:sdf-weights}--\eqref{eq:nerf-render} yields the colour and depth that supervise both tracking (pose against a frozen map) and mapping (field and keyframe poses).}
     \label{fig:coslam_arch}
 \end{figure}
@@ -558,7 +558,7 @@ The minority test encodes that stillness requires the quietest districts to agre
 
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=\linewidth]{figures/motion_agreement.png}
+    \includegraphics[width=\linewidth]{figures/fig_motion_agreement.png}
     \caption{The gate's evidence on three real benchmark frames, one per decision path. Top (C\_1/001, camera still): every district vote is near zero - the quiet minority holds and the pose is frozen. Middle (C\_2/001, camera moving): the votes are large and consistent with a single rigid story - the frame is tracked. Bottom (E\_3/005, tissue being worked): the votes are large but the majority of districts dissent from every rigid story in the epipolar sense - the frame is frozen. Districts are the deployed k-means clustering of the ViT patch tokens; panel statistics are recomputed offline with a dense-flow proxy for illustration, and the live per-frame values are logged by the gate itself.}
     \label{fig:motion_agreement}
 \end{figure}
@@ -566,16 +566,13 @@ The minority test encodes that stillness requires the quietest districts to agre
 
 \paragraph{Threshold calibration.} The thresholds in \eqref{eq:cprime} are calibrated offline rather than tuned in the loop. The gate logs its per-frame statistics $(q_{10}, \mathrm{dis3})$ during a run; sweeping these logs against the ground-truth camera motion yields the precision and recall of every candidate operating point $(\tau_q, \tau_d)$. One discretisation detail matters in practice: with $K = 12$ districts, $\mathrm{dis3}$ is quantised to twelfths, so a strict inequality at $\tau_d = 0.5$ silently excludes frames on which exactly half the districts dissent; candidate thresholds must be placed between attainable values of the statistic, not on them.
 
-\paragraph{Featuriser choice.} The districts are built from a frozen self-supervised backbone. This was measured two ways: how well a backbone separates an independently-moving region in feature space, and whether that separation actually changes the freeze decision. For the first, a probe-margin test scored each backbone by the mean cosine similarity of a probe patch on the mover to the rest of the moving region, minus its similarity to everything else. DINOv2-S/14 (register variant)~\cite{Oquab2023} scored highest at $+0.33$, base DINOv3-B/16~\cite{Simeoni2025} $+0.29$, and a DINOv3 backbone fine-tuned for surgical segmentation only $+0.07$ at its final layer. The fine-tuned collapse is expected - a segmentation objective pulls all features of a class together, which removes the intra-tissue variation the clustering relies on. The first result is therefore that the featuriser should not be fine-tuned; a raw backbone is creating a better set of features than one fine tuned. Images of the features and their cosine similarities are shown in Figure~\ref{fig:dino_v2_v3_compare}.
-
+\paragraph{Featuriser choice.} The districts are built from a frozen self-supervised backbone. This was measured two ways: how well a backbone separates an independently-moving region in feature space, and whether that separation actually changes the freeze decision. For the first, a probe-margin test scored each backbone by the mean cosine similarity of a probe patch on the mover to the rest of the moving region, minus its similarity to everything else. DINOv2-S/14 (register variant)~\cite{Oquab2023} scored highest at $+0.33$, base DINOv3-B/16~\cite{Simeoni2025} $+0.29$, and a DINOv3 backbone fine-tuned for surgical segmentation only $+0.07$ at its final layer. The fine-tuned collapse is expected - a segmentation objective pulls all features of a class together, which removes the intra-tissue variation the clustering relies on. The first result is therefore that the featuriser should not be fine-tuned; a raw backbone is creating a better set of features than one fine tuned, images of the features and their cosine similarities are shown in \ref{fig:dino_comparison}.
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=\linewidth]{figures/dino_v2_v3_compare.png}
-    \caption{What each backbone sees. Rows: DINOv2-S/14, base DINOv3-B/16 (the final model's featuriser), and the surgical-segmentation fine-tune of DINOv3 at its final layer. Columns: the input frame (probe patch on the instrument circled), the PCA projection of the patch tokens on the working-instrument frame, the cosine similarity of every patch to the probe, and the PCA on a camera-moving frame. DINOv2 carries fine texture detail; base DINOv3 is smoother but keeps the instrument feature-distinct; the fine-tuned final layer has collapsed - every patch is similar to every other, and the instrument no longer stands out.}
-    \label{fig:dino_v2_v3_compare}
+    \includegraphics[width=\linewidth]{figures/fig_dino_comparison.png}
+    \caption{What each backbone sees. Rows: DINOv2-S/14, base DINOv3-B/16 (the featuriser of the final model), and the surgical-segmentation fine-tune of DINOv3 at its final layer. Columns: the input frame, with the yellow circle marking the probe patch on the instrument; the PCA projection of the patch tokens on the working-instrument frame; the cosine similarity of every patch to the probe; and the PCA on a camera-moving frame. The two raw backbones keep the instrument feature-distinct from the tissue it touches; the fine-tuned final layer has collapsed, with every patch similar to every other, matching its $+0.07$ probe margin.}
+    \label{fig:dino_comparison}
 \end{figure}
-\FloatBarrier
-
 However, running both raw backbones end-to-end on the evaluation sequences, the freeze decision is near-identical regardless of backbone: $q_{10}$ correlates at $0.99$ between DINOv2-S/14 and base DINOv3-B/16, $\mathrm{dis3}$ is effectively the same, and $94$--$95\%$ of the freeze decisions agree. The $5$--$6\%$ of decisions that do differ are a result of the base DINOv3 model performing slightly above DINOv2, with higher freeze precision and recall on both evaluation sequences, and a small tracking improvement on the deforming sequence.
 
 \paragraph{Per-ray trust variants (ablated).} The same votes support a softer consumer: the fit residuals of \eqref{eq:vote-trust}, or a depth-normalised deviation from the district consensus, can be painted into a dense per-ray motion trust and applied in the pose solve multiplicatively with the uncertainty weight of \eqref{eq:unc-weight} on tracked frames. These variants are evaluated in the ablations and not retained in the locked configuration, for measured reasons. Behavioural audits against kinematic ground truth showed the depth-pooled variant responds to camera rotation rather than to scene motion: its normalisation is exact for camera-translation parallax, which scales as $1/Z$, but mis-scales rotational flow, which is depth-independent. The sharper de-rotated variant discriminates scene motion nearly perfectly on the design sequences yet degrades held-out sequences, its per-frame muting noise compounding over long trajectories. And stacking any trust behind the freeze gate starves the solve: the gate has already removed the confidently-still frames, so the trust mutes precisely the frames that still need tracking. The freeze decision --- which removes ambiguous frames outright rather than re-weighting within them --- is the consumer that survives measurement.
@@ -590,7 +587,7 @@ to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the ro
 \FloatBarrier
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=\linewidth]{figures/vote_pipeline.png}
+    \includegraphics[width=\linewidth]{figures/fig_vote_pipeline.png}
     \caption{The label-free motion-attribution pipeline. A frame pair yields self-supervised ViT semantic districts, dense optical flow~\cite{Teed2020}, and up-to-scale depth; each district casts one median vote $(f_k, Z_k, p_k)$. A robust depth-signature fit \eqref{eq:vote-fit} separates camera motion from independent movers, which fall out as outliers through the fit residual \eqref{eq:vote-trust}. Two vote statistics \eqref{eq:vote-stats} give the still/moving decision \eqref{eq:cprime} that gates the pose solve; frozen keyframes are re-pinned after every bundle-adjustment cycle so the decision persists in the trajectory.}
     \label{fig:vote_pipeline}
 \end{figure}
@@ -763,7 +760,7 @@ These comparisons are reported at a single seed; the three-seed re-run of the fi
 \subsection{Comparison with the SoTA benchmark}
 \label{sec:results_sota}
 
-Table~\ref{tab:results_sota} places BDDS-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, aggregating each method's per-sequence results (Tables~\ref{tab:bench_dds}--\ref{tab:bench_semgauss}) onto common axes. The methods differ in what they natively expose, so the comparison carries the caveats of their own sections: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph; SGS-SLAM exports no comparable trajectory and is compared on rendering only; SemGauss-SLAM reports ATE$_{\mathrm{mean}}$ (its exported statistic) and its G\_3/001 is capped at 750 frames by memory.
+Table~\ref{tab:results_sota} places BDDS-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, aggregating each method's per-sequence results (Tables~\ref{tab:bench_dds}--\ref{tab:bench_semgauss}) onto common axes. The methods differ in what they natively expose, so the comparison carries the caveats of their own sections: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph; SGS-SLAM exports no comparable trajectory and is compared on rendering only; SemGauss-SLAM reports ATE$_{\mathrm{mean}}$ (its exported statistic) and its G\_3/001 could not be run (it exhausts an A100-80GB before completing).
 
 \begin{table}[!ht]
 \centering
@@ -784,7 +781,7 @@ SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 5.98 & 7.25 & 8.14 & 5.12 & --- & &
 SGS-SLAM~\cite{sgsslam} & --- & --- & --- & --- & --- & & 19.26 & 0.786 & 0.434$^{*}$ \\
 \bottomrule
 \multicolumn{10}{l}{\footnotesize $^{\dagger}$camera-motion proxy, not a native pose. \quad
-$^{\ddagger}$ATE$_{\mathrm{mean}}$ (exported statistic); SemGauss G\_3 capped at 750 frames. \quad
+$^{\ddagger}$ATE$_{\mathrm{mean}}$ (exported statistic); SemGauss G\_3 did not finish (OOM). \quad
 $^{*}$keyframe renders only.}
 \end{tabular}}
 \end{table}
@@ -989,9 +986,8 @@ SemGauss-SLAM \cite{semgauss} is the semantic-feature-field Gaussian representat
 \caption{SemGauss-SLAM on the CRCD benchmark, scored identically to DDS-SLAM:
 native trajectory under Sim(3) (ATE in mm) and every-frame renders. LPIPS on
 three snippets awaits a rescore (scorer library missing on the compute host at
-run time; renders retained). G3\_001 exceeds an A100-80GB before half sequence
-(see text) and is scored on its first 750 frames against the matching
-ground-truth prefix.}
+run time; renders retained). G3\_001 could not be run --- it exhausts an
+A100-80GB before completing (see text) --- and is omitted from the mean.}
 \label{tab:bench_semgauss}
 \small
 \begin{tabular}{l r rrrr rrrr}
@@ -1003,14 +999,14 @@ C1\_001 &  360 & 5.98 & 14.38 &  3.25 & 0.76 & 20.57 & 0.771 & 0.344 & 22.5 \\
 C2\_001 &  730 & 7.25 & 21.78 & 13.14 & 0.80 & 16.31 & 0.674 & ---   & 44.2 \\
 C3\_001 & 1527 & 8.14 & 25.75 & 23.60 & 0.90 & 17.78 & 0.783 & ---   & 24.6 \\
 E3\_005 &  265 & 5.12 & 16.84 &  1.70 & 0.34 & 17.31 & 0.726 & ---   & 50.0 \\
-G3\_001 & 750$^{\dagger}$ & \multicolumn{8}{c}{\emph{in progress}} \\
+G3\_001 & 1987 & \multicolumn{8}{c}{\emph{did not finish --- OOM, A100-80GB (see text)}} \\
 \midrule
 mean (4) & --- & 6.62 & 19.69 & 10.42 & 0.70 & 17.99 & 0.739 & --- & 35.3 \\
 \bottomrule
-\multicolumn{10}{l}{\footnotesize $^{\dagger}$first 750 of 1987 frames
-(memory ceiling, see text); evaluated against the corresponding GT prefix.}
 \end{tabular}
 \end{table}
+
+G3\_001 could not be benchmarked: every attempt --- the faithful configuration and a pruning-tightened variant (densification gate 0.5$\rightarrow$0.25, prune threshold 0.005$\rightarrow$0.05) --- exhausted an A100-80GB partway through the sequence and never completed. The failure is a \emph{scaling} property of the representation rather than a transient crash: SplaTAM-family methods add Gaussians wherever the current map fails to explain the frame, so memory grows with newly-revealed surface rather than with sequence length, and G3\_001's exploratory camera and tool activity never let densification plateau --- it had accumulated 11.0\,M Gaussians, six times C3\_001's final count (1.75--1.78\,M over a longer 1527-frame sequence) at a fraction of the frames, when it crossed the 80\,GB ceiling. SGS-SLAM completed the same snippet on the same GPU because its Gaussians carry no 16-dimensional feature vector, no 16-channel rasterisation buffers and no corresponding gradients, and are roughly $3\times$ lighter. The authors' configuration exposes no Gaussian budget --- Replica never needed one --- so the ceiling is a property of the method, not of our port: the semantic feature field trades memory scalability for its dense semantics, and an exploratory endoscopic sequence is precisely the regime that collects the bill. G3\_001 is therefore reported as a did-not-finish; the four completed snippets carry the SemGauss-SLAM comparison.
 
 
 \subsection{PERSEUS}
