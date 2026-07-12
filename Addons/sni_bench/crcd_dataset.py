@@ -38,9 +38,11 @@ class CRCD(BaseDataset):  # noqa: F821  (BaseDataset from the enclosing datasets
     def __init__(self, cfg, args, scale, device='cuda:0'):
         super(CRCD, self).__init__(cfg, args, scale, device)
 
+        # NOTE naming asymmetry in CRCD: rgb/depth are left-of-stereo "NNNNNNl.png"; masks are
+        # "NNNNNN.png" (no 'l'). Pairing is by frame id (_fid), so the globs differ but align.
         colors = sorted(glob.glob(f'{self.input_folder}/video_frames/*l.png'), key=_fid)
         depths = sorted(glob.glob(f'{self.input_folder}/depth/*l.png'), key=_fid)
-        masks = sorted(glob.glob(f'{self.input_folder}/masks/*l.png'), key=_fid)
+        masks = sorted(glob.glob(f'{self.input_folder}/masks/*.png'), key=_fid)
 
         # pair the modalities BY FRAME ID (video_frames also holds *r; depth/masks are left-only) so
         # rgb[i]/depth[i]/mask[i] are the SAME frame -- a positional zip would silently misalign.

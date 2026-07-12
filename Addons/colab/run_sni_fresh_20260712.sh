@@ -1,0 +1,195 @@
+#!/bin/bash
+# ============================================================================
+# run_sni_fresh_20260712.sh — FRESH base-SNI-SLAM CRCD bench (clean reset).
+#
+# Built on PRISTINE IRMVLab/SNI-SLAM + exactly THREE clean additions from
+# Addons/sni_bench/ (dataloader, config, bound helper). NO fork patches, no
+# accreted state. ALL input adaptation lives in the CRCD dataloader; the config
+# is reviewed vs DDS-SLAM + the other benches (see crcd.yaml header).
+#
+#   design decisions (user, 2026-07-12):
+#     - metric units, mirror DDS (scale 1; planes/trunc scaled to the ~3cm scene)
+#     - frame-0-relative poses (DDS identity-init / SGS relative_pose convention)
+#     - GT masks (use_gt_semantic=True), n_classes=52 so dinov2_replica.pth loads
+#       UNMODIFIED -> zero code patches to base SNI
+#     - reuse the proven `sni` conda env-build; C1_001 SMOKE first
+#
+# Usage (fresh box, Drive mounted):
+#   git clone -b diagnosis-live https://github.com/bwright000/DDS-SLAM /content/DDS-SLAM
+#   nohup bash /content/DDS-SLAM/Addons/colab/run_sni_fresh_20260712.sh \
+#       &> /content/sni_fresh.out & disown ; tail -f /content/sni_fresh.out
+#
+#   SNIPPETS="C1_001 C2_001 ..." to widen after the smoke passes.
+# ============================================================================
+set -uo pipefail
+REPO=${REPO:-/content/DDS-SLAM}
+SNI_REPO=${SNI_REPO:-/content/sni-fresh}                         # SEPARATE from the fork (/content/sni-slam)
+SNI_URL=${SNI_URL:-https://github.com/IRMVLab/SNI-SLAM}          # PRISTINE authors
+CONDA_ROOT=${CONDA_ROOT:-/content/miniconda3}
+SNI_ENV=${SNI_ENV:-sni}; SNI_PY="$CONDA_ROOT/envs/$SNI_ENV/bin/python"
+ENV_CACHE=${ENV_CACHE:-/content/drive/MyDrive/dds_cache/sni_env.tar.gz}
+SNI_GDRIVE_ID=${SNI_GDRIVE_ID:-1YSQMk0f2p8lM1z9m6cJ5dM8vXH0Yy0nq}  # authors' DINOv2 folder (override if changed)
+# native CRCD source (video_frames/ depth/ masks/ groundtruth.txt rectified_calib.txt), per snippet:
+CRCD_SRC=${CRCD_SRC:-/content/drive/MyDrive/Datasets/CRCD-Published-Native}
+SNIPPETS=${SNIPPETS:-"C1_001"}
+DRIVE_OUT=${DRIVE_OUT:-/content/drive/MyDrive/Outputs/SNI_fresh_$(date +%Y%m%d)}
+STORE_DEV=${SNI_STORE_DEVICE:-cuda:0}
+mkdir -p "$DRIVE_OUT"
+exec > >(tee -a "$DRIVE_OUT/runbook.log") 2>&1
+say(){ echo ""; echo "==================== [$(date +%H:%M:%S)] $* ===================="; }
+
+# ---------------------------------------------------------------- env ----
+build_env(){
+  [ -d /content/drive/MyDrive ] || { say "FATAL: Drive not mounted"; return 1; }
+  [ -d "$SNI_REPO/.git" ] || git clone -q "$SNI_URL" "$SNI_REPO" || { say "FATAL clone $SNI_URL"; return 1; }
+  # reuse the proven sni conda env (env-only -> still 'base SNI'); restore cache or build once
+  if [ "${REBUILD_ENV:-0}" != 1 ] && [ -x "$SNI_PY" ] \
+     && PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d;assert torch.__version__.startswith('1.11')" 2>/dev/null; then
+    say "sni env ready"
+  else
+    [ -x "$CONDA_ROOT/bin/conda" ] || { wget -qO /tmp/mc.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash /tmp/mc.sh -b -p "$CONDA_ROOT"; }
+    "$CONDA_ROOT/bin/conda" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
+    if [ -f "$ENV_CACHE" ]; then
+      say "restoring sni env from Drive cache"
+      mkdir -p "$CONDA_ROOT/envs/$SNI_ENV" && tar -xzf "$ENV_CACHE" -C "$CONDA_ROOT/envs/$SNI_ENV" \
+        && PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d" 2>/dev/null || { rm -rf "$CONDA_ROOT/envs/$SNI_ENV"; }
+    fi
+    if ! PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d" 2>/dev/null; then
+      say "conda env create (~25-40 min; pytorch3d 0.7.1/cu113/py37 landmine)"
+      "$CONDA_ROOT/bin/conda" env create -n "$SNI_ENV" -f "$SNI_REPO/environment.yaml" || { say "FATAL env create"; return 1; }
+      tar -czf /tmp/sni_env.tar.gz -C "$CONDA_ROOT/envs/$SNI_ENV" . && mv -f /tmp/sni_env.tar.gz "$ENV_CACHE" || true
+    fi
+  fi
+  PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d;print('[env] torch',torch.__version__,'pytorch3d',pytorch3d.__version__,'GPU',torch.cuda.get_device_name(0))" || { say "FATAL env smoke"; return 1; }
+  # seg assets: DINOv2 backbone CODE (always) + Replica head weights (use_gt_semantic loads dinov2_replica.pth)
+  if [ ! -d "$SNI_REPO/seg/facebookresearch_dinov2_main" ] || [ ! -f "$SNI_REPO/seg/dinov2_replica.pth" ]; then
+    say "fetching DINOv2 backbone + Replica head"
+    pip install -q gdown 2>/dev/null
+    gdown --folder "https://drive.google.com/drive/folders/$SNI_GDRIVE_ID" -O /tmp/snidl --remaining-ok 2>/dev/null || true
+    Z=$(find /tmp/snidl -name 'facebookresearch_dinov2_main.zip' | head -1); [ -n "$Z" ] && unzip -qo "$Z" -d "$SNI_REPO/seg/"
+    for f in dinov2_replica.pth; do S=$(find /tmp/snidl -name "$f" | head -1); [ -n "$S" ] && cp -f "$S" "$SNI_REPO/seg/$f"; done
+    [ -d "$SNI_REPO/seg/facebookresearch_dinov2_main" ] && [ -f "$SNI_REPO/seg/dinov2_replica.pth" ] \
+      || { say "FATAL: DINOv2 backbone/head not obtained (gdown quota? place manually in $SNI_REPO/seg/)"; return 1; }
+  fi
+  python3 -c "import lpips" 2>/dev/null || pip install -q lpips
+  python3 -c "import cv2,matplotlib,imageio" 2>/dev/null || pip install -q opencv-contrib-python matplotlib imageio imageio-ffmpeg
+  say "env DONE"
+}
+
+# ------------------------------------------- inject the 3 clean additions ----
+inject_crcd(){
+  mkdir -p "$SNI_REPO/configs/CRCD"
+  cp -f "$REPO/Addons/sni_bench/crcd.yaml" "$SNI_REPO/configs/CRCD/crcd.yaml"
+  # append the CRCD dataloader into base datasets.py (BaseDataset in scope) + register 'crcd'. Idempotent.
+  REPO="$REPO" SNI_REPO="$SNI_REPO" PYTHONPATH= "$SNI_PY" - <<'PY' || { say "FATAL inject"; return 1; }
+import os
+repo, sni = os.environ['REPO'], os.environ['SNI_REPO']
+dsf = f"{sni}/src/utils/datasets.py"
+txt = open(dsf).read()
+if "class CRCD(BaseDataset)" in txt:
+    print("[inject] CRCD already present -> skip"); raise SystemExit(0)
+src = open(f"{repo}/Addons/sni_bench/crcd_dataset.py").read()
+body = src[src.index("def _fid"):]                     # _fid + CRCD class (drop standalone import header)
+txt += ("\n\n# ==== fresh SNI-CRCD bench (Addons/sni_bench/crcd_dataset.py) ====\n"
+        "import glob, os, re\nimport cv2\nimport numpy as np\nimport torch\n"
+        "from scipy.spatial.transform import Rotation\n" + body +
+        "\ndataset_dict['crcd'] = CRCD\n")
+open(dsf, 'w').write(txt)
+print("[inject] CRCD dataloader appended + registered")
+PY
+  say "inject DONE"
+}
+
+# ------------------------------------------- stage native CRCD (per snippet) --
+stage_native(){ local NAME=$1 SRC="$CRCD_SRC/$NAME" SD="$SNI_REPO/data/CRCD/$NAME"
+  [ -d "$SRC" ] || { say "FATAL: no native CRCD at $SRC (need video_frames/ depth/ masks/ groundtruth.txt rectified_calib.txt)"; return 1; }
+  mkdir -p "$SD"
+  for sub in video_frames depth masks; do
+    [ -d "$SRC/$sub" ] || { say "FATAL: $SRC missing $sub/"; return 1; }
+    ln -sfn "$(readlink -f "$SRC/$sub")" "$SD/$sub"
+  done
+  for f in groundtruth.txt rectified_calib.txt; do
+    [ -f "$SRC/$f" ] || { say "FATAL: $SRC missing $f"; return 1; }
+    ln -sf "$(readlink -f "$SRC/$f")" "$SD/$f"
+  done
+  local NC ND NM
+  NC=$(ls "$SD/video_frames"/*l.png 2>/dev/null | wc -l); ND=$(ls "$SD/depth"/*l.png 2>/dev/null | wc -l); NM=$(ls "$SD/masks"/*.png 2>/dev/null | wc -l)
+  say "  $NAME staged: rgb(left)=$NC depth=$ND masks=$NM"
+  [ "$NC" -gt 0 ] && [ "$ND" -gt 0 ] && [ "$NM" -gt 0 ] || { say "FATAL: empty modality"; return 1; }
+}
+
+# ---------------------------------------------------------- run one snippet --
+run_one(){ local NAME=$1 SD="$SNI_REPO/data/CRCD/$NAME" CFG="configs/CRCD/${NAME}.yaml" DST="$DRIVE_OUT/$NAME"
+  mkdir -p "$DST"
+  stage_native "$NAME" || { echo FAILED > "$DST/status.txt"; return 1; }
+  # per-snippet config (relative-frame bound) inheriting crcd.yaml
+  python3 "$REPO/Addons/sni_bench/compute_bound_relative.py" --data_dir "$SD" \
+     --out "$SNI_REPO/$CFG" --name "$NAME" --input_folder "data/CRCD/$NAME" \
+     || { say "FATAL bound"; echo FAILED > "$DST/status.txt"; return 1; }
+  cp -f "$SNI_REPO/$CFG" "$DST/config_used.yaml"
+  # ---- train ----
+  say "$NAME: SNI-SLAM run.py"
+  ( cd "$SNI_REPO" && SNI_STORE_DEVICE="$STORE_DEV" PYTHONPATH=. "$SNI_PY" run.py "$CFG" ) 2>&1 | tee "$DST/run.log"
+  local RC=${PIPESTATUS[0]}
+  [ "$RC" -eq 0 ] || { echo "FAILED run.py rc=$RC" > "$DST/status.txt"; say "$NAME FAILED"; return 1; }
+  local OUTD="$SNI_REPO/output/CRCD/$NAME"
+  # ---- export est trajectory ----
+  local CKPT; CKPT=$(ls -t "$OUTD"/ckpt/*.pt 2>/dev/null | head -1)
+  [ -n "$CKPT" ] || { say "no ckpt"; echo FAILED > "$DST/status.txt"; return 1; }
+  PYTHONPATH= "$SNI_PY" - "$CKPT" "$DST/est_c2w_data.txt" <<'PY' || { say "export fail"; return 1; }
+import sys, torch, numpy as np
+ck = torch.load(sys.argv[1], map_location='cpu')
+est = ck['estimate_c2w_list'][:ck['idx']+1].numpy()
+with open(sys.argv[2],'w') as f:
+    for M in est: f.write(" ".join(f"{v:.10f}" for v in M.reshape(-1))+"\n")
+print(f"[export] {est.shape[0]} poses")
+PY
+  # ---- per-frame render (drives SNI's own Renderer) ----
+  ( cd "$SNI_REPO" && PYTHONPATH=. "$SNI_PY" "$REPO/Addons/sni_bench/render_all_frames_sni.py" "$CFG" --skip 1 --ignore_scaled_config ) 2>&1 | tail -5 | tee -a "$DST/run.log" || say "$NAME WARN render"
+  python3 - "$OUTD/rendered" "$DST" <<'PY' || say "WARN rename"
+import sys, glob, os, re, shutil
+rd, out = sys.argv[1], sys.argv[2]
+os.makedirs(f"{out}/render/depth", exist_ok=True); n=m=0
+for p in sorted(glob.glob(f"{rd}/*.jpg")):
+    i=int(re.findall(r'\d+', os.path.basename(p))[-1]); shutil.copy(p, f"{out}/render/{i}.jpg"); n+=1
+for p in sorted(glob.glob(f"{rd}/depth/*.png")):
+    i=int(re.findall(r'\d+', os.path.basename(p))[-1]); shutil.copy(p, f"{out}/render/depth/{i:04d}.png"); m+=1
+print(f"[rename] {n} rgb + {m} depth")
+PY
+  # ---- eval battery (OUR dataset-agnostic metric tools) ----
+  python3 "$REPO/Addons/eval/sim3_ate.py" --est "$DST/est_c2w_data.txt" --gt "$SD/groundtruth.txt" \
+     --name "SNI-fresh $NAME" --out "$DST/sim3_metrics.txt" || say "WARN sim3"
+  python3 "$REPO/Addons/eval/eval_rendering.py" --gt_dir "$SD/video_frames" --render_dir "$DST/render" \
+     --name "SNI-fresh" --sequence "CRCD ($NAME)" --output_csv "$DST/render_eval.csv" > "$DST/render_eval.txt" 2>&1 || say "WARN render eval"
+  python3 "$REPO/Addons/eval/depth_l1.py" --render_depth_dir "$DST/render/depth" --render_scale 10000 \
+     --gt_depth_dir "$SD/depth" --png_depth_scale 10000 --out "$DST/depth_l1.txt" || say "WARN depth_l1"
+  python3 "$REPO/Addons/viz/generate_video.py" --rgb_input_dir "$SD/video_frames" --rgb_input_pattern '*l.png' \
+     --rgb_output_dir "$DST/render" --rgb_output_pattern '[0-9]*.jpg' \
+     --depth_input_dir "$SD/depth" --depth_output_dir "$DST/render/depth" --png_depth_scale 10000 \
+     --trajectory_est "$DST/est_c2w_data.txt" --trajectory_gt "$SD/groundtruth.txt" \
+     --output "$DST/panels.mp4" --fps 15 || say "WARN video"
+  # ---- SMOKE DIAGNOSTICS (does the fresh setup actually work?) ----
+  say "$NAME SMOKE DIAGNOSTICS"
+  echo "  marching_cubes errors: $(grep -ic 'marching_cubes error' "$DST/run.log")   (want 0)"
+  python3 - "$DST/est_c2w_data.txt" "$DST/render" <<'PY'
+import sys, glob, os, numpy as np, cv2
+M=np.loadtxt(sys.argv[1]); t=M[:,[3,7,11]]
+print(f"  est translation std x/y/z: {t.std(0).round(5)}   (frozen if ~0, runaway if >>scene)")
+fs=sorted(glob.glob(sys.argv[2]+"/*.jpg"), key=lambda p:int(''.join(filter(str.isdigit,os.path.basename(p))) or 0))
+if fs:
+    mid=cv2.imread(fs[len(fs)//2]); print(f"  mid render spatial_std: {mid.std():.2f}   (empty if <10)")
+PY
+  echo DONE > "$DST/status.txt"; touch "$DST/.DONE"
+  say "$NAME DONE -> $DST"
+  grep -E "recovered scale|path ratio|Pearson|ATE  rmse" "$DST/sim3_metrics.txt" 2>/dev/null
+  grep -iE "PSNR|SSIM|LPIPS" "$DST/render_eval.txt" 2>/dev/null | head -3
+}
+
+# ------------------------------------------------------------------- main ----
+say "FRESH SNI-CRCD bench  snippets='$SNIPPETS'  GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null|head -1)"
+case "${1:-all}" in
+  env)  build_env ;;
+  all)  build_env && inject_crcd && { for NAME in $SNIPPETS; do run_one "$NAME" || true; done; } ;;
+  *)    build_env && inject_crcd && run_one "$1" ;;
+esac
+say "fresh bench complete -> $DRIVE_OUT"
