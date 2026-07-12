@@ -777,7 +777,7 @@ Method & C\_1 & C\_2 & C\_3 & E\_3 & G\_3 & & PSNR$\uparrow$ & SSIM$\uparrow$ & 
 DDS-SLAM (base)~\cite{Shan2024} & 2.64 & 6.78 & --- & 5.31 & 4.12 & & \textbf{25.77} & 0.809 & 0.450 \\
 PERSEUS$^{\ddagger}$ (tracking-only) & 1.97 & \textbf{3.64} & 10.69 & 4.84 & 4.87 & & --- & --- & --- \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 3.06 & --- & 9.76 & 5.79 & 4.64 & & 10.02 & 0.260 & 0.851 \\
-SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 5.98 & 7.25 & 8.14 & 5.12 & --- & & 17.99 & 0.739 & --- \\
+SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 5.98 & 7.25 & 8.14 & 5.12 & --- & & 17.99 & 0.739 & 0.472 \\
 SGS-SLAM~\cite{sgsslam} & --- & --- & --- & --- & --- & & 19.26 & 0.786 & 0.434$^{*}$ \\
 \bottomrule
 \multicolumn{10}{l}{\footnotesize $^{\dagger}$camera-motion proxy, not a native pose. \quad
@@ -984,10 +984,9 @@ SemGauss-SLAM \cite{semgauss} is the semantic-feature-field Gaussian representat
 \begin{table}[t]
 \centering
 \caption{SemGauss-SLAM on the CRCD benchmark, scored identically to DDS-SLAM:
-native trajectory under Sim(3) (ATE in mm) and every-frame renders. LPIPS on
-three snippets awaits a rescore (scorer library missing on the compute host at
-run time; renders retained). G3\_001 could not be run --- it exhausts an
-A100-80GB before completing (see text) --- and is omitted from the mean.}
+native trajectory under Sim(3) (ATE in mm) and every-frame renders. G3\_001
+could not be run --- it exhausts an A100-80GB before completing (see text) ---
+and is omitted from the mean.}
 \label{tab:bench_semgauss}
 \small
 \begin{tabular}{l r rrrr rrrr}
@@ -996,12 +995,12 @@ Snippet & $N$ & ATE$_{\mathrm{mean}}$ & ATE$_{\mathrm{max}}$ & path ratio &
 $|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
 \midrule
 C1\_001 &  360 & 5.98 & 14.38 &  3.25 & 0.76 & 20.57 & 0.771 & 0.344 & 22.5 \\
-C2\_001 &  730 & 7.25 & 21.78 & 13.14 & 0.80 & 16.31 & 0.674 & ---   & 44.2 \\
-C3\_001 & 1527 & 8.14 & 25.75 & 23.60 & 0.90 & 17.78 & 0.783 & ---   & 24.6 \\
-E3\_005 &  265 & 5.12 & 16.84 &  1.70 & 0.34 & 17.31 & 0.726 & ---   & 50.0 \\
+C2\_001 &  730 & 7.25 & 21.78 & 13.14 & 0.80 & 16.31 & 0.674 & 0.533 & 44.2 \\
+C3\_001 & 1527 & 8.14 & 25.75 & 23.60 & 0.90 & 17.78 & 0.783 & 0.503 & 24.6 \\
+E3\_005 &  265 & 5.12 & 16.84 &  1.70 & 0.34 & 17.31 & 0.726 & 0.509 & 50.0 \\
 G3\_001 & 1987 & \multicolumn{8}{c}{\emph{did not finish --- OOM, A100-80GB (see text)}} \\
 \midrule
-mean (4) & --- & 6.62 & 19.69 & 10.42 & 0.70 & 17.99 & 0.739 & --- & 35.3 \\
+mean (4) & --- & 6.62 & 19.69 & 10.42 & 0.70 & 17.99 & 0.739 & 0.472 & 35.3 \\
 \bottomrule
 \end{tabular}
 \end{table}
