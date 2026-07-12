@@ -28,7 +28,7 @@ SNI_URL=${SNI_URL:-https://github.com/IRMVLab/SNI-SLAM}          # PRISTINE auth
 CONDA_ROOT=${CONDA_ROOT:-/content/miniconda3}
 SNI_ENV=${SNI_ENV:-sni}; SNI_PY="$CONDA_ROOT/envs/$SNI_ENV/bin/python"
 ENV_CACHE=${ENV_CACHE:-/content/drive/MyDrive/dds_cache/sni_env.tar.gz}
-SNI_GDRIVE_ID=${SNI_GDRIVE_ID:-1YSQMk0f2p8lM1z9m6cJ5dM8vXH0Yy0nq}  # authors' DINOv2 folder (override if changed)
+SNI_GDRIVE_ID=${SNI_GDRIVE_ID:-1BCu8bCGKG9HmnLFbyx7DIHI0slgkeo4h}  # authors' DINOv2 folder (from run_snislam.sh)
 # native CRCD source (video_frames/ depth/ masks/ groundtruth.txt rectified_calib.txt), per snippet:
 CRCD_SRC=${CRCD_SRC:-/content/drive/MyDrive/Datasets/CRCD-Published-Native}
 SNIPPETS=${SNIPPETS:-"C1_001"}
