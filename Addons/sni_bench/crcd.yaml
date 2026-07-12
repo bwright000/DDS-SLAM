@@ -1,0 +1,86 @@
+# ============================================================================
+# BASE SNI-SLAM on CRCD  —  fresh bench (2026-07-12), inherits authors' SNI-SLAM.yaml
+# ----------------------------------------------------------------------------
+# Philosophy: BASE SNI-SLAM, unpatched. All INPUT adaptation is in the CRCD
+# dataloader (src/utils/datasets.py::CRCD); this file is the CONFIG review, with
+# every CRCD-specific value grounded in DDS-SLAM's proven CRCD recipe (same
+# NeRF-SDF family, same data) or the authors' own surgical (Super) settings.
+#
+# SCALE STRATEGY = metric units, mirror DDS (user decision 2026-07-12). CRCD is a
+# ~3 cm-deep tissue scene (verified: relative z 0.022..0.052 on C1_001), ~300x
+# smaller than Replica's ~10 m room, so the spatial hyperparameters (planes_res,
+# truncation, meshing) are scaled DOWN to the scene while keeping the authors'
+# resolution RATIOS. Nothing is rescaled at the input (scale: 1).
+#
+# POSE FRAME = frame-0-relative (dataloader): frame 0 -> identity, camera at
+# origin, tissue at z~+0.03 — matches DDS (identity-init) / SGS (relative_pose).
+# SNI uses gt only for the frame-0 anchor + eval; frames 1..N are tracked.
+#
+# SEMANTICS = GT masks (user decision). use_gt_semantic: True feeds CRCD's masks
+# (remapped 4->3 in the loader) as targets. n_classes stays 52 so the authors'
+# dinov2_replica.pth loads UNMODIFIED (targets {0,1,2} are a subset of 0..51;
+# the model reads n_classes from cfg, not the dataset).  << ZERO code patches.
+#
+# Per-snippet configs inherit THIS and set only data.input_folder, timesteps, and
+# mapping.bound (auto-computed by Addons/sni_bench/compute_bound_relative.py).
+# ============================================================================
+inherit_from: configs/SNI-SLAM.yaml
+
+dataset: 'crcd'
+scale: 1                       # metric units (NO input rescale)
+
+# --- spatial resolution: authors' Replica ratios, scaled to the ~0.08 m CRCD bound ---
+planes_res:                    # geometry tri-plane   (authors 0.24 / 0.06)
+  coarse: 0.01
+  fine: 0.0025
+  bound_dividable: 0.01
+c_planes_res:                  # colour tri-plane      (authors 0.24 / 0.03)
+  coarse: 0.01
+  fine: 0.00125
+s_planes_res:                  # semantic tri-plane    (authors 0.24 / 0.03)
+  coarse: 0.01
+  fine: 0.00125
+
+meshing:
+  resolution: 0.001            # 1 mm marching-cubes (authors 0.01 Replica; DDS voxel_final 0.02->fine here)
+  mesh_bound_scale: 1.02
+
+tracking:
+  const_speed_assumption: True # authors' default (DDS/SGS also const-velocity)
+  lr_T: 0.0001                 # DDS-CRCD + authors' Super (surgical) — 1e-3 is the F1 runaway regime
+  lr_R: 0.0001
+  pixels: 2000                 # authors
+  iters: 8                     # authors
+  # loss weights: authors' verbatim (w_color 5, w_depth 1, w_sdf_* , w_semantic 0.01) — faithful first
+
+mapping:
+  every_frame: 4               # authors
+  joint_opt: True              # authors' mapping-BA (faithful; note: also refines camera)
+  keyframe_every: 4
+  pixels: 4000                 # authors
+  iters: 15                    # authors
+  lr:
+    fusion_lr: 3.0e-3          # authors (Replica) / present in DDS mapping too
+
+cam:                           # CRCD rectified calib (rectified_calib.txt) + MoGe png scale
+  H: 720
+  W: 1280
+  fx: 1096.6961889243337
+  fy: 1096.6961889243337
+  cx: 622.8076171875
+  cy: 383.12598037719727
+  png_depth_scale: 10000.0     # DDS-CRCD (uint16 / 1e4 -> metres)
+  crop_edge: 0
+
+model:
+  truncation: 0.005            # 5 mm SDF band: >= MoGe depth noise, ~15% of the 3 cm tissue depth
+                               # (authors 0.06 for 10 m room; DDS trunc 0.1 is looser-normalised)
+  cnn:
+    n_classes: 52              # KEEP 52 -> dinov2_replica.pth loads unmodified (CRCD targets are {0,1,2})
+    pretrained_model_path: 'seg/dinov2_replica.pth'
+
+func:
+  use_gt_semantic: True        # CRCD GT masks as semantic targets (user decision)
+  use_gt_pose: False           # SLAM tracks poses (gt only for frame-0 anchor + eval)
+
+# mapping.bound + marching_cubes_bound are injected per-snippet (compute_bound_relative.py).
