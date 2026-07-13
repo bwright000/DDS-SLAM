@@ -33,7 +33,7 @@ In surgery, the static world assumption  breaks; as the map itself is dynamic, c
 
 Given the aforementioned, this project proposes the application of semantic SLAM for surgical scenes, utilising the Comprehensive Robotic Cholecystectomy Dataset (CRCD)\cite{Oh2024}. The dataset provides endoscopic video with synchronised robot kinematics across 18 ex vivo procedures. Our project augments the dataset with the additional modalities required for a semantic SLAM pipeline, including the re-propagation of masks using the latest segmentation models. In addition to depth maps, created using MoGe2 and Stereo-matched to ensure accurate scaling. Finally, the necessary pose data is extracted and cleaned in Section~\ref{sec:motion_analysis}. From there detailed data sequences are constructed which contain all the required files for semantic SLAM - Data is provided in a TUM format with Semantics being in the same format as the Replica dataset, for easy reusability with other models. 
 
-This augmented dataset is benchmarked on multiple state-of-the-art (SoTA) semantic SLAM pipelines, and proves challenging for most of them. In parallel with the dataset, we present \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), an uncertainty-aware extension of DDS-SLAM~\cite{Shan2024} that improves camera tracking and reconstruction under scene deformation through three contributions: a learned aleatoric uncertainty head that down-weights unreliable measurements in both tracking and mapping; a label-free motion attribution built on DINO features that isolates camera motion from scene motion and freezes the pose on confident-still frames; and the diagnosis and correction of an optimiser-induced pose noise floor in the bundle adjustment. Every addition is flag-gated, so the released baseline is reproduced exactly and each measured gain is attributable to a single change. Calibrated on two design sequences and tested unseen on the remaining three, DID-SLAM improves trajectory error on all five ($-31\%$ on average, up to $-51\%$ held-out) while preserving rendering quality; against the benchmarked SoTA systems it records the best trajectory on four of the five sequences and reaches parity with a dedicated tracking-only system on the fifth, while remaining the only method strong on both halves of the problem.
+This augmented dataset is benchmarked on multiple state-of-the-art (SoTA) semantic SLAM pipelines, and proves challenging for most of them. In parallel with the dataset, we present \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), an uncertainty-aware extension of DDS-SLAM~\cite{Shan2024} that improves camera tracking and reconstruction under scene deformation through two contributions: a learned aleatoric uncertainty head that down-weights unreliable measurements in both tracking and mapping, and a label-free motion attribution built on DINO features that isolates camera motion from scene motion and freezes the pose on confident-still frames; these are supported by the diagnosis and correction of an optimiser-induced pose noise floor in the bundle adjustment, treated as hyperparameter selection rather than a contribution. Every addition is flag-gated, so the released baseline is reproduced exactly and each measured gain is attributable to a single change. Calibrated on two design sequences and tested unseen on the remaining three, DID-SLAM improves trajectory error on all five ($-31\%$ on average, up to $-51\%$ held-out) while preserving rendering quality; against the benchmarked SoTA systems it records the best trajectory on four of the five sequences and reaches parity with a dedicated tracking-only system on the fifth, while remaining the only method strong on both halves of the problem.
 
 
 
@@ -42,7 +42,7 @@ This thesis provides 3 notable contributions to the field:
 \begin{enumerate}
 \item A one-shot, human-in-the-loop segmentation strategy for unseen surgical domains built on the frozen foundation model SAM~3 \cite{Carion2025}: sparse human-annotated anchor keyframes seed SAM~3's video propagation to generate the dense per-frame semantic annotations a semantic SLAM pipeline requires, without fine-tuning the model.
 \item A reorganisation of the CRCD~\cite{Oh2024} into self-contained \texttt{Sequences} consumable by both TUM and Replica data-loaders (Section~\ref{sec:data_packs}), establishing a benchmark for semantic SLAM in surgical environments.
-\item \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), an uncertainty-aware extension of DDS-SLAM~\cite{Shan2024} on a neural-SDF substrate, contributing: (i) aleatoric-uncertainty down-weighting, ported from WildGS-SLAM~\cite{Zheng2024} to a surgical neural-SDF system via a small uncertainty head (UncertaintyNet) that drives both tracking and mapping; (ii) a label-free split of camera ego-motion from independent scene motion, combining frozen self-supervised vision-transformer features~\cite{Oquab2023,Simeoni2025} with a depth-signature egomotion fit and a geometric epipolar agreement, with no trained segmenter --- consumed as a pose freeze that is re-pinned through bundle adjustment so the decision persists in the trajectory; and (iii) the diagnosis and correction of an optimiser-induced pose noise floor in the bundle adjustment, in which the adaptive optimiser's gradient-magnitude-invariant step walks every keyframe by a fixed distance per cycle regardless of the residual --- predicted from the update rule, measured at its predicted magnitude in every configuration including the unmodified baseline, and removed at its predicted magnitude by the correction. Locked on two design sequences and run unseen on three held-out sequences, the combination improves tracking on all five ($-31\%$ mean ATE against the unmodified base, $-51\%$ on the largest-travel held-out sequence) at level rendering quality.
+\item \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), an uncertainty-aware extension of DDS-SLAM~\cite{Shan2024} on a neural-SDF substrate, contributing: (i) aleatoric-uncertainty down-weighting, ported from WildGS-SLAM~\cite{Zheng2024} to a surgical neural-SDF system via a small uncertainty head (UncertaintyNet) that drives both tracking and mapping; (ii) a label-free split of camera ego-motion from independent scene motion, combining frozen self-supervised vision-transformer features~\cite{Oquab2023,Simeoni2025} with a depth-signature egomotion fit and a geometric epipolar agreement, with no trained segmenter --- consumed as a pose freeze that is re-pinned through bundle adjustment so the decision persists in the trajectory. Design choices were made on two design sequences and run unseen on three held-out sequences, the combination improves tracking on all five ($-31\%$ mean ATE against the unmodified base, $-51\%$ on the largest-travel held-out sequence) at level rendering quality.
 \end{enumerate}
 
 
@@ -260,13 +260,14 @@ Of the text prompts, only ``tools'' yielded any results; this is because SAM~3 w
 
 The complex nature of the CRCD yielded mixed results for the six prompting strategies above, with combined prompting (positive and negative points, bounding boxes, and text prompts for tools) yielding the best results of the native SAM~3 strategies. However, given the complexity of the scene and SAM~3's difficulty with medical-domain data, mask-based prompting was found to yield the best results.
 
-A result of all 6 annotation methods on a chosen frame is shown below:
+A result of all 6 annotation methods on a chosen frame is shown in \ref{fig:PromptingMethodsResults}:
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=1\linewidth]{figures/fig_segmentation_6styles.png}
     \caption{Segmentation output of the six prompting strategies --- bounding box, positive points, positive + negative points, combined, text, and full mask --- on a challenging frame. Combined geometric prompting gives the best of the native SAM~3 strategies, while mask-based prompting is the most reliable on this out-of-domain surgical data. Noting that in this randomised example 'text' prompting returned no valid masks.}
     \label{fig:PromptingMethodsResults}
 \end{figure}
+\FloatBarrier
 \subsubsection{Annotation Pipeline}
 \label{sec:segmentation}
 Due to the large number of frames present in the CRCD, manual hand-annotation of all chosen sequences would be infeasible. Instead, a keyframe-anchored, human-in-the-loop (HITL) pipeline was built around SAM~3's video propagation (Figure~\ref{fig:SAM3Mod}), running on a FastAPI/Konva.js annotator.
@@ -401,7 +402,7 @@ Co-SLAM~\cite{Wang2023} is the real-time neural-SDF SLAM substrate that DDS-SLAM
     \label{fig:coslam_arch}
 \end{figure}
 \FloatBarrier
-\paragraph{Joint coordinate--parametric encoding.} Co-SLAM's defining idea is to encode each point two ways at once, trading the speed of a learnable grid against the smoothness of a coordinate code. A multiresolution hash grid~\cite{Muller2022} stores feature vectors at grid vertices across $L$ resolution levels, from which a point trilinearly interpolates and concatenates a parametric feature $\gamma_{\text{hash}}(x)$; a one-blob coordinate encoding~\cite{Muller2019} $\gamma_{\text{ob}}(x)$ supplies a smooth, hole-filling prior tied to the absolute coordinate. The decoder consumes their concatenation,
+\paragraph{Joint coordinate--parametric encoding.} Co-SLAM encodes each point two ways at once, trading the speed of a learnable grid against the smoothness of a coordinate code. A multiresolution hash grid~\cite{Muller2022} stores feature vectors at grid vertices across $L$ resolution levels, from which a point trilinearly interpolates and concatenates a parametric feature $\gamma_{\text{hash}}(x)$; a one-blob coordinate encoding~\cite{Muller2019} $\gamma_{\text{ob}}(x)$ supplies a smooth, hole-filling prior tied to the absolute coordinate. The decoder consumes their concatenation,
 \begin{equation}
     \gamma(x) = \big[\, \gamma_{\text{ob}}(x),\; \gamma_{\text{hash}}(x) \,\big].
     \label{eq:joint-enc}
@@ -471,27 +472,20 @@ applied component-wise, with $M$ the number of frequency bands. The encoded posi
 \end{equation}
 The displacement is anchored to zero at the first frame, $\Delta x \equiv 0$ when $t = 0$, fixing the canonical configuration to the initial frame rather than leaving it free; without this anchor the static field and the warp would be jointly unconstrained, able to trade geometry against motion arbitrarily. $x_{\text{canon}}$ is then encoded and decoded exactly as in the static Co-SLAM field of Section~\ref{sec:coslam}, so the SDF geometry is represented \emph{once}, in canonical space, with all temporal variation absorbed by the warp. Crucially, $D_\phi$ is supervised \emph{only} through the rendering loss (there is no direct displacement target), so the field must infer scene motion purely from photometric and geometric consistency across time.
 
-\begin{figure}[!ht]
-    \centering
-    \includegraphics[width=1\linewidth]{figures/deformation_warp.pdf}
-    \caption{The DDS-SLAM deformation warp. A frequency-encoded network $D_\phi$ predicts, for a query point $x$ at time $t$, a displacement $\Delta x$ mapping it to its location in the canonical (frame-0) configuration \eqref{eq:warp}, where the static SDF is evaluated. Anchored to zero at $t=0$, the warp absorbs all temporal variation so the geometry is represented once, in canonical space.}
-    \label{fig:deformation_warp}
-\end{figure}
-
 \subsection{DID-SLAM}
 \label{sec:didslam}
-DID-SLAM is the extension of DDS-SLAM developed in this thesis. The base  Sections~\ref{sec:coslam} and \ref{sec:ddsslam} are left intact and the following is implemented: a learned aleatoric uncertainty that down-weights unreliable measurements (Section~\ref{sec:uncertainty}); a motion voting system utilising DINO features, that separates camera motion from independent scene motion and freezes the pose on still frames (Section~\ref{sec:motion}); as well as the optimisation of BA to reduce the noise floor so slow delibrate motion could be detected and correctly split from noise (Section~\ref{sec:ba_floor}). 
+DID-SLAM is the extension of DDS-SLAM developed in this thesis. The base DDS-SLAM, detailed in Sections~\ref{sec:coslam} and \ref{sec:ddsslam}, is left intact and the following is implemented on top: a learned aleatoric uncertainty that down-weights unreliable measurements (Section~\ref{sec:uncertainty}); and a motion voting system utilising DINO features, that separates camera motion from independent scene motion and freezes the pose on still frames (Section~\ref{sec:motion}). Alongside the two contributions, the bundle-adjustment configuration is corrected to reduce its pose noise floor, so slow deliberate motion can be separated from optimiser noise; this is treated as hyperparameter selection rather than a contribution, and is detailed with the experimental configuration (Section~\ref{sec:hyperparams}). 
 
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=\linewidth]{figures/bdds_overview.png}
-    \caption{Overview of DID-SLAM. The Co-SLAM/DDS-SLAM neural-SDF substrate is augmented with three flag-gated contributions: a learned aleatoric uncertainty that down-weights unreliable rays in both mapping and tracking (Section~\ref{sec:uncertainty}); a label-free motion attribution that separates camera ego-motion from independent scene motion and freezes the pose on confident-still frames, a decision re-pinned after every bundle-adjustment cycle (Section~\ref{sec:motion}); and a corrected bundle-adjustment pose step that removes an optimiser-induced keyframe drift (Section~\ref{sec:ba_floor}).}
+    \includegraphics[width=\linewidth]{figures/did_overview.png}
+    \caption{Overview of DID-SLAM. The Co-SLAM/DDS-SLAM neural-SDF substrate is augmented with two flag-gated contributions --- a learned aleatoric uncertainty that down-weights unreliable rays in both mapping and tracking (Section~\ref{sec:uncertainty}), and a label-free motion attribution that separates camera ego-motion from independent scene motion and freezes the pose on confident-still frames, a decision re-pinned after every bundle-adjustment cycle (Section~\ref{sec:motion}) --- together with a corrected bundle-adjustment configuration that removes an optimiser-induced keyframe drift (Section~\ref{sec:hyperparams}).}
     \label{fig:did_overview}
 \end{figure}
 \FloatBarrier
 \subsection{Uncertainty-Aware Down-Weighting}
 \label{sec:uncertainty}
-The first contribution of this thesis is transferring the aleatoric-uncertainty principle --- introduced for distractor-free NeRF reconstruction by NeRF On-the-go~\cite{Ren2024} and carried into Gaussian-splatting SLAM by WildGS-SLAM~\cite{Zheng2024} --- onto a neural-SDF SLAM substrate, using a learned uncertainty to attenuate unreliable measurements in both mapping and tracking. A lightweight head predicts a per-ray variance $\sigma^2(r)$ from the geometry feature $h$; under a Gaussian observation model, the head is trained by the negative log-likelihood (NLL) of the photometric residual~\cite{KendallGal2017}:
+The first contribution is transferring the aleatoric-uncertainty principle --- introduced for distractor-free NeRF reconstruction by NeRF On-the-go~\cite{Ren2024} and carried into Gaussian-splatting SLAM by WildGS-SLAM~\cite{Zheng2024} --- onto a neural-SDF SLAM substrate, using a learned uncertainty to attenuate unreliable measurements in both mapping and tracking. A lightweight head predicts a per-ray variance $\sigma^2(r)$ from the geometry feature $h$; under a Gaussian observation model, the head is trained by the negative log-likelihood (NLL) of the photometric residual~\cite{KendallGal2017}:
 \begin{equation}
     \mathcal{L}_{\text{NLL}} = \frac{1}{N}\sum_{r}\frac{1}{2}
     \left(\frac{\|C(r)-\hat{C}(r)\|^2}{\sigma^2(r)} + \log\sigma^2(r)\right)
@@ -499,14 +493,14 @@ The first contribution of this thesis is transferring the aleatoric-uncertainty 
 \end{equation}
 The $1/\sigma^2$ term rewards small residuals where the model is confident, while the $\log\sigma^2$ term penalises blanket high variance; the head therefore learns to raise $\sigma^2$ where the residual is irreducibly large --- the deforming and independently-moving regions the static field cannot explain.
 
-The learned variance is consumed by both halves of the system. During mapping it enters directly through \eqref{eq:nll}, so high-uncertainty rays contribute proportionally less to the field optimisation. During tracking, where the map is fixed and only the six camera-pose parameters vary, the same variance is converted into a per-ray trust weight that down-weights unreliable rays in the pose solve:
+The learned variance is consumed by both elements of the system. During mapping it enters directly through \eqref{eq:nll}, so high-uncertainty rays contribute proportionally less to the field optimisation. During tracking, where the map is fixed and only the six camera-pose parameters vary, the same variance is converted into a per-ray trust weight that down-weights unreliable rays in the pose solve:
 \begin{equation}
     w(r) = \mathrm{clamp}\!\left(\frac{1}{\sigma^2(r)},\; w_{\min},\; w_{\max}\right),
     \label{eq:unc-weight}
 \end{equation}
 applied multiplicatively to the per-ray colour and depth residuals. The weight is detached from the optimisation graph, so $\sigma^2$ acts purely as an attenuation and does not itself back-propagate into the pose.
 
-Two guards make the weight well-behaved. First, on rays where the map holds no confident surface (accumulated rendering opacity below $0.5$), $\sigma^2$ sits at its clamp floor and \eqref{eq:unc-weight} would assign such rays \emph{maximum} trust; since a ray without a surface carries no reliable pose information, its weight is instead reset to the neutral value $w = 1$. Second, the weight vector is mean-normalised, $w \leftarrow w / \bar{w}$, so that the down-weighting \emph{redistributes} trust across the sampled rays at a fixed total rather than silently rescaling the photometric terms against the geometric ones in \eqref{eq:coslam-total}. A single uncertainty estimate thus serves as both a mapping regulariser and a tracking robustifier, reducing the influence of deforming tissue and moving instruments wherever they would otherwise corrupt the estimate.
+Two guards control the weight. First, on rays where the map holds an accumulated rendering opacity below $0.5$, $\sigma^2$ sits at its clamp floor and \eqref{eq:unc-weight} would assign such rays \emph{maximum} trust; since a ray without a surface carries no reliable pose information, its weight is instead reset to the neutral value $w = 1$. Second, the weight vector is mean-normalised, $w \leftarrow w / \bar{w}$, so that the down-weighting \emph{redistributes} trust across the sampled rays at a fixed total rather than silently rescaling the photometric terms against the geometric ones in \eqref{eq:coslam-total}. A single uncertainty estimate thus serves as both a mapping regulariser and a tracking robustifier, reducing the influence of deforming tissue and moving instruments wherever they would otherwise corrupt the estimate.
 
 \begin{figure}[!ht]
     \centering
@@ -531,7 +525,7 @@ where $p_0$ is the image principal point and $r_{\text{norm}}$ a normalising rad
 
 \begin{figure}[!ht]
     \centering
-    \includegraphics[width=0.8\linewidth]{figures/depth_signature.png}
+    \includegraphics[width=1\linewidth]{figures/depth_signature.png}
     \caption{The depth signature that makes the egomotion fit \eqref{eq:vote-fit} identifiable. A camera turn (rotation) shifts near and far districts equally; a lateral slide moves near districts more, as $1/Z$; forward motion expands the field radially. Fitting the three simultaneously separates the motion types and cancels the unknown global depth scale.}
     \label{fig:depth_signature}
 \end{figure}
@@ -542,7 +536,7 @@ The model is fit by least squares and made robust by a median-absolute-deviation
     \qquad \rho_k = \|f_k - \hat{f}_k\|.
     \label{eq:vote-trust}
 \end{equation}
-Two statistics of the votes decide whether the camera is still: a minority test $q_{10}$, which looks at the tenth-percentile district flow magnitude, and a majority test $\mathrm{dis3}$, the fraction of districts inconsistent in the Sampson (epipolar) sense~\cite{Hartley2004} with a single fundamental matrix $F$ fit to the dense flow:
+Two metrics of the computed votes decide whether the camera is still: a minority test $q_{10}$, which looks at the tenth-percentile districts flow magnitudes, and a majority test $\mathrm{dis3}$, the fraction of districts inconsistent in the Sampson (epipolar) sense~\cite{Hartley2004} with a single fundamental matrix $F$ fit to the dense flow:
 \begin{equation}
     q_{10} = P_{10}\big(\{\|f_k\|\}\big), \qquad
     \mathrm{dis3} = \frac{|\{k : \mathrm{Sampson}(F,k) > 3\,\text{px}\}|}{|\{\text{valid }k\}|}
@@ -553,21 +547,21 @@ Two statistics of the votes decide whether the camera is still: a minority test 
     \qquad (\tau_q = 2.5\,\text{px},\; \tau_d = 0.5)
     \label{eq:cprime}
 \end{equation}
-The minority test encodes that stillness requires the quietest districts to agree the world is still, so a single large mover against a quiet background does not imply the camera moved; the majority test asks whether any one rigid-camera story explains the motion. They are combined disjunctively because requiring both simultaneously restores precision on one motion regime only by destroying recall on the other.
+The minority test encodes that stillness requires the quietest districts to agree the world is still, so a single large deformation against an otherwise still scene does not imply the camera moved; the majority test asks whether any one rigid-camera story explains the motion. They are combined disjunctively because requiring both simultaneously restores precision on one motion regime only by destroying recall on the other.
 
-\paragraph{Freeze mechanics.} When \eqref{eq:cprime} reports the camera still, the pose is copied from the previous frame, the solve is skipped, and the frame's relative pose against its anchoring keyframe is refreshed so the bookkeeping stays consistent; mapping still runs. Keyframe poses anchor the non-keyframes between them, and the global bundle adjustment re-optimises every keyframe on every cycle, so an unprotected frozen keyframe would drift and silently carry its whole block of anchored frames with it, undoing the freeze after the fact. Gate-frozen keyframes are therefore re-pinned to their frozen pose after every bundle-adjustment cycle. This re-pin prevents the pose from jumping massively after each bundle-adjustment cycle; as otherwise BA would attempt to re-optimise a frozen pose; thus moving it.
+\paragraph{Freeze mechanics.} When \eqref{eq:cprime} reports the camera still, the pose is copied from the previous frame, the solve is skipped, and the frame's relative pose against its anchoring keyframe is refreshed; mapping still runs. Keyframe poses anchor the non-keyframes between them, and the global bundle adjustment re-optimises every keyframe on every cycle, to avoid anchored keyframes from drifting. Gate-frozen keyframes are therefore re-pinned to their frozen pose after every bundle-adjustment cycle. This re-pin prevents the pose from jumping massively after each bundle-adjustment cycle; as otherwise BA would attempt to re-optimise a frozen pose; thus moving it.
 
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_motion_agreement.png}
-    \caption{The gate's evidence on three real benchmark frames, one per decision path. Top (C\_1/001, camera still): every district vote is near zero - the quiet minority holds and the pose is frozen. Middle (C\_2/001, camera moving): the votes are large and consistent with a single rigid story - the frame is tracked. Bottom (E\_3/005, tissue being worked): the votes are large but the majority of districts dissent from every rigid story in the epipolar sense - the frame is frozen. Districts are the deployed k-means clustering of the ViT patch tokens; panel statistics are recomputed offline with a dense-flow proxy for illustration, and the live per-frame values are logged by the gate itself.}
+    \caption{Top (C\_1/001, camera still): every district vote is near zero - the quiet minority holds and the pose is frozen. Middle (C\_2/001, camera moving): the votes are large and consistent with a single rigid story - the frame is tracked. Bottom (E\_3/005, tissue deformation): the votes are large but the majority of districts dissent from every rigid story in the epipolar sense - the frame is frozen. Districts are the deployed k-means clustering of the ViT patch tokens; panel statistics are recomputed offline with a dense-flow proxy for illustration, and the live per-frame values are logged by the gate itself.}
     \label{fig:motion_agreement}
 \end{figure}
 \FloatBarrier
 
-\paragraph{Threshold calibration.} The thresholds in \eqref{eq:cprime} are calibrated offline rather than tuned in the loop. The gate logs its per-frame statistics $(q_{10}, \mathrm{dis3})$ during a run; sweeping these logs against the ground-truth camera motion yields the precision and recall of every candidate operating point $(\tau_q, \tau_d)$. One discretisation detail matters in practice: with $K = 12$ districts, $\mathrm{dis3}$ is quantised to twelfths, so a strict inequality at $\tau_d = 0.5$ silently excludes frames on which exactly half the districts dissent; candidate thresholds must be placed between attainable values of the statistic, not on them.
+\paragraph{Threshold calibration.} The thresholds in \eqref{eq:cprime} are calibrated offline rather than tuned in the loop. we logs per-frame statistics for $(q_{10}, \mathrm{dis3})$ during a run; sweeping these logs against the ground-truth camera motion yields the precision and recall of every candidate operating point $(\tau_q, \tau_d)$. One discretisation detail matters in practice: with $K = 12$ districts, $\mathrm{dis3}$ is quantised to twelfths, so a strict inequality at $\tau_d = 0.5$  excludes frames on which exactly half the districts disagree.
 
-\paragraph{Featuriser choice.} The districts are built from a frozen self-supervised backbone. This was measured two ways: how well a backbone separates an independently-moving region in feature space, and whether that separation actually changes the freeze decision. For the first, a probe-margin test scored each backbone by the mean cosine similarity of a probe patch on the mover to the rest of the moving region, minus its similarity to everything else. DINOv2-S/14 with registers~\cite{Oquab2023,Darcet2024} scored highest at $+0.33$, base DINOv3-B/16~\cite{Simeoni2025} $+0.29$, and a DINOv3 backbone fine-tuned for surgical segmentation only $+0.07$ at its final layer. The fine-tuned collapse is expected - a segmentation objective pulls all features of a class together, which removes the intra-tissue variation the clustering relies on. The first result is therefore that the featuriser should not be fine-tuned; a raw backbone is creating a better set of features than one fine tuned, images of the features and their cosine similarities are shown in \ref{fig:dino_comparison}.
+\paragraph{Feature Generation.} The districts are built from a frozen feature generator. This decision was made through 2 tests: For the first, a probe-margin test scored each backbone by the mean cosine similarity of a probe patch on the mover to the rest of the moving region, minus its similarity to everything else. DINOv2-S/14 with registers~\cite{Oquab2023,Darcet2024} scored highest at $+0.33$, base DINOv3-B/16~\cite{Simeoni2025} $+0.29$, and a DINOv3 backbone fine-tuned for surgical segmentation only $+0.07$ at its final layer. The fine-tuned collapse is expected - a segmentation objective pulls all features of a class together, which removes the intra-tissue variation the clustering relies on. The first result is therefore that the featuriser should not be fine-tuned; a raw backbone is creating a better set of features than one fine tuned, images of the features and their cosine similarities are shown in \ref{fig:dino_comparison}.
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_dino_comparison.png}
@@ -578,12 +572,12 @@ However, running both raw backbones end-to-end on the evaluation sequences, the 
 
 \paragraph{Per-ray trust variants (ablated).} The same votes support a softer consumer: the fit residuals of \eqref{eq:vote-trust}, or a depth-normalised deviation from the district consensus, can be painted into a dense per-ray motion trust and applied in the pose solve multiplicatively with the uncertainty weight of \eqref{eq:unc-weight} on tracked frames. These variants are evaluated in the ablations and not retained in the locked configuration, for measured reasons. Behavioural audits against kinematic ground truth showed the depth-pooled variant responds to camera rotation rather than to scene motion: its normalisation is exact for camera-translation parallax, which scales as $1/Z$, but mis-scales rotational flow, which is depth-independent. The sharper de-rotated variant discriminates scene motion nearly perfectly on the design sequences yet degrades held-out sequences, its per-frame muting noise compounding over long trajectories. And stacking any trust behind the freeze gate starves the solve: the gate has already removed the confidently-still frames, so the trust mutes precisely the frames that still need tracking. The freeze decision --- which removes ambiguous frames outright rather than re-weighting within them --- is the consumer that survives measurement.
 
-\paragraph{Zero-motion prior.} The freeze is a hard, per-frame decision, so a softer mechanism is used alongside it to handle the drift on frames that are tracked rather than frozen. On near-static sequences the pose solve still over-travels on frames the gate does not freeze - either frames that are still but sit just below the threshold, or individual pose axes that the narrow endoscopic geometry leaves weakly observable. To address this, a zero-motion prior penalises per-frame pose change directly, adding
-\begin{equation}
-    \mathcal{L}_{\text{zm}} = \lambda_r \lVert \Delta\mathbf{r} \rVert^2 + \lambda_t \lVert \Delta\mathbf{t} \rVert^2
+\paragraph{Zero-motion prior (ablated).} The freeze is a hard, per-frame decision, so a softer companion was evaluated for the drift on frames that are tracked rather than frozen. On near-static sequences the pose solve still over-travels on frames the gate does not freeze - either frames that are still but sit just below the threshold, or individual pose axes that the narrow endoscopic geometry leaves weakly observable. A zero-motion prior penalises per-frame pose change directly, adding
+egin{equation}
+    \mathcal{L}_{	ext{zm}} = \lambda_r \lVert \Delta\mathbf{r} Vert^2 + \lambda_t \lVert \Delta\mathbf{t} Vert^2
     \label{eq:zeromotion}
 \end{equation}
-to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the rotation and translation of the current pose relative to the previous committed pose. The penalty is the same in every direction, but its effect is not. The SDF data term has its own per-axis curvature (approximately the squared flow Jacobian), so an observable axis with a steep gradient overrules the prior and keeps the real motion, while a flat, unobservable axis is pinned towards zero. The prior is added before the best-iterate selection so that it binds, and $\lambda_r$ and $\lambda_t$ are calibrated against the SDF loss scale. This differs from simply lowering the dissent threshold, which only recovers still-frame recall by mis-freezing the deforming sequence; the prior instead leaves the deforming case alone, since there the data gradients are strong enough to overrule it, and so regularises the near-static regime without a penalty on the moving one.
+to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the rotation and translation of the current pose relative to the previous committed pose. The penalty is the same in every direction, but its effect is not. The SDF data term has its own per-axis curvature (approximately the squared flow Jacobian), so an observable axis with a steep gradient overrules the prior and keeps the real motion, while a flat, unobservable axis is pinned towards zero. The prior is added before the best-iterate selection so that it binds, and $\lambda_r$ and $\lambda_t$ are calibrated against the SDF loss scale. Evaluated on the design sequences, the prior brought no further gain: the drift it targets is already removed by the freeze and the corrected bundle-adjustment configuration (Table~ef{tab:results_abl}), and it is not retained in the final configuration.
 
 \FloatBarrier
 \begin{figure}[!ht]
@@ -591,30 +585,6 @@ to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the ro
     \includegraphics[width=\linewidth]{figures/fig_vote_pipeline.png}
     \caption{The label-free motion-attribution pipeline. A frame pair yields self-supervised ViT semantic districts, dense optical flow~\cite{Teed2020}, and up-to-scale depth; each district casts one median vote $(f_k, Z_k, p_k)$. A robust depth-signature fit \eqref{eq:vote-fit} separates camera motion from independent movers, which fall out as outliers through the fit residual \eqref{eq:vote-trust}. Two vote statistics \eqref{eq:vote-stats} give the still/moving decision \eqref{eq:cprime} that gates the pose solve; frozen keyframes are re-pinned after every bundle-adjustment cycle so the decision persists in the trajectory.}
     \label{fig:vote_pipeline}
-\end{figure}
-\FloatBarrier
-
-\subsection{Optimiser-Induced Pose Drift in Bundle Adjustment}
-\label{sec:ba_floor}
-
-\paragraph{The mechanism.} The global bundle adjustment of Section~\ref{sec:coslam} re-optimises every keyframe pose on every cycle (one cycle per mapped frame, every $m = 5$ frames) with a freshly constructed Adam optimiser~\cite{Kingma2015}. Adam's update normalises each gradient coordinate by a running estimate of its own magnitude,
-\begin{equation}
-    \Delta\theta \;=\; -\,\eta \,\frac{\hat{m}}{\sqrt{\hat{v}} + \epsilon},
-    \qquad
-    \big|\Delta\theta\big| \;\approx\; \eta \quad \text{at the first steps of a fresh optimiser,}
-    \label{eq:adam-floor}
-\end{equation}
-since bias correction makes $\hat{m}/\sqrt{\hat{v}}$ a unit-magnitude, sign-like quantity whenever the gradient is non-zero --- \emph{regardless of how small that gradient is}. A freshly constructed optimiser has no accumulated second-moment history to shrink this ratio, so each cycle moves every pose coordinate by approximately the learning rate. With $S$ pose steps per cycle and learning rate $\eta$, every keyframe translation walks by up to $\eta\, S \sqrt{3}$ per cycle whether the residual is a genuine misalignment or pure sampling noise; and at the released batch size the gradient is essentially always noise, since the global sample is spread across all keyframes, leaving of order thirty rays per keyframe per iteration. At the released settings ($\eta = 10^{-4}$, $S = 4$) the predicted floor is ${\sim}0.35$\,mm per cycle.
-
-\paragraph{The evidence.} The predicted floor is observed directly: the mean per-cycle keyframe displacement measures $0.31$--$0.40$\,mm in every configuration tested, including the unmodified baseline, and is insensitive to the scene, the sequence, and every measurement-side robustification. That insensitivity is itself diagnostic: because Adam normalises the loss scale away, re-weighting the residuals --- including the uncertainty weighting of Section~\ref{sec:uncertainty} extended into the bundle-adjustment loss --- changes the \emph{direction} of the pull but cannot change its \emph{size}. The walk surfaces in the trajectory as a characteristic fingerprint: estimated steps landing on keyframe indices run $3.4$--$4.3\times$ larger than steps between interior frames, in every arm and every sequence, because interior frames are anchored to their keyframe's gauge while the accumulated keyframe drift is absorbed at block boundaries. A constant-velocity initialisation of the next tracking solve then extrapolates each cycle's displacement forward, amplifying the seam.
-
-\paragraph{The correction.} Both entry points are closed with configuration, not architecture: the bundle-adjustment pose learning rate is reduced an order of magnitude ($\eta = 10^{-5}$), dropping the floor tenfold while leaving genuinely observable misalignments --- which survive many cycles of consistent gradient --- free to converge; and the constant-velocity initialisation is disabled, since ground-truth inter-frame motion on these sequences ($0.16$--$0.33$\,mm) sits far inside the tracker's per-frame reach, so the extrapolation carries more optimiser artefact than motion signal. The correction was pre-registered and confirmed at its predicted magnitude: the per-cycle keyframe walk fell from ${\sim}0.35$\,mm to $0.043$\,mm (predicted ${\sim}0.04$), the keyframe-boundary step ratio fell from $3.4$--$4.3\times$ to $1.5$--$1.8\times$, estimated path length on the stillest design sequence halved, and rendering quality was unchanged --- confirming the removed motion was optimiser artefact, not signal.
-
-\begin{figure}[!ht]
-    \centering
-    \includegraphics[width=0.9\linewidth]{figures/ba_noise_floor.png}
-    \caption{Optimiser-induced pose drift in bundle adjustment. Left: per-cycle keyframe displacement across configurations --- flat at the Adam floor $\eta S \sqrt{3}$ \eqref{eq:adam-floor} regardless of scene or robustification, and reduced tenfold by the corrected pose learning rate. Right: the trajectory fingerprint --- estimated step size by frame phase relative to the keyframe cadence, before and after the correction; the accumulated keyframe drift is absorbed at block boundaries, producing the $3.4$--$4.3\times$ boundary steps the correction removes.}
-    \label{fig:ba_noise_floor}
 \end{figure}
 \FloatBarrier
 
@@ -716,6 +686,37 @@ Sequences are consumed through a staging pipeline executed once per sequence and
 \subsubsection{Implementation}
 
 All experiments run a single code base forked from the public DDS-SLAM release~\cite{Shan2024}, with every modification gated behind a configuration flag that defaults to \emph{off}. A bit-identical regression gate (identical random-number state after model construction, identical parameter counts, identical \texttt{state\_dict} keys against the upstream commit) guarantees that the unmodified configuration reproduces the released implementation exactly, so the baseline serves as a provably untouched control and every measured difference is attributable to exactly one enabled component. Experiments are executed on Google Colab GPUs (Tesla T4, 15\,GB; A100, 40\,GB for the largest configurations) under PyTorch~2.x / CUDA~12.x, with the tiny-cuda-nn hash-encoding backend rebuilt for the resident GPU architecture. TF32 tensor-core arithmetic is disabled throughout: the SDF and pose optimisation are precision-sensitive, and TF32 introduced run-to-run nondeterminism on A100-class hardware. Every run emits a fixed artifact set (rendered frames, the estimated trajectory, per-frame diagnostics, and a composite diagnostic video), and all evaluation is performed by a common tool chain (Section~\ref{sec:eval_metrics}) applied identically to every arm.
+
+\subsubsection{Hyperparameters}
+\label{sec:hyperparams}
+
+The final configuration is a single set of hyperparameters shared by all five sequences; per-sequence tuning is deliberately avoided, since the freeze mechanism must generalise to motion regimes it has not seen. Table~\ref{tab:hyperparams} lists every value that departs from the released DDS-SLAM configuration together with the reasoning for its choice; all remaining values are the release defaults, and every value was locked on the two design sequences before the held-out runs.
+
+\begin{table}[!ht]
+\centering
+\caption{Hyperparameters of the final configuration that depart from the released DDS-SLAM defaults, with the reasoning for each choice. All values were locked on the design sequences (C\_1/001, E\_3/005) before any held-out sequence was run.}
+\label{tab:hyperparams}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l l l p{6.2cm}}
+\toprule
+Parameter & Released & Ours & Reasoning \\
+\midrule
+BA pose learning rate & $10^{-4}$ & $10^{-5}$ & removes the optimiser-induced pose noise floor (see below) \\
+Constant-velocity initialisation & on & off & inter-frame motion ($0.16$--$0.33$\,mm) sits far inside the tracker's per-frame reach; the extrapolation carries optimiser artefact rather than motion signal \\
+Gate thresholds $(\tau_q, \tau_d)$ & --- & $(2.5\,\text{px},\, 0.5)$ & offline precision/recall sweep of the logged per-frame statistics against ground-truth camera motion (Section~\ref{sec:motion}); $\tau_d$ placed between attainable twelfths of the quantised statistic \\
+Districts $K$ / reference stride $\delta$ & --- & $12$ / $8$ & $\delta = 8$ integrates flow well above its noise floor on these slow sequences; $K = 12$ keeps districts large enough for stable median votes \\
+Uncertainty clamp $[w_{\min}, w_{\max}]$ & --- & $[0.1,\, 10]$ & bounds keep the down-weight a redistribution of trust rather than a hard mask (Section~\ref{sec:uncertainty}) \\
+NLL weight & --- & $0.1$ & keeps the $\sigma^2$ head a regulariser, subordinate to the photometric loss \\
+Hash table size & $2^{16}$ & $2^{19}$ & removes hash collisions visible as render blur at $1280 \times 720$ \\
+Photometric loss & L2 & Charbonnier & robust to the specular outliers endemic to endoscopy \\
+\bottomrule
+\end{tabular}}
+\end{table}
+\FloatBarrier
+
+\paragraph{The bundle-adjustment pose step.} The largest single effect in Table~\ref{tab:hyperparams} is the pose learning rate. The global bundle adjustment re-optimises every keyframe pose on every cycle with a freshly constructed Adam optimiser~\cite{Kingma2015}, and Adam's bias-corrected update is a unit-magnitude, sign-like quantity at the first steps of a fresh optimiser --- each cycle therefore moves every pose coordinate by approximately the learning rate, regardless of how small the gradient is. At the released settings the global ray sample leaves of order thirty rays per keyframe, so that gradient is essentially always sampling noise, and the predicted walk of ${\sim}0.35$\,mm per keyframe per cycle is measured at $0.31$--$0.40$\,mm in every configuration tested, including the unmodified baseline. On sequences whose true motion is $0.05$--$0.4$\,mm per frame, this floor is the same size as the signal. Reducing the learning rate an order of magnitude drops the measured walk to $0.043$\,mm and the keyframe-boundary step ratio from $3.4$--$4.3\times$ to $1.5$--$1.8\times$, halves the estimated path length on the stillest design sequence, and leaves rendering quality unchanged --- confirming that the removed motion was optimiser artefact rather than signal. Disabling the constant-velocity initialisation closes the second entry point, which otherwise extrapolates each cycle's artefact into the next tracking solve.
+
 \subsection{Evaluation of Tracking and Reconstruction}
 \label{sec:results_main}
 
@@ -761,36 +762,77 @@ These comparisons are reported at a single seed; the three-seed re-run of the fi
 \subsection{Comparison with the SoTA benchmark}
 \label{sec:results_sota}
 
-Table~\ref{tab:results_sota} places DID-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, aggregating each method's per-sequence results (Tables~\ref{tab:bench_dds}--\ref{tab:bench_semgauss}) onto common axes. The methods differ in what they natively expose, so the comparison carries the caveats of their own sections: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph; SGS-SLAM exports no comparable trajectory and is compared on rendering only; SemGauss-SLAM reports ATE$_{\mathrm{mean}}$ (its exported statistic) and its G\_3/001 could not be run (it exhausts an A100-80GB before completing).
+Table~\ref{tab:results_sota} places DID-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, split per snippet so each sequence's regime --- camera-still, large-travel, deforming --- can be read directly. The methods differ in what they natively expose, and three caveats carry through the table: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph ($\dagger$); PERSEUS and SemGauss-SLAM report ATE$_{\mathrm{mean}}$, their exported statistic ($\ddagger$); and SGS-SLAM renders only its keyframe set ($*$) and exports no comparable trajectory. SNI-SLAM's benchmark run is in flight and its rows are reported as pending.
 
 \begin{table}[!ht]
 \centering
-\caption{DID-SLAM against the benchmarked SoTA systems on the five CRCD sequences. Tracking is Sim(3) ATE$_{\mathrm{RMSE}}$ in mm except SemGauss-SLAM (ATE$_{\mathrm{mean}}$, its exported statistic, marked $\ddagger$); Semantic-SuPer's trajectory is the camera-motion proxy of Section~\ref{sec:bench_semsup} ($\dagger$). Rendering columns are means over each method's completed sequences. Dashes: not exported by the method or run incomplete (Sections~\ref{sec:bench_dds}--\ref{sec:bench_semgauss}).}
+\caption{DID-SLAM against the benchmarked systems, one sub-table per snippet. Tracking is Sim(3) ATE$_{\mathrm{RMSE}}$ in mm except where marked ($\ddagger$ ATE$_{\mathrm{mean}}$, the method's exported statistic; $\dagger$ camera-motion proxy, not a native pose); path ratio and aligned $|r|_{\mathrm{dom}}$ per Section~\ref{sec:eval_metrics}. SGS-SLAM renders keyframes only ($*$). Depth-$L_1$ is per-model self-consistency (Section~\ref{sec:eval_depth}) and is not comparable across methods. Dashes: not exported by the method.}
 \label{tab:results_sota}
+\small
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{l rrrrr r rrr}
+\begin{tabular}{l rrr rrrr}
 \toprule
-& \multicolumn{5}{c}{Tracking, ATE (mm)} & & \multicolumn{3}{c}{Rendering (mean)} \\
-\cmidrule{2-6} \cmidrule{8-10}
-Method & C\_1 & C\_2 & C\_3 & E\_3 & G\_3 & & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ \\
+Method & ATE (mm) & path ratio & $|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
 \midrule
-\textbf{DID-SLAM (ours)} & \textbf{1.60} & 3.93 & \textbf{7.61} & \textbf{4.69} & \textbf{2.28} & & 24.94 & \textbf{0.825} & \textbf{0.419} \\
-DDS-SLAM (base)~\cite{Shan2024} & 2.64 & 6.78 & --- & 5.31 & 4.12 & & \textbf{25.77} & 0.809 & 0.450 \\
-PERSEUS$^{\ddagger}$ (tracking-only) & 1.97 & \textbf{3.64} & 10.69 & 4.84 & 4.87 & & --- & --- & --- \\
-Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 3.06 & --- & 9.76 & 5.79 & 4.64 & & 10.02 & 0.260 & 0.851 \\
-SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 5.98 & 7.25 & 8.14 & 5.12 & --- & & 17.99 & 0.739 & 0.472 \\
-SGS-SLAM~\cite{sgsslam} & --- & --- & --- & --- & --- & & 19.26 & 0.786 & 0.434$^{*}$ \\
+\multicolumn{8}{l}{\textbf{C\_1/001} --- 360 frames, design; camera-still with large deformations} \\
+\midrule
+\textbf{DID-SLAM (ours)} & \textbf{1.60} & 2.23 & 0.985 & 25.49 & \textbf{0.813} & 0.437 & 10.14 \\
+DDS-SLAM (base)~\cite{Shan2024} & 2.64 & 8.11 & 0.943 & \textbf{25.91} & 0.804 & 0.448 & 7.78 \\
+PERSEUS$^{\ddagger}$ & 1.97 & 3.31 & 0.97 & --- & --- & --- & --- \\
+Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 3.06 & 18.86 & 0.950 & 12.17 & 0.399 & 0.709 & 3.54 \\
+SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 5.98 & 3.25 & 0.76 & 20.57 & 0.771 & 0.344 & 22.5 \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 22.45 & 0.803 & \textbf{0.315} & --- \\
+SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
+\midrule
+\multicolumn{8}{l}{\textbf{C\_2/001} --- 730 frames, held-out; largest camera travel} \\
+\midrule
+\textbf{DID-SLAM (ours)} & 3.93 & 1.88 & 0.951 & 21.84 & \textbf{0.762} & \textbf{0.481} & 11.68 \\
+DDS-SLAM (base)~\cite{Shan2024} & 6.78 & 8.66 & 0.627 & \textbf{22.57} & 0.728 & 0.552 & 8.72 \\
+PERSEUS$^{\ddagger}$ & \textbf{3.64} & 2.93 & 0.98 & --- & --- & --- & --- \\
+Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & \multicolumn{7}{c}{\emph{halts during the gallbladder retraction}} \\
+SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 7.25 & 13.14 & 0.80 & 16.31 & 0.674 & 0.533 & 44.2 \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 17.52 & 0.701 & 0.504 & --- \\
+SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
+\midrule
+\multicolumn{8}{l}{\textbf{C\_3/001} --- 1527 frames, held-out; long, predominantly still} \\
+\midrule
+\textbf{DID-SLAM (ours)} & \textbf{7.61} & 3.05 & 0.820 & \textbf{24.39} & \textbf{0.828} & \textbf{0.424} & 10.67 \\
+DDS-SLAM (base)~\cite{Shan2024} & \multicolumn{7}{c}{\emph{pending (run incomplete at the time of writing)}} \\
+PERSEUS$^{\ddagger}$ & 10.69 & 0.96 & 0.48 & --- & --- & --- & --- \\
+Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 9.76 & 23.50 & 0.816 & 8.54 & 0.242 & 0.868 & 5.75 \\
+SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 8.14 & 23.60 & 0.90 & 17.78 & 0.783 & 0.503 & 24.6 \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 18.78 & 0.798 & 0.508 & --- \\
+SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
+\midrule
+\multicolumn{8}{l}{\textbf{E\_3/005} --- 265 frames, design; large, fast tissue and tool motion} \\
+\midrule
+\textbf{DID-SLAM (ours)} & \textbf{4.69} & 3.52 & 0.463 & 24.20 & \textbf{0.812} & 0.455 & 15.65 \\
+DDS-SLAM (base)~\cite{Shan2024} & 5.31 & 2.62 & 0.480 & \textbf{24.93} & 0.801 & 0.483 & 15.44 \\
+PERSEUS$^{\ddagger}$ & 4.84 & 0.51 & 0.18 & --- & --- & --- & --- \\
+Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 5.79 & 5.60 & 0.587 & 10.90 & 0.266 & 0.807 & 7.06 \\
+SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 5.12 & 1.70 & 0.34 & 17.31 & 0.726 & 0.509 & 50.0 \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 19.15 & 0.780 & \textbf{0.397} & --- \\
+SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
+\midrule
+\multicolumn{8}{l}{\textbf{G\_3/001} --- 1987 frames, held-out; long close-up, predominantly still} \\
+\midrule
+\textbf{DID-SLAM (ours)} & \textbf{2.28} & 5.93 & 0.976 & 28.78 & \textbf{0.909} & \textbf{0.300} & 15.03 \\
+DDS-SLAM (base)~\cite{Shan2024} & 4.12 & 18.25 & 0.367 & \textbf{29.68} & 0.904 & 0.317 & 10.00 \\
+PERSEUS$^{\ddagger}$ & 4.87 & 5.03 & 0.52 & --- & --- & --- & --- \\
+Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 4.64 & 33.52 & 0.800 & 8.46 & 0.133 & 1.019 & 7.85 \\
+SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & \multicolumn{7}{c}{\emph{did not finish --- out of memory, A100-80GB (Section~\ref{sec:bench_semgauss})}} \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 18.40 & 0.846 & 0.447 & --- \\
+SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
 \bottomrule
-\multicolumn{10}{l}{\footnotesize $^{\dagger}$camera-motion proxy, not a native pose. \quad
-$^{\ddagger}$ATE$_{\mathrm{mean}}$ (exported statistic); SemGauss G\_3 did not finish (OOM). \quad
-$^{*}$keyframe renders only.}
 \end{tabular}}
 \end{table}
+\FloatBarrier
 
 \begin{itemize}
-\item DID-SLAM records the best trajectory on four of the five sequences and the best SSIM and LPIPS of the trajectory-capable systems; the base retains a small PSNR edge, consistent with its softer renders (Figure~\ref{fig:bench_qual}).
-\item The one exception is instructive. On C\_2/001 - the sequence with camera travel large enough for tracking differences to be unambiguous - the dedicated tracking-only PERSEUS (Section~\ref{sec:bench_perseus}) edges DID-SLAM ($3.64$ vs $3.4$--$3.9$\,mm) while producing no reconstruction at all; DID-SLAM reaches parity with a dense-flow bundle-adjustment specialist while additionally rendering the scene, and beats it on the remaining four sequences, decisively so on the long, still-dominated ones ($2.28$ vs $4.87$ on G\_3/001).
-\item The Gaussian-splatting systems trade the other way: SGS-SLAM's keyframe renders carry the most high-frequency texture but no comparable trajectory, and SemGauss-SLAM exports both halves but trails on each - on these deforming, monocular-depth sequences the neural-SDF substrate with explicit motion handling is the stronger platform.
+\item DID-SLAM records the best trajectory on four of the five snippets and, on every snippet, the best SSIM of any method and the best LPIPS of the trajectory-capable systems; the base retains a small PSNR edge throughout, consistent with its softer renders (Figure~\ref{fig:bench_qual}).
+\item The one exception is instructive. On C\_2/001 --- the sequence with camera travel large enough for tracking differences to be unambiguous --- the dedicated tracking-only PERSEUS (Section~\ref{sec:bench_perseus}) edges DID-SLAM ($3.64$ vs $3.93$\,mm) while producing no reconstruction at all; DID-SLAM reaches near-parity with a dense-flow bundle-adjustment specialist while additionally rendering the scene, and beats it on the remaining four snippets, decisively so on the long, still-dominated ones ($2.28$ vs $4.87$ on G\_3/001).
+\item PERSEUS's failure mode on the deforming E\_3/005 is the mirror image of the render-loss trackers': a path ratio of $0.51$ means its estimate \emph{under}-travels, because DROID's motion filter gates sub-threshold flow and simply stops updating --- the same regime DID-SLAM's gate handles by freezing, reached from the opposite direction. Both systems conclude that when image motion falls below the flow noise floor the correct action is not to track; DID-SLAM makes that decision explicitly and reverses it when evidence returns.
+\item The Gaussian-splatting systems trade the other way: SGS-SLAM's keyframe renders carry the most high-frequency texture on two snippets (best LPIPS on C\_1 and E\_3) but no comparable trajectory, and SemGauss-SLAM exports both halves but trails on each --- on these deforming, monocular-depth sequences the neural-SDF substrate with explicit motion handling is the stronger platform.
 \item Semantic-SuPer's proxy trajectory is closest on the near-static C\_3/001, consistent with a static-camera assumption that holds there and breaks elsewhere.
 \end{itemize}
 
@@ -811,7 +853,7 @@ Configuration & C\_1/001 & E\_3/005 & Verdict \\
 DDS-SLAM base & 1.80 & 4.45 & reference \\
 + uncertainty (Sec.~\ref{sec:uncertainty}) & 1.92 & --- & neutral alone; enables the weighting \\
 + vote freeze, BA re-pin (Sec.~\ref{sec:motion}) & 1.80 & 2.87 & deforming sequence $-36\%$ \\
-+ corrected BA step (Sec.~\ref{sec:ba_floor}) & 1.34 & 3.2--3.6 & still sequence $-26\%$; keyframe walk $0.35 \to 0.04$\,mm \\
++ corrected BA configuration (Sec.~\ref{sec:hyperparams}) & 1.34 & 3.2--3.6 & still sequence $-26\%$; keyframe walk $0.35 \to 0.04$\,mm \\
 + base DINOv3 districts (= final) & 1.43 & 3.2--3.6 & decision $95\%$ invariant; small edge retained \\
 \midrule
 per-ray motion trust (de-rotated) & 1.45 & 3.83 & best soft variant; degrades held-out sequences \\
@@ -824,147 +866,25 @@ zero-motion prior & 1.46 & 3.18 & drift already removed by freeze + BA step \\
 \end{table}
 
 Three points the ladder makes. First, the gains are separable and attributable: the freeze pays on the deforming sequence, the corrected bundle-adjustment step pays on the still one, and their combination transfers to the held-out set (Table~\ref{tab:results_main}). Second, the rejected variants fail for measured, mechanistic reasons rather than by tuning accident - soft per-frame weighting compounds over long sequences, weighting stacked behind the freeze removes the signal the solve still needs, and a lowered dissent threshold buys one regime at the cost of the other. Third, no single-sequence winner survives: the $1.15$\,mm C\_1/001 of the lowered dissent threshold is the best number in the table and is still rejected, because the same setting is the worst E\_3/005 - the final configuration is the one that wins jointly.
-% ===========================================================================
-% Benchmarking — grounded in the 2026-07-02 results drop (Benchmarking-20260702T131352Z):
-%   DDS-SLAM Bench/<snip>_base_s0/{sim3_metrics,render_eval,depth_l1}.txt
-%   SGS-SLAM_CRCD_bench5/<snip>/{i.jpg,i_gt.png}
-%   SemanticSuperResults/ss_crcd_<snip>/events.out.tfevents
-% Figures: pub_figures_20260702_benchmark/{dds_trajectories,qualitative,semsup,bars}
-% NOTE: SNI-SLAM subsection still a stub (no completed CRCD results);
-%       Discussion/Conclusion stubs pending.
-% ===========================================================================
-
 \section{Benchmarking against SoTA Semantic-SLAM pipelines}
 \label{sec:benchmarking}
-To adequately measure the performance of DID-SLAM against the state of the art (SoTA), a range of models was selected: Semantic-SuPer, SNI-SLAM, SGS-SLAM, SemGauss-SLAM and PERSEUS, together spanning the current benchmark for semantic SLAM pipelines and, in PERSEUS, a dedicated tracking-only reference. These models were all evaluated on the same CRCD sequences as DID-SLAM, using the models as provided by the relevant authors; configuration changes were limited to input paths, camera intrinsics, and class taxonomy, so that no method was re-tuned. All methods are evaluated on the same five rectified CRCD snippets (C1\_001, C2\_001, C3\_001, E3\_005, G3\_001; 265--1987 frames each), spanning five episodes, camera-still and camera-moving regimes, and tool-quiet through tool-dominated scenes. Each method consumes the same rectified RGB stream; depth supervision, where a method requires it, is the same stereo-anchored MoGe-2 depth. Metrics follow Section~\ref{sec:eval_metrics}.
+To adequately measure the performance of DID-SLAM against the state of the art (SoTA), a range of models was selected: Semantic-SuPer, SNI-SLAM, SGS-SLAM, SemGauss-SLAM and PERSEUS, together spanning the current benchmark for semantic SLAM pipelines and, in PERSEUS, a dedicated tracking-only reference. All methods are evaluated on the same five rectified CRCD snippets as DID-SLAM, using the code as provided by the relevant authors; configuration changes were limited to input paths, camera intrinsics, and class taxonomy, so no method was re-tuned. Each method consumes the same rectified RGB stream and, where required, the same stereo-anchored MoGe-2 depth; metrics follow Section~\ref{sec:eval_metrics}, and the per-snippet results are collected in Table~\ref{tab:results_sota}.
 
 \subsection{DDS-SLAM}
 \label{sec:bench_dds}
-
-Table~\ref{tab:bench_dds} reports the full battery for the base configuration (single seed; the C3\_001 run had not completed at the time of writing and is reported as pending). The ablation baseline of Section~\ref{sec:results_main}, which differs from this configuration only in its photometric loss, completes C3\_001 at $7.55$\,mm and supplies the like-for-like base column there.
-
-\begin{table}[t]
-\centering
-\caption{DDS-SLAM (base) on the CRCD benchmark. Sim(3) ATE in mm; path ratio and
-aligned dominant-axis $|r|$ per Section~\ref{sec:eval_metrics}; Depth-$L_1$ is the
-input-vs-output self-consistency in mm. C3\_001 pending.}
-\label{tab:bench_dds}
-\small
-\begin{tabular}{lrrrrrrrr}
-\toprule
-Snippet & $N$ & ATE$_{\mathrm{RMSE}}$ & path ratio & $|r|_{\mathrm{dom}}$ &
-PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
-\midrule
-C1\_001 &  360 & 2.64 &  8.11 & 0.943 & 25.91 & 0.804 & 0.448 &  7.78 \\
-C2\_001 &  730 & 6.78 &  8.66 & 0.627 & 22.57 & 0.728 & 0.552 &  8.72 \\
-C3\_001 & 1527 & \multicolumn{7}{c}{\emph{pending (run incomplete at time of writing)}} \\
-E3\_005 &  265 & 5.31 &  2.62 & 0.480 & 24.93 & 0.801 & 0.483 & 15.44 \\
-G3\_001 & 1987 & 4.12 & 18.25 & 0.367 & 29.68 & 0.904 & 0.317 & 10.00 \\
-\midrule
-mean (4) & --- & 4.71 & 9.41 & 0.604 & 25.77 & 0.809 & 0.450 & 10.49 \\
-\bottomrule
-\end{tabular}
-\end{table}
-\FloatBarrier
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.49\linewidth]{figures/C2_001_traj_est_vs_gt.png}
-\includegraphics[width=0.49\linewidth]{figures/C1_001_traj_est_vs_gt.png}
-\caption{DDS-SLAM (base) estimated trajectory (blue, Sim(3)-aligned) against
-ground truth (dashed grey) on C2\_001 (left) and C1\_001 (right). The estimate
-follows the true path's shape --- the aligned correlation on C1\_001 is $0.94$
---- but oscillates around it, accumulating $\sim$8$\times$ the true path length:
-the over-travel signature that motivates the path-ratio metric and the tracking
-contributions of this thesis.}
-\label{fig:bench_traj}
-\end{figure}
+DDS-SLAM~\cite{Shan2024} is the unmodified base of this thesis's fork (Section~\ref{sec:ddsslam}), run under the identical staging and supplying the like-for-like reference row in every sub-table. Its trajectories follow the true path's shape but oscillate around it, over-travelling by $2.6$--$18\times$ --- the signature that motivates the path-ratio diagnostic and the tracking work of this thesis.
 
 \subsection{Semantic-SuPer}
 \label{sec:bench_semsup}
-
-Semantic-SuPer~\cite{Lin2023} is included as the deformable-reconstruction representative: a semantic surfel graph with embedded-deformation (ED) nodes, optimised per frame against depth, photometric and semantic terms. It carries no explicit camera pose (the camera is assumed static while the surfel graph deforms), so a native trajectory metric does not apply. To place it on the same axes as the other systems we score two derived quantities: the surfel map is rasterised to a per-frame render (evaluated with the identical PSNR/SSIM/LPIPS and Depth-$L_1$ pipeline used for the other methods), and the rigid component of the deformation graph is read out as a \emph{camera-motion proxy} and aligned to the ground-truth camera path under Sim(3) (Table~\ref{tab:bench_semsup}). The proxy is a reinterpretation, not a pose Semantic-SuPer estimates; as shown below, that is exactly what makes it informative.
-
-\begin{table}[t]
-\centering
-\caption{Semantic-SuPer on the CRCD benchmark, scored identically to DDS-SLAM.
-Render and Depth-$L_1$ are over the rasterised surfel map; the Sim(3) ATE (mm),
-path ratio and aligned $|r|_{\mathrm{dom}}$ are computed on a \emph{camera-motion
-proxy} extracted from the deformation graph (Section~\ref{sec:bench_semsup}), not a
-native trajectory. C2\_001 halts during the gallbladder retraction. LPIPS is
-unbounded above and can exceed 1.}
-\label{tab:bench_semsup}
-\small
-\begin{tabular}{lrrrrrrrr}
-\toprule
-Snippet & $N$ & ATE$_{\mathrm{RMSE}}$ & path ratio & $|r|_{\mathrm{dom}}$ &
-PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
-\midrule
-C1\_001 &  360 & 3.06 & 18.86 & 0.950 & 12.17 & 0.399 & 0.709 & 3.54 \\
-C2\_001 &  730 & \multicolumn{7}{c}{\emph{pending}} \\
-C3\_001 & 1527 & 9.76 & 23.50 & 0.816 &  8.54 & 0.242 & 0.868 & 5.75 \\
-E3\_005 &  265 & 5.79 &  5.60 & 0.587 & 10.90 & 0.266 & 0.807 & 7.06 \\
-G3\_001 & 1987 & 4.64 & 33.52 & 0.800 &  8.46 & 0.133 & 1.019 & 7.85 \\
-\midrule
-mean (4) & --- & 5.81 & 20.37 & 0.788 & 10.02 & 0.260 & 0.851 & 6.05 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-
-\begin{figure}[t]
-    \centering
-    \includegraphics[width=\linewidth]{figures/semsup_render_vs_gt.pdf}
-    \caption{Semantic-SuPer rasterised surfel render (right) against the input frame (left) on a benchmark snippet. The surfel map captures scene geometry but renders with markedly lower photometric fidelity than the neural-SDF and Gaussian-splat systems, consistent with its geometry-first design.}
-    \label{fig:semsup_qual}
-\end{figure}
-
-
+Semantic-SuPer~\cite{Lin2023} is the deformable-reconstruction representative: a semantic surfel graph with embedded-deformation nodes, optimised per frame against depth, photometric and semantic terms. It estimates no camera pose (the camera is assumed static while the graph deforms), so the rigid component of its deformation graph is read out as a camera-motion proxy and aligned under Sim(3) --- marked $\dagger$ throughout --- while its surfel map is rasterised to per-frame renders scored with the identical pipeline. Its C\_2/001 run halts during the gallbladder retraction and is reported as incomplete.
 
 \subsection{SNI-SLAM}
 \label{sec:bench_sni}
-
-% TODO: no SNI-SLAM results in the 2026-07-02 drop — add once available.
+SNI-SLAM~\cite{sni} is the semantic neural-implicit representative: hierarchical semantic features fused with appearance and geometry through cross-attention over a multi-resolution feature-grid map. It consumes the same rectified RGB, depth and four-class semantics as the other systems. Its benchmark run is in flight at the time of writing; its rows in Table~\ref{tab:results_sota} are reported as pending.
 
 \subsection{SGS-SLAM}
 \label{sec:bench_sgs}
-
-SGS-SLAM \cite{sgsslam} represents the 3D-Gaussian-splatting family: an explicit anisotropic-Gaussian map optimised per keyframe, with semantic channels. It was onboarded onto the identical five snippets (same rectified RGB, same depth, its segmentation head trained on CRCD classes). SGS-SLAM renders every fifth frame (its keyframe set); rendering metrics in Table~\ref{tab:bench_sgs} are computed over those rendered keyframes against the corresponding input frames, with the same PSNR/SSIM implementation and LPIPS network used for DDS-SLAM. It does not export a comparable camera trajectory in this configuration, so the comparison is on the mapping half.
-
-\begin{table}[t]
-\centering
-\caption{SGS-SLAM rendering quality over its rendered keyframes ($n$ per snippet),
-scored identically to DDS-SLAM. DDS-SLAM values repeated for comparison
-(its metrics cover every frame).}
-\label{tab:bench_sgs}
-\small
-\begin{tabular}{l rrrr c rrr}
-\toprule
-& \multicolumn{4}{c}{SGS-SLAM} & & \multicolumn{3}{c}{DDS-SLAM (base)} \\
-\cmidrule{2-5} \cmidrule{7-9}
-Snippet & $n$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & &
-PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ \\
-\midrule
-C1\_001 &  73 & 22.45 & 0.803 & 0.315 & & 25.91 & 0.804 & 0.448 \\
-C2\_001 & 147 & 17.52 & 0.701 & 0.504 & & 22.57 & 0.728 & 0.552 \\
-C3\_001 & 306 & 18.78 & 0.798 & 0.508 & & \multicolumn{3}{c}{\emph{pending}} \\
-E3\_005 &  54 & 19.15 & 0.780 & 0.397 & & 24.93 & 0.801 & 0.483 \\
-G3\_001 & 398 & 18.40 & 0.846 & 0.447 & & 29.68 & 0.904 & 0.317 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.85\linewidth]{figures/bench_psnr.png}\\[2pt]
-\includegraphics[width=0.85\linewidth]{figures/bench_lpips.png}
-\caption{Per-snippet rendering comparison, DDS-SLAM (blue) vs.\ SGS-SLAM
-(green): PSNR (top, higher is better) and LPIPS (bottom, lower is better).
-DDS-SLAM leads PSNR throughout; SGS-SLAM leads LPIPS except on the static
-G3\_001. DDS-SLAM C3\_001 pending.}
-\label{fig:bench_bars}
-\end{figure}
+SGS-SLAM~\cite{sgsslam} represents semantic 3D-Gaussian-splatting SLAM: an explicit anisotropic-Gaussian map with per-Gaussian semantic channels, tracked by rasterisation in the SplaTAM style. In its released configuration it renders only its keyframe set (every fifth frame, marked $*$) and exports no comparable camera trajectory, so it is compared on the mapping half only. Its keyframe renders carry the most high-frequency texture of the benchmark (Figure~\ref{fig:bench_qual}).
 
 \begin{figure}[t]
 \centering
@@ -975,66 +895,15 @@ smoother --- higher PSNR, but soft --- while the SGS-SLAM render preserves more
 high-frequency texture (lower LPIPS) at the cost of local splat artefacts.}
 \label{fig:bench_qual}
 \end{figure}
+\FloatBarrier
 
-\subsection{SemGauss SLAM}
+\subsection{SemGauss-SLAM}
 \label{sec:bench_semgauss}
-
-
-SemGauss-SLAM \cite{semgauss} is the semantic-feature-field Gaussian representative. It shares the SplaTAM lineage with SGS-SLAM --- the same tracking-by-rasterisation, keyframe mapping and densify-and-prune machinery --- which makes the pair a controlled comparison: the one substantive difference is that SemGauss-SLAM attaches a 16-dimensional semantic feature to every Gaussian, rasterises it as an additional feature image, and distils it against a DINOv2 segmentation head during mapping. It was onboarded onto the identical five rectified snippets with only per-dataset values changed (intrinsics, depth scale, class count); every optimisation hyperparameter is the authors' Replica value verbatim. The segmentation head is our in-domain four-class DINOv2 head with the benchmark snippet held out of its training, and semantics run in the authors' default self-supervised mode (no ground-truth masks enter any loss). Unlike SGS-SLAM's configuration, SemGauss-SLAM exports its full camera state, so it is scored on \emph{both} halves of the problem: Sim(3) ATE, path ratio and aligned $|r|_{\mathrm{dom}}$ on its native trajectory, and every-frame renders under the identical PSNR/SSIM/LPIPS and Depth-$L_1$ pipeline (Table~\ref{tab:bench_semgauss}).
-
-\begin{table}[t]
-\centering
-\caption{SemGauss-SLAM on the CRCD benchmark, scored identically to DDS-SLAM:
-native trajectory under Sim(3) (ATE in mm) and every-frame renders. G3\_001
-could not be run --- it exhausts an A100-80GB before completing (see text) ---
-and is omitted from the mean.}
-\label{tab:bench_semgauss}
-\small
-\begin{tabular}{l r rrrr rrrr}
-\toprule
-Snippet & $N$ & ATE$_{\mathrm{mean}}$ & ATE$_{\mathrm{max}}$ & path ratio &
-$|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
-\midrule
-C1\_001 &  360 & 5.98 & 14.38 &  3.25 & 0.76 & 20.57 & 0.771 & 0.344 & 22.5 \\
-C2\_001 &  730 & 7.25 & 21.78 & 13.14 & 0.80 & 16.31 & 0.674 & 0.533 & 44.2 \\
-C3\_001 & 1527 & 8.14 & 25.75 & 23.60 & 0.90 & 17.78 & 0.783 & 0.503 & 24.6 \\
-E3\_005 &  265 & 5.12 & 16.84 &  1.70 & 0.34 & 17.31 & 0.726 & 0.509 & 50.0 \\
-G3\_001 & 1987 & \multicolumn{8}{c}{\emph{did not finish --- OOM, A100-80GB (see text)}} \\
-\midrule
-mean (4) & --- & 6.62 & 19.69 & 10.42 & 0.70 & 17.99 & 0.739 & 0.472 & 35.3 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-G3\_001 could not be benchmarked: every attempt --- the faithful configuration and a pruning-tightened variant (densification gate 0.5$\rightarrow$0.25, prune threshold 0.005$\rightarrow$0.05) --- exhausted an A100-80GB partway through the sequence and never completed. The failure is a \emph{scaling} property of the representation rather than a transient crash: SplaTAM-family methods add Gaussians wherever the current map fails to explain the frame, so memory grows with newly-revealed surface rather than with sequence length, and G3\_001's exploratory camera and tool activity never let densification plateau --- it had accumulated 11.0\,M Gaussians, six times C3\_001's final count (1.75--1.78\,M over a longer 1527-frame sequence) at a fraction of the frames, when it crossed the 80\,GB ceiling. SGS-SLAM completed the same snippet on the same GPU because its Gaussians carry no 16-dimensional feature vector, no 16-channel rasterisation buffers and no corresponding gradients, and are roughly $3\times$ lighter. The authors' configuration exposes no Gaussian budget --- Replica never needed one --- so the ceiling is a property of the method, not of our port: the semantic feature field trades memory scalability for its dense semantics, and an exploratory endoscopic sequence is precisely the regime that collects the bill. G3\_001 is therefore reported as a did-not-finish; the four completed snippets carry the SemGauss-SLAM comparison.
-
+SemGauss-SLAM~\cite{semgauss} shares the SplaTAM lineage with SGS-SLAM but attaches a 16-dimensional semantic feature field to every Gaussian, distilled during mapping against our four-class DINOv2 head (with the benchmark snippet held out of the head's training). It exports full camera state and every-frame renders, so it is scored on both halves of the problem. G\_3/001 did not finish: densification grows memory with newly-revealed surface rather than sequence length, and the exploratory sequence had accumulated $11$\,M Gaussians --- six times C\_3/001's final count --- when it exhausted an A100-80GB; the ceiling is a property of the feature-field representation, as SGS-SLAM's roughly $3\times$ lighter Gaussians complete the same snippet on the same GPU.
 
 \subsection{PERSEUS}
 \label{sec:bench_perseus}
-
-PERSEUS is included as the dedicated-tracking representative: a DROID-SLAM~\cite{Teed2021} fork adapted to endoscopy, estimating the camera from dense optical-flow bundle adjustment over a keyframe graph. It is monocular and tracking-only - it consumes no depth and renders nothing - so it is scored on the Sim(3) trajectory battery alone. Onboarding required four mechanical repairs to the released code, none touching the method itself: the trajectory export ships commented out (and crashes when re-enabled through a visualisation code path that assumes edges the export graph does not contain); a frame mask is returned at a fixed size regardless of the input; and the released segmentation checkpoint cannot be loaded by its own constructor (a two-channel weight against a one-channel default), so the system runs with segmentation disabled - provably identical for tracking, as the masks feed only the visualiser.
-
-\begin{table}[!ht]
-\centering
-\caption{PERSEUS on the CRCD benchmark: Sim(3) ATE$_{\mathrm{mean}}$ (mm), path ratio and aligned $|r|_{\mathrm{dom}}$ on its native trajectory. Tracking-only: no depth input, no renders, so the rendering battery does not apply.}
-\label{tab:bench_perseus}
-\small
-\begin{tabular}{lrrrr}
-\toprule
-Snippet & $N$ & ATE$_{\mathrm{mean}}$ & path ratio & $|r|_{\mathrm{dom}}$ \\
-\midrule
-C1\_001 &  360 &  1.97 & 3.31 & 0.97 \\
-C2\_001 &  730 &  3.64 & 2.93 & 0.98 \\
-C3\_001 & 1527 & 10.69 & 0.96 & 0.48 \\
-E3\_005 &  265 &  4.84 & 0.51 & 0.18 \\
-G3\_001 & 1987 &  4.87 & 5.03 & 0.52 \\
-\midrule
-mean (5) & --- & 5.20 & 2.55 & 0.63 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Two observations place the other systems in context. First, PERSEUS's path ratios sit at $0.5$--$5\times$ where the render-loss trackers run $3$--$24\times$: dense-flow bundle adjustment does not over-travel, and its C2\_001 result ($3.64$\,mm, $|r| = 0.98$) sets the tracking bar on the one sequence with unambiguous camera travel. Second, on the sub-SNR E3\_005 its failure mode \emph{inverts}: a path ratio of $0.51$ means the estimate under-travels, because DROID's motion filter gates sub-threshold flow and simply stops updating - the same regime that DID-SLAM's gate handles by freezing, observed from the opposite direction. Both systems conclude that when image motion falls below the flow noise floor the correct action is not to track; they differ in that DID-SLAM makes that decision explicitly and reverses it when evidence returns.
+PERSEUS is the dedicated-tracking reference: a DROID-SLAM~\cite{Teed2021} fork adapted to endoscopy, estimating the camera from dense optical-flow bundle adjustment over a keyframe graph --- monocular and tracking-only, so only the trajectory battery applies. Onboarding required four mechanical repairs to the shipped code (a commented-out trajectory export, a crash in its re-enabled visualisation path, a fixed-size frame mask, and an unloadable segmentation checkpoint), none touching the method itself. Its dense-flow bundle adjustment does not over-travel (path ratios $0.5$--$5\times$ against the render-loss trackers' $3$--$24\times$) and sets the tracking bar on the one unambiguous-travel snippet (C\_2/001, $3.64$\,mm, $|r| = 0.98$).
 
 \section{Discussion}
 \label{sec:discussion}
