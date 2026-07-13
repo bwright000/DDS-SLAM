@@ -792,7 +792,7 @@ SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
 \textbf{DID-SLAM (ours)} & 3.93 & 1.88 & 0.951 & 21.84 & \textbf{0.762} & \textbf{0.481} & 11.68 \\
 DDS-SLAM (base)~\cite{Shan2024} & 6.78 & 8.66 & 0.627 & \textbf{22.57} & 0.728 & 0.552 & 8.72 \\
 PERSEUS$^{\ddagger}$ & \textbf{3.64} & 2.93 & 0.98 & --- & --- & --- & --- \\
-Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & \multicolumn{7}{c}{\emph{halts during the gallbladder retraction}} \\
+Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 8.32 & 13.93 & 0.890 & 8.72 & 0.162 & 0.882 & 7.2 \\
 SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 7.25 & 13.14 & 0.80 & 16.31 & 0.674 & 0.533 & 44.2 \\
 SGS-SLAM$^{*}$~\cite{sgsslam} & 7.64 & 8.15 & 0.938 & 17.52 & 0.701 & 0.504 & 41.6 \\
 SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
@@ -879,7 +879,7 @@ DDS-SLAM~\cite{Shan2024} is the unmodified base of this thesis's fork (Section~\
 
 \subsection{Semantic-SuPer}
 \label{sec:bench_semsup}
-Semantic-SuPer~\cite{Lin2023} is the deformable-reconstruction representative: a semantic surfel graph with embedded-deformation nodes, optimised per frame against depth, photometric and semantic terms. It estimates no camera pose (the camera is assumed static while the graph deforms), so the rigid component of its deformation graph is read out as a camera-motion proxy and aligned under Sim(3) --- marked $\dagger$ throughout --- while its surfel map is rasterised to per-frame renders scored with the identical pipeline. Its C\_2/001 run halts during the gallbladder retraction and is reported as incomplete.
+Semantic-SuPer~\cite{Lin2023} is the deformable-reconstruction representative: a semantic surfel graph with embedded-deformation nodes, optimised per frame against depth, photometric and semantic terms. It estimates no camera pose (the camera is assumed static while the graph deforms), so the rigid component of its deformation graph is read out as a camera-motion proxy and aligned under Sim(3) --- marked $\dagger$ throughout --- while its surfel map is rasterised to per-frame renders scored with the identical pipeline. Its C\_2/001 run required guarding an empty-correspondence crash during the gallbladder retraction, after which all five snippets complete.
 
 \subsection{SNI-SLAM}
 \label{sec:bench_sni}
