@@ -130,20 +130,53 @@ stage_rect(){ local NAME=$1 DD="/content/rect_staged/$NAME" SD="$SNI_REPO/data/C
 }
 
 # ---------------------------------------------------------- run one snippet --
-run_one(){ local NAME=$1 SD="$SNI_REPO/data/CRCD/$NAME" CFG="configs/CRCD/${NAME}.yaml" DST="$DRIVE_OUT/$NAME"
+# run_one NAME [VARIANT] -- VARIANT defaults to 'faithful' (the benchmark cell).
+# Diagnostic variants (NEVER benchmark rows; they exist to attribute a faithful failure):
+#   oracle   : func.use_gt_pose=True + mapping.joint_opt=False -> isolates metric-scale
+#              mapping/render quality from tracking entirely (sim3 ATE ~0 = pipeline sanity)
+#   depthpin : tracking.w_depth 1->5  -> tests the color-dominant-loss runaway hypothesis
+#   noconst  : tracking.const_speed_assumption=False -> tests the const-vel compounding hypothesis
+run_one(){ local NAME=$1 VARIANT=${2:-faithful} TAG="${1}_${2:-faithful}"
+  local SD="$SNI_REPO/data/CRCD/$NAME" CFG="configs/CRCD/${TAG}.yaml" DST="$DRIVE_OUT/$TAG"
   mkdir -p "$DST"
+  [ -f "$DST/.DONE" ] && [ "${FORCE:-0}" != 1 ] && { say "$TAG done -> skip"; return 0; }
   stage_rect "$NAME" || { echo FAILED > "$DST/status.txt"; return 1; }
   # per-snippet config (relative-frame bound) inheriting crcd.yaml
   python3 "$REPO/Addons/sni_bench/compute_bound_relative.py" --data_dir "$SD" \
-     --out "$SNI_REPO/$CFG" --name "$NAME" --input_folder "data/CRCD/$NAME" \
+     --out "$SNI_REPO/$CFG" --name "$TAG" --input_folder "data/CRCD/$NAME" \
      || { say "FATAL bound"; echo FAILED > "$DST/status.txt"; return 1; }
+  # variant overrides: DEEP-MERGE into the generated yaml (an appended duplicate top-level
+  # 'mapping:' block would silently CLOBBER the bound under PyYAML last-wins)
+  python3 - "$SNI_REPO/$CFG" "$VARIANT" <<'PY' || { say "FATAL variant merge"; echo FAILED > "$DST/status.txt"; return 1; }
+import sys, yaml
+p, v = sys.argv[1], sys.argv[2]
+OV = {
+  'faithful': {},
+  'oracle':   {'func': {'use_gt_pose': True}, 'mapping': {'joint_opt': False}},
+  'depthpin': {'tracking': {'w_depth': 5}},
+  'noconst':  {'tracking': {'const_speed_assumption': False}},
+}[v]
+cfg = yaml.safe_load(open(p)) or {}
+def merge(dst, src):
+    for k, val in src.items():
+        if isinstance(val, dict) and isinstance(dst.get(k), dict): merge(dst[k], val)
+        else: dst[k] = val
+merge(cfg, OV)
+yaml.safe_dump(cfg, open(p, 'w'), default_flow_style=None, sort_keys=False)
+print(f"[variant] {v}: {OV if OV else 'faithful (no overrides)'}")
+PY
   cp -f "$SNI_REPO/$CFG" "$DST/config_used.yaml"
-  # ---- train ----
-  say "$NAME: SNI-SLAM run.py"
+  # ---- train (VRAM watcher for the T4-capacity question; wall time logged) ----
+  say "$TAG: SNI-SLAM run.py"
+  ( while true; do nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null; sleep 30; done \
+    > "$DST/vram_samples.txt" ) & local VPID=$!
+  local T0=$SECONDS
   ( cd "$SNI_REPO" && SNI_STORE_DEVICE="$STORE_DEV" PYTHONPATH=. "$SNI_PY" run.py "$CFG" ) 2>&1 | tee "$DST/run.log"
   local RC=${PIPESTATUS[0]}
-  [ "$RC" -eq 0 ] || { echo "FAILED run.py rc=$RC" > "$DST/status.txt"; say "$NAME FAILED"; return 1; }
-  local OUTD="$SNI_REPO/output/CRCD/$NAME"
+  kill $VPID 2>/dev/null
+  echo "[wall] train $(( (SECONDS-T0)/60 )) min | peak VRAM $(sort -rn "$DST/vram_samples.txt" 2>/dev/null | head -1) MiB" | tee -a "$DST/run.log"
+  [ "$RC" -eq 0 ] || { echo "FAILED run.py rc=$RC" > "$DST/status.txt"; say "$TAG FAILED (isolated) -> next"; return 1; }
+  local OUTD="$SNI_REPO/output/CRCD/$TAG"
   # ---- export est trajectory ----
   local CKPT; CKPT=$(ls -t "$OUTD"/ckpt/*.pt 2>/dev/null | head -1)
   [ -n "$CKPT" ] || { say "no ckpt"; echo FAILED > "$DST/status.txt"; return 1; }
@@ -156,7 +189,7 @@ with open(sys.argv[2],'w') as f:
 print(f"[export] {est.shape[0]} poses")
 PY
   # ---- per-frame render (drives SNI's own Renderer) ----
-  ( cd "$SNI_REPO" && PYTHONPATH=. "$SNI_PY" "$REPO/Addons/sni_bench/render_all_frames_sni.py" "$CFG" --skip 1 --ignore_scaled_config ) 2>&1 | tail -5 | tee -a "$DST/run.log" || say "$NAME WARN render"
+  ( cd "$SNI_REPO" && PYTHONPATH=. "$SNI_PY" "$REPO/Addons/sni_bench/render_all_frames_sni.py" "$CFG" --skip 1 --ignore_scaled_config ) 2>&1 | tail -5 | tee -a "$DST/run.log" || say "$TAG WARN render"
   python3 - "$OUTD/rendered" "$DST" <<'PY' || say "WARN rename"
 import sys, glob, os, re, shutil
 rd, out = sys.argv[1], sys.argv[2]
@@ -169,9 +202,9 @@ print(f"[rename] {n} rgb + {m} depth")
 PY
   # ---- eval battery (OUR dataset-agnostic metric tools) ----
   python3 "$REPO/Addons/eval/sim3_ate.py" --est "$DST/est_c2w_data.txt" --gt "$SD/groundtruth.txt" \
-     --name "SNI-fresh $NAME" --out "$DST/sim3_metrics.txt" || say "WARN sim3"
+     --name "SNI-fresh $TAG" --out "$DST/sim3_metrics.txt" || say "WARN sim3"
   python3 "$REPO/Addons/eval/eval_rendering.py" --gt_dir "$SD/video_frames" --render_dir "$DST/render" \
-     --name "SNI-fresh" --sequence "CRCD ($NAME)" --output_csv "$DST/render_eval.csv" > "$DST/render_eval.txt" 2>&1 || say "WARN render eval"
+     --name "SNI-fresh" --sequence "CRCD ($TAG)" --output_csv "$DST/render_eval.csv" > "$DST/render_eval.txt" 2>&1 || say "WARN render eval"
   python3 "$REPO/Addons/eval/depth_l1.py" --render_depth_dir "$DST/render/depth" --render_scale 10000 \
      --gt_depth_dir "$SD/depth" --png_depth_scale 10000 --out "$DST/depth_l1.txt" || say "WARN depth_l1"
   python3 "$REPO/Addons/viz/generate_video.py" --rgb_input_dir "$SD/video_frames" --rgb_input_pattern '*l.png' \
@@ -180,7 +213,7 @@ PY
      --trajectory_est "$DST/est_c2w_data.txt" --trajectory_gt "$SD/groundtruth.txt" \
      --output "$DST/panels.mp4" --fps 15 || say "WARN video"
   # ---- SMOKE DIAGNOSTICS (does the fresh setup actually work?) ----
-  say "$NAME SMOKE DIAGNOSTICS"
+  say "$TAG SMOKE DIAGNOSTICS"
   echo "  marching_cubes errors: $(grep -ic 'marching_cubes error' "$DST/run.log")   (want 0)"
   python3 - "$DST/est_c2w_data.txt" "$DST/render" <<'PY'
 import sys, glob, os, numpy as np, cv2
@@ -191,16 +224,43 @@ if fs:
     mid=cv2.imread(fs[len(fs)//2]); print(f"  mid render spatial_std: {mid.std():.2f}   (empty if <10)")
 PY
   echo DONE > "$DST/status.txt"; touch "$DST/.DONE"
-  say "$NAME DONE -> $DST"
+  say "$TAG DONE -> $DST"
   grep -E "recovered scale|path ratio|Pearson|ATE  rmse" "$DST/sim3_metrics.txt" 2>/dev/null
   grep -iE "PSNR|SSIM|LPIPS" "$DST/render_eval.txt" 2>/dev/null | head -3
+}
+
+# ---------------------------------------------------------- overnight summary
+overnight_summary(){
+  say "OVERNIGHT SUMMARY ($DRIVE_OUT)"
+  for D in "$DRIVE_OUT"/*/; do
+    local TAG; TAG=$(basename "$D")
+    echo ""; echo "--- $TAG [$(cat "$D/status.txt" 2>/dev/null || echo NO-STATUS)] ---"
+    grep -E "\[wall\]" "$D/run.log" 2>/dev/null | tail -1
+    echo "  marching_cubes errors: $(grep -ic 'marching_cubes error' "$D/run.log" 2>/dev/null)"
+    [ -f "$D/est_c2w_data.txt" ] && python3 - "$D/est_c2w_data.txt" <<'PY'
+import sys, numpy as np
+M=np.loadtxt(sys.argv[1]); t=M[:,[3,7,11]]
+print(f"  est t-std x/y/z: {t.std(0).round(5)}  span: {(t.max(0)-t.min(0)).round(4)}")
+PY
+    grep -E "recovered scale|path ratio|ATE  rmse|Pearson\| dom" "$D/sim3_metrics.txt" 2>/dev/null | sed 's/^/  /'
+    grep -iE "^PSNR|^SSIM|^LPIPS" "$D/render_eval.txt" 2>/dev/null | sed 's/^/  /'
+    grep -E "Depth-L1" "$D/depth_l1.txt" 2>/dev/null | sed 's/^/  /'
+  done
+  echo ""
+  echo "READ: faithful = the benchmark candidate. oracle good + faithful bad => tracker is the"
+  echo "problem (scale regime OK). oracle bad => metric-scale hyperparams wrong. depthpin/noconst"
+  echo "= which mechanism drives a faithful runaway (color-dominant loss vs const-vel compounding)."
 }
 
 # ------------------------------------------------------------------- main ----
 say "FRESH SNI-CRCD bench  snippets='$SNIPPETS'  GPU=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null|head -1)"
 case "${1:-all}" in
   env)  build_env ;;
-  all)  build_env && inject_crcd && { for NAME in $SNIPPETS; do run_one "$NAME" || true; done; } ;;
-  *)    build_env && inject_crcd && run_one "$1" ;;
+  overnight)  # C1 4-cell diagnostic overnight: benchmark candidate + the three attribution arms
+    build_env && inject_crcd && { for V in faithful oracle depthpin noconst; do
+      run_one "${2:-C1_001}" "$V" || true; done; }
+    overnight_summary ;;
+  all)  build_env && inject_crcd && { for NAME in $SNIPPETS; do run_one "$NAME" faithful || true; done; } ;;
+  *)    build_env && inject_crcd && run_one "$1" "${2:-faithful}" ;;
 esac
 say "fresh bench complete -> $DRIVE_OUT"
