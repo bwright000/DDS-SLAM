@@ -44,30 +44,47 @@ build_env(){
   [ -d /content/drive/MyDrive ] || { say "FATAL: Drive not mounted"; return 1; }
   [ -d "$SNI_REPO/.git" ] || git clone -q "$SNI_URL" "$SNI_REPO" || { say "FATAL clone $SNI_URL"; return 1; }
   # reuse the proven sni conda env (env-only -> still 'base SNI'); restore cache or build once
-  if [ "${REBUILD_ENV:-0}" != 1 ] && [ -x "$SNI_PY" ] \
-     && PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d;assert torch.__version__.startswith('1.11')" 2>/dev/null; then
+  # readiness = conda sentinels (torch/pytorch3d) AND pip-stage sentinels (cv2 etc.). A failed
+  # `conda env create` dies at the PIP stage, leaving torch importable but cv2/skimage missing --
+  # probing torch alone declared that half-built env "ready" (bit us 2026-07-13).
+  env_ok(){ PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d,cv2,skimage,trimesh,open3d,wandb,timm;assert torch.__version__.startswith('1.11')" 2>/dev/null; }
+  # env-only repair (proven: fork b725dd4). Pristine environment.yaml lists unpinned `timm`,
+  # which resolves safetensors>=0.5 -> no py3.7 wheel -> Rust source build -> pip FATAL.
+  # timm is needed by the downloaded DINOv2 backbone (facebookresearch/dinov2 pins 0.9.2),
+  # so PIN it (don't drop); safetensors 0.3.3 = last series with cp37 wheels.
+  grep -q 'timm==0.9.2' "$SNI_REPO/environment.yaml" \
+    || sed -i 's/^\( *- \)timm$/\1timm==0.9.2\n\1safetensors==0.3.3/' "$SNI_REPO/environment.yaml"
+  if [ "${REBUILD_ENV:-0}" != 1 ] && [ -x "$SNI_PY" ] && env_ok; then
     say "sni env ready"
   else
     [ -x "$CONDA_ROOT/bin/conda" ] || { wget -qO /tmp/mc.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash /tmp/mc.sh -b -p "$CONDA_ROOT"; }
     "$CONDA_ROOT/bin/conda" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
     if [ -f "$ENV_CACHE" ]; then
       say "restoring sni env from Drive cache"
-      mkdir -p "$CONDA_ROOT/envs/$SNI_ENV" && tar -xzf "$ENV_CACHE" -C "$CONDA_ROOT/envs/$SNI_ENV" \
-        && PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d" 2>/dev/null || { rm -rf "$CONDA_ROOT/envs/$SNI_ENV"; }
+      mkdir -p "$CONDA_ROOT/envs/$SNI_ENV" && tar -xzf "$ENV_CACHE" -C "$CONDA_ROOT/envs/$SNI_ENV" && env_ok \
+        || { say "cache restore failed/incomplete -> rebuild"; rm -rf "$CONDA_ROOT/envs/$SNI_ENV"; }
     fi
-    if ! PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d" 2>/dev/null; then
-      # env-only repair (proven: fork b725dd4). Pristine environment.yaml lists unpinned `timm`,
-      # which resolves safetensors>=0.5 -> no py3.7 wheel -> Rust source build -> pip FATAL.
-      # timm is needed by the downloaded DINOv2 backbone (facebookresearch/dinov2 pins 0.9.2),
-      # so PIN it (don't drop); safetensors 0.3.3 = last series with cp37 wheels.
-      grep -q 'timm==0.9.2' "$SNI_REPO/environment.yaml" \
-        || sed -i 's/^\( *- \)timm$/\1timm==0.9.2\n\1safetensors==0.3.3/' "$SNI_REPO/environment.yaml"
-      rm -rf "$CONDA_ROOT/envs/$SNI_ENV"   # clear any partial env from a failed create (create errors on existing prefix)
+    # FAST PATH: conda stage intact (torch+pytorch3d import) but pip stage missing/partial ->
+    # just complete the pip deps from the (pinned) yaml into the existing env (~5 min, not ~35).
+    if ! env_ok && PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d" 2>/dev/null; then
+      say "pip-completing half-built env (conda stage OK, pip stage missing)"
+      python3 - "$SNI_REPO/environment.yaml" /tmp/sni_req.txt <<'PY' \
+        && PYTHONPATH= "$SNI_PY" -m pip install -q -r /tmp/sni_req.txt || say "WARN pip-complete failed -> full rebuild"
+import sys, yaml
+env = yaml.safe_load(open(sys.argv[1]))
+pips = next(d['pip'] for d in env['dependencies'] if isinstance(d, dict) and 'pip' in d)
+open(sys.argv[2], 'w').write('\n'.join(pips) + '\n')
+print(f"[pipfix] {len(pips)} pip deps -> {sys.argv[2]}")
+PY
+    fi
+    if ! env_ok; then
+      rm -rf "$CONDA_ROOT/envs/$SNI_ENV"   # clear any partial env (create errors on existing prefix)
       say "conda env create (~25-40 min; pytorch3d 0.7.1/cu113/py37 landmine; timm/safetensors pinned)"
       "$CONDA_ROOT/bin/conda" env create -n "$SNI_ENV" -f "$SNI_REPO/environment.yaml" || { say "FATAL env create"; return 1; }
-      say "caching env to Drive (one-time; later runs restore in ~2 min)"
-      tar -czf /tmp/sni_env.tar.gz -C "$CONDA_ROOT/envs/$SNI_ENV" . && mv -f /tmp/sni_env.tar.gz "$ENV_CACHE" || true
     fi
+    env_ok || { say "FATAL: env still incomplete after build (check pip output above)"; return 1; }
+    say "caching env to Drive (one-time; later runs restore in ~2 min)"
+    tar -czf /tmp/sni_env.tar.gz -C "$CONDA_ROOT/envs/$SNI_ENV" . && mv -f /tmp/sni_env.tar.gz "$ENV_CACHE" || true
   fi
   PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d;print('[env] torch',torch.__version__,'pytorch3d',pytorch3d.__version__,'GPU',torch.cuda.get_device_name(0))" || { say "FATAL env smoke"; return 1; }
   # seg assets: DINOv2 backbone CODE (always) + Replica head weights (use_gt_semantic loads dinov2_replica.pth)
