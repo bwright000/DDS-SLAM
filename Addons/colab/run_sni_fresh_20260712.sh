@@ -56,8 +56,16 @@ build_env(){
         && PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d" 2>/dev/null || { rm -rf "$CONDA_ROOT/envs/$SNI_ENV"; }
     fi
     if ! PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d" 2>/dev/null; then
-      say "conda env create (~25-40 min; pytorch3d 0.7.1/cu113/py37 landmine)"
+      # env-only repair (proven: fork b725dd4). Pristine environment.yaml lists unpinned `timm`,
+      # which resolves safetensors>=0.5 -> no py3.7 wheel -> Rust source build -> pip FATAL.
+      # timm is needed by the downloaded DINOv2 backbone (facebookresearch/dinov2 pins 0.9.2),
+      # so PIN it (don't drop); safetensors 0.3.3 = last series with cp37 wheels.
+      grep -q 'timm==0.9.2' "$SNI_REPO/environment.yaml" \
+        || sed -i 's/^\( *- \)timm$/\1timm==0.9.2\n\1safetensors==0.3.3/' "$SNI_REPO/environment.yaml"
+      rm -rf "$CONDA_ROOT/envs/$SNI_ENV"   # clear any partial env from a failed create (create errors on existing prefix)
+      say "conda env create (~25-40 min; pytorch3d 0.7.1/cu113/py37 landmine; timm/safetensors pinned)"
       "$CONDA_ROOT/bin/conda" env create -n "$SNI_ENV" -f "$SNI_REPO/environment.yaml" || { say "FATAL env create"; return 1; }
+      say "caching env to Drive (one-time; later runs restore in ~2 min)"
       tar -czf /tmp/sni_env.tar.gz -C "$CONDA_ROOT/envs/$SNI_ENV" . && mv -f /tmp/sni_env.tar.gz "$ENV_CACHE" || true
     fi
   fi
