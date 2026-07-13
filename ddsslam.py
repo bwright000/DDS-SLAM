@@ -449,7 +449,14 @@ class DDSSLAM():
                 indice_h = (_th.view(_P, 1, 1) + _dh).expand(_P, _k, _k).reshape(-1)
                 indice_w = (_tw.view(_P, 1, 1) + _dw).expand(_P, _k, _k).reshape(-1)
             else:
-                indice = self.select_samples(self.dataset.H, self.dataset.W, self.config['mapping']['sample'])
+                _dbp = getattr(self, '_dino_budget_p', None)
+                if float(self.config['training'].get('dino_budget_alpha', 0.0)) > 0.0 and _dbp is not None:
+                    # residual-guided allocation (see the stash in tracking_render): deforming
+                    # districts get up to alpha extra share; multinomial without replacement keeps
+                    # the (1-alpha) uniform floor intact.
+                    indice = torch.multinomial(_dbp, int(self.config['mapping']['sample']), replacement=False)
+                else:
+                    indice = self.select_samples(self.dataset.H, self.dataset.W, self.config['mapping']['sample'])
                 indice_h, indice_w = indice % (self.dataset.H), indice // (self.dataset.H)
             # TOOL BINARY MASK: drop tool pixels (canonical seg==2) from this current-frame map update -- the
             # DOMINANT mapper under curmap100 (~100 iters/frame vs global_BA ~4) -- so the static map is not
@@ -1065,6 +1072,23 @@ class DDSSLAM():
                     # min_regions = valid-district quorum below which we track (never freeze blind).
                     _qp = float(_ft.get('q_pct', 10.0)); _dpx = float(_ft.get('dis_px', 3.0))
                     _mr = int(_ft.get('min_regions', 4))
+                    # DINO-BUDGET (mapping-attention arm): stash the egomotion-removed deformation map
+                    # (1 - district trust) as a ray-allocation prior for current_frame_mapping. The vote
+                    # trust w is ~1 where a district fits the egomotion consensus and low where it
+                    # dissents (deforming tissue / tool), so (1-w) is exactly "deforming most, camera
+                    # motion removed". Mixed with a uniform floor: p = (1-a) + a*(1-w)/mean(1-w), so no
+                    # pixel ever drops below (1-a) of its uniform share (static anchor content keeps
+                    # feeding the map/pose). Column-major flatten (.T) matches select_samples' consumer
+                    # convention (h = i %% H). Refreshed every gated frame; a stale map is at most one
+                    # frame old. Default dino_budget_alpha 0 -> never stashed -> base byte-identical.
+                    _dba = float(self.config['training'].get('dino_budget_alpha', 0.0))
+                    if _dba > 0.0:
+                        _bm = (1.0 - _vw).astype(np.float32)
+                        if _vinfo is not None and float(_bm.mean()) > 1e-6:
+                            _bp = torch.from_numpy(_bm.T.copy()).reshape(-1)
+                            self._dino_budget_p = (_bp / _bp.mean()) * _dba + (1.0 - _dba)
+                        else:
+                            self._dino_budget_p = None   # degenerate chamber -> uniform this frame
                     if _vinfo is None:
                         _q10, _dis3 = 99.0, 0.0            # degenerate chamber -> track (never freeze blind)
                     else:

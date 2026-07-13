@@ -1,0 +1,12 @@
+# DINO-BUDGET sweep arm: residual-guided mapping ray allocation on the final model.
+# One change vs calm_v3gate: current_frame_mapping samples pixels with
+# p = (1-a)*uniform + a*(1-vote_trust)/mean -- the gate's egomotion-removed district
+# residual redirects up to a of the ray budget toward the most-deforming content,
+# with a hard (1-a) uniform floor so static anchor regions are never starved.
+# Pre-registered (E3_005 = driver): render should move (LPIPS before PSNR, base
+# 24.20/0.455); ATE must hold within seed noise (3.63 +/- ~0.4); C1 guard runs later
+# on the winning alpha. Insertion point = current_frame_mapping only (the dominant
+# mapper, ~100 iters/frame); keyframe/BA allocation deferred until this pays.
+inherit_from: configs/CRCD/crcd_abl_calm_v3gate_rect.yaml
+training:
+  dino_budget_alpha: 0.50
