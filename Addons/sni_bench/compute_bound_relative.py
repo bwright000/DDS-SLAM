@@ -76,7 +76,10 @@ def main():
     K = read_calib(calib)
     fx, fy, cx, cy = K['fx'], K['fy'], K['cx'], K['cy']
 
-    deps = {_fid(p): p for p in glob.glob(os.path.join(a.data_dir, 'depth', '*l.png'))}
+    # rect_staged depth is NNNNNN.png (no 'l'); local raw-left era is NNNNNNl.png
+    dep_paths = (glob.glob(os.path.join(a.data_dir, 'depth', '*l.png'))
+                 or glob.glob(os.path.join(a.data_dir, 'depth', '[0-9]*.png')))
+    deps = {_fid(p): p for p in dep_paths}
     ids = sorted(deps)
     if a.timesteps:
         ids = ids[:a.timesteps]

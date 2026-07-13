@@ -38,11 +38,17 @@ class CRCD(BaseDataset):  # noqa: F821  (BaseDataset from the enclosing datasets
     def __init__(self, cfg, args, scale, device='cuda:0'):
         super(CRCD, self).__init__(cfg, args, scale, device)
 
-        # NOTE naming asymmetry in CRCD: rgb/depth are left-of-stereo "NNNNNNl.png"; masks are
-        # "NNNNNN.png" (no 'l'). Pairing is by frame id (_fid), so the globs differ but align.
+        # TWO on-disk layouts, same content (pairing is by frame id, so naming may differ per modality):
+        #   rect_staged v2 tar (THE benchmark inputs, what every other method consumed):
+        #     video_frames/NNNNNNl.png | depth/NNNNNN.png (metric stereo-anchored MoGe) |
+        #     semantic_class/NNNNNN.png = RAW 4-class {0 bg,1 liver,2 gallbladder,3 tool}.
+        #     masks/ there is a BINARY tool mask (0/255) -- NEVER read it as semantics.
+        #   local repo data/CRCD/<name> (raw-left era): depth/NNNNNNl.png, masks/ = 4-class {0..3}.
         colors = sorted(glob.glob(f'{self.input_folder}/video_frames/*l.png'), key=_fid)
-        depths = sorted(glob.glob(f'{self.input_folder}/depth/*l.png'), key=_fid)
-        masks = sorted(glob.glob(f'{self.input_folder}/masks/*.png'), key=_fid)
+        depths = (sorted(glob.glob(f'{self.input_folder}/depth/*l.png'), key=_fid)
+                  or sorted(glob.glob(f'{self.input_folder}/depth/[0-9]*.png'), key=_fid))
+        masks = (sorted(glob.glob(f'{self.input_folder}/semantic_class/*.png'), key=_fid)
+                 or sorted(glob.glob(f'{self.input_folder}/masks/*.png'), key=_fid))
 
         # pair the modalities BY FRAME ID (video_frames also holds *r; depth/masks are left-only) so
         # rgb[i]/depth[i]/mask[i] are the SAME frame -- a positional zip would silently misalign.
@@ -54,6 +60,18 @@ class CRCD(BaseDataset):  # noqa: F821  (BaseDataset from the enclosing datasets
         self.semantic_paths = [mby[i] for i in ids]
         self.frame_ids = ids
         self.n_img = len(ids)
+
+        # HARD GUARD: semantics must be the RAW 4-class map. This trips loudly if the glob ever
+        # lands on the binary 0/255 tool mask (rect staging's masks/) or a pre-remapped source.
+        _m0 = cv2.imread(self.semantic_paths[0], cv2.IMREAD_UNCHANGED)
+        if _m0 is None:
+            raise FileNotFoundError(self.semantic_paths[0])
+        if _m0.ndim == 3:
+            _m0 = _m0[..., 0]
+        _ids = set(np.unique(_m0).tolist())
+        assert _ids <= {0, 1, 2, 3}, (
+            f"CRCD semantics: raw ids {sorted(_ids)} in {self.semantic_paths[0]} are not the "
+            f"4-class map {{0,1,2,3}} (binary tool mask or pre-remapped source?)")
 
         self.path = cfg['model']['path']
         self.load_poses(f'{self.input_folder}/groundtruth.txt')

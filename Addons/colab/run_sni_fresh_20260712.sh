@@ -29,8 +29,9 @@ CONDA_ROOT=${CONDA_ROOT:-/content/miniconda3}
 SNI_ENV=${SNI_ENV:-sni}; SNI_PY="$CONDA_ROOT/envs/$SNI_ENV/bin/python"
 ENV_CACHE=${ENV_CACHE:-/content/drive/MyDrive/dds_cache/sni_env.tar.gz}
 SNI_GDRIVE_ID=${SNI_GDRIVE_ID:-1BCu8bCGKG9HmnLFbyx7DIHI0slgkeo4h}  # authors' DINOv2 folder (from run_snislam.sh)
-# native CRCD source (video_frames/ depth/ masks/ groundtruth.txt rectified_calib.txt), per snippet:
-CRCD_SRC=${CRCD_SRC:-/content/drive/MyDrive/Datasets/CRCD-Published-Native}
+# CRCD inputs = the rect_staged v2 tars: the SAME rectified frames + metric stereo-anchored MoGe
+# depth + 4-class semantic_class every other benchmarked method consumed (comparability requirement).
+STAGE_CACHE_DIR=${STAGE_CACHE_DIR:-/content/drive/MyDrive/dds_cache/rect_staged}; STAGEVER=${STAGEVER:-v2}
 SNIPPETS=${SNIPPETS:-"C1_001"}
 DRIVE_OUT=${DRIVE_OUT:-/content/drive/MyDrive/Outputs/SNI_fresh_$(date +%Y%m%d)}
 STORE_DEV=${SNI_STORE_DEVICE:-cuda:0}
@@ -100,28 +101,38 @@ PY
   say "inject DONE"
 }
 
-# ------------------------------------------- stage native CRCD (per snippet) --
-stage_native(){ local NAME=$1 SRC="$CRCD_SRC/$NAME" SD="$SNI_REPO/data/CRCD/$NAME"
-  [ -d "$SRC" ] || { say "FATAL: no native CRCD at $SRC (need video_frames/ depth/ masks/ groundtruth.txt rectified_calib.txt)"; return 1; }
+# ---------------------------------- stage rect_bench v2 tar (per snippet) ----
+# Restores the cached rectified staging (rectified left frames + METRIC stereo-anchored MoGe depth
+# NNNNNN.png @1e4 + semantic_class/ RAW 4-class {0,1,2,3} + groundtruth + rectified_calib) and links
+# it into the pristine repo's data dir. NOTE: the staging's masks/ is a BINARY tool mask -- the
+# dataloader reads semantic_class/ for semantics (and hard-asserts raw ids <= 3).
+stage_rect(){ local NAME=$1 DD="/content/rect_staged/$NAME" SD="$SNI_REPO/data/CRCD/$NAME"
+  if [ ! -f "$DD/.STAGED" ]; then
+    local TGZ="$STAGE_CACHE_DIR/${NAME}_$STAGEVER.tar"
+    [ -f "$TGZ" ] || { say "FATAL: no stage cache $TGZ (the rectified bench staging every other method used; run the rect_bench staging for $NAME first)"; return 1; }
+    mkdir -p /content/rect_staged && tar -xf "$TGZ" -C /content/rect_staged || { say "FATAL untar"; return 1; }
+    [ -f "$DD/.STAGED" ] || { say "FATAL: restored tar lacks .STAGED"; return 1; }
+  fi
   mkdir -p "$SD"
-  for sub in video_frames depth masks; do
-    [ -d "$SRC/$sub" ] || { say "FATAL: $SRC missing $sub/"; return 1; }
-    ln -sfn "$(readlink -f "$SRC/$sub")" "$SD/$sub"
+  for sub in video_frames depth semantic_class masks; do
+    [ -d "$DD/$sub" ] && ln -sfn "$DD/$sub" "$SD/$sub"
   done
   for f in groundtruth.txt rectified_calib.txt; do
-    [ -f "$SRC/$f" ] || { say "FATAL: $SRC missing $f"; return 1; }
-    ln -sf "$(readlink -f "$SRC/$f")" "$SD/$f"
+    [ -f "$DD/$f" ] || { say "FATAL: $DD missing $f"; return 1; }
+    ln -sf "$DD/$f" "$SD/$f"
   done
-  local NC ND NM
-  NC=$(ls "$SD/video_frames"/*l.png 2>/dev/null | wc -l); ND=$(ls "$SD/depth"/*l.png 2>/dev/null | wc -l); NM=$(ls "$SD/masks"/*.png 2>/dev/null | wc -l)
-  say "  $NAME staged: rgb(left)=$NC depth=$ND masks=$NM"
-  [ "$NC" -gt 0 ] && [ "$ND" -gt 0 ] && [ "$NM" -gt 0 ] || { say "FATAL: empty modality"; return 1; }
+  local NC ND NS
+  NC=$(ls "$SD/video_frames"/*l.png 2>/dev/null | wc -l)
+  ND=$(ls "$SD/depth"/[0-9]*.png 2>/dev/null | wc -l)
+  NS=$(ls "$SD/semantic_class"/*.png 2>/dev/null | wc -l)
+  say "  $NAME staged (rect $STAGEVER): rgb=$NC depth=$ND semantic_class=$NS"
+  [ "$NC" -gt 0 ] && [ "$ND" -gt 0 ] && [ "$NS" -gt 0 ] || { say "FATAL: empty modality"; return 1; }
 }
 
 # ---------------------------------------------------------- run one snippet --
 run_one(){ local NAME=$1 SD="$SNI_REPO/data/CRCD/$NAME" CFG="configs/CRCD/${NAME}.yaml" DST="$DRIVE_OUT/$NAME"
   mkdir -p "$DST"
-  stage_native "$NAME" || { echo FAILED > "$DST/status.txt"; return 1; }
+  stage_rect "$NAME" || { echo FAILED > "$DST/status.txt"; return 1; }
   # per-snippet config (relative-frame bound) inheriting crcd.yaml
   python3 "$REPO/Addons/sni_bench/compute_bound_relative.py" --data_dir "$SD" \
      --out "$SNI_REPO/$CFG" --name "$NAME" --input_folder "data/CRCD/$NAME" \
