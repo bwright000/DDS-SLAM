@@ -59,11 +59,18 @@ build_env(){
   else
     [ -x "$CONDA_ROOT/bin/conda" ] || { wget -qO /tmp/mc.sh https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh && bash /tmp/mc.sh -b -p "$CONDA_ROOT"; }
     "$CONDA_ROOT/bin/conda" tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main --channel https://repo.anaconda.com/pkgs/r 2>/dev/null || true
-    if [ -f "$ENV_CACHE" ]; then
-      say "restoring sni env from Drive cache"
-      mkdir -p "$CONDA_ROOT/envs/$SNI_ENV" && tar -xzf "$ENV_CACHE" -C "$CONDA_ROOT/envs/$SNI_ENV" && env_ok \
-        || { say "cache restore failed/incomplete -> rebuild"; rm -rf "$CONDA_ROOT/envs/$SNI_ENV"; }
-    fi
+    # openexr==1.3.7 is an sdist -> needs the OpenEXR headers (old runbook did this too; without it
+    # the pip stage dies at 'Failed building wheel for openexr')
+    sudo apt-get -qq update 2>/dev/null; sudo apt-get -qq install -y libopenexr-dev 2>/dev/null || true
+    # restore candidates: our own cache, then the PROVEN fork-bench env (sni_env_bench.tar.gz,
+    # built+cached by run_snislam.sh on 2026-07-11 -- env-only, no method code, so reuse is clean)
+    for EC in "$ENV_CACHE" /content/drive/MyDrive/dds_cache/sni_env_bench.tar.gz; do
+      [ -f "$EC" ] || continue
+      say "restoring sni env from Drive cache: $EC ($(du -h "$EC" 2>/dev/null | cut -f1))"
+      rm -rf "$CONDA_ROOT/envs/$SNI_ENV"; mkdir -p "$CONDA_ROOT/envs/$SNI_ENV"
+      tar -xzf "$EC" -C "$CONDA_ROOT/envs/$SNI_ENV" && env_ok && { say "cache OK"; break; }
+      say "cache restore failed/incomplete -> next candidate"; rm -rf "$CONDA_ROOT/envs/$SNI_ENV"
+    done
     # FAST PATH: conda stage intact (torch+pytorch3d import) but pip stage missing/partial ->
     # just complete the pip deps from the (pinned) yaml into the existing env (~5 min, not ~35).
     if ! env_ok && PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d" 2>/dev/null; then
@@ -83,8 +90,8 @@ PY
       "$CONDA_ROOT/bin/conda" env create -n "$SNI_ENV" -f "$SNI_REPO/environment.yaml" || { say "FATAL env create"; return 1; }
     fi
     env_ok || { say "FATAL: env still incomplete after build (check pip output above)"; return 1; }
-    say "caching env to Drive (one-time; later runs restore in ~2 min)"
-    tar -czf /tmp/sni_env.tar.gz -C "$CONDA_ROOT/envs/$SNI_ENV" . && mv -f /tmp/sni_env.tar.gz "$ENV_CACHE" || true
+    [ -f "$ENV_CACHE" ] || { say "caching env to Drive (one-time; later runs restore in ~2 min)"
+      tar -czf /tmp/sni_env.tar.gz -C "$CONDA_ROOT/envs/$SNI_ENV" . && mv -f /tmp/sni_env.tar.gz "$ENV_CACHE" || true; }
   fi
   PYTHONPATH= "$SNI_PY" -c "import torch,pytorch3d;print('[env] torch',torch.__version__,'pytorch3d',pytorch3d.__version__,'GPU',torch.cuda.get_device_name(0))" || { say "FATAL env smoke"; return 1; }
   # seg assets: DINOv2 backbone CODE (always) + Replica head weights (use_gt_semantic loads dinov2_replica.pth)
