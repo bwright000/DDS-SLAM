@@ -1,0 +1,8 @@
+# LEAVE-ONE-OUT: final model (calm_v3gate) MINUS the uncertainty head.
+# One change vs the final: uncertainty.enable false (no sigma^2 head is built; the
+# tracking down-weight and mapping NLL vanish). Gate + freeze_ba + calm + v3 districts stay.
+# Judges what the uncertainty is worth INSIDE the shipped configuration (the additive
+# ladder judged it on top of base, where it was neutral alone).
+inherit_from: configs/CRCD/crcd_abl_calm_v3gate_rect.yaml
+uncertainty:
+  enable: false

@@ -1,0 +1,6 @@
+# LEAVE-ONE-OUT: final model (calm_v3gate) MINUS the motion-attribution gate.
+# One change vs the final: flow_track.enable false (no districts, no votes, no freeze,
+# and freeze_ba has no frozen keyframes to re-pin). Uncertainty + calm stay.
+inherit_from: configs/CRCD/crcd_abl_calm_v3gate_rect.yaml
+flow_track:
+  enable: false

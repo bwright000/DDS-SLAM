@@ -1,0 +1,11 @@
+# LEAVE-ONE-OUT: final model (calm_v3gate) MINUS the calm BA configuration.
+# One change vs the final: the two calm overrides revert to the pre-calm values
+# (mapping pose lr back to 1e-4 = the Adam noise floor returns; const_speed back on).
+# Uncertainty + gate + freeze_ba + v3 districts stay. This isolates the E_3/005
+# give-back seen between the additive ladder's motion-attribution row and the final.
+inherit_from: configs/CRCD/crcd_abl_calm_v3gate_rect.yaml
+mapping:
+  lr_rot: 0.0001
+  lr_trans: 0.0001
+tracking:
+  const_speed: true
