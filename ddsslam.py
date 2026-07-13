@@ -454,7 +454,7 @@ class DDSSLAM():
                     # residual-guided allocation (see the stash in tracking_render): deforming
                     # districts get up to alpha extra share; multinomial without replacement keeps
                     # the (1-alpha) uniform floor intact.
-                    indice = torch.multinomial(_dbp, int(self.config['mapping']['sample']), replacement=False)
+                    indice = torch.multinomial(_dbp, int(self.config['mapping']['sample']), replacement=False).cpu()
                 else:
                     indice = self.select_samples(self.dataset.H, self.dataset.W, self.config['mapping']['sample'])
                 indice_h, indice_w = indice % (self.dataset.H), indice // (self.dataset.H)
@@ -1086,7 +1086,9 @@ class DDSSLAM():
                         _bm = (1.0 - _vw).astype(np.float32)
                         if _vinfo is not None and float(_bm.mean()) > 1e-6:
                             _bp = torch.from_numpy(_bm.T.copy()).reshape(-1)
-                            self._dino_budget_p = (_bp / _bp.mean()) * _dba + (1.0 - _dba)
+                            # kept on-device: CPU multinomial at 921k categories costs ~52ms/draw
+                            # (~+23min/run at 100 iters/frame); CUDA draw is ~ms.
+                            self._dino_budget_p = ((_bp / _bp.mean()) * _dba + (1.0 - _dba)).to(self.device)
                         else:
                             self._dino_budget_p = None   # degenerate chamber -> uniform this frame
                     if _vinfo is None:
