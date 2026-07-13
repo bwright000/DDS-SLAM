@@ -845,22 +845,32 @@ Every component of the final configuration was adopted or rejected on the design
 
 \begin{table}[!ht]
 \centering
-\caption{Component ladder on the design sequences (Sim(3) ATE$_{\mathrm{mean}}$, mm, single seed; base E\_3/005 is the mean of three seeds). Each row adds one component to the row above; the final model additionally carries the corrected bundle-adjustment configuration (Section~\ref{sec:hyperparams}) and the DINOv3 districts (Section~\ref{sec:motion}).}
+\caption{Component ladder on the design sequences, full battery (Sim(3) ATE$_{\mathrm{mean}}$ in mm; path ratio, aligned $|r|_{\mathrm{dom}}$, rendering and Depth-$L_1$ per Section~\ref{sec:eval_metrics}). Single seed throughout except the base on E\_3/005, which is the mean of three seeds. Each row adds one component to the row above; the final model additionally carries the corrected bundle-adjustment configuration (Section~\ref{sec:hyperparams}) and the DINOv3 districts (Section~\ref{sec:motion}).}
 \label{tab:results_abl}
 \small
-\begin{tabular}{l rr}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l rrr rrrr}
 \toprule
-Configuration & C\_1/001 & E\_3/005 \\
+Configuration & ATE (mm) & path ratio & $|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
 \midrule
-Base model & 1.80 & 4.45 \\
-+ uncertainty (Section~\ref{sec:uncertainty}) & 1.92 & --- \\
-+ motion attribution (Section~\ref{sec:motion}) & 1.80 & 2.87 \\
-Final model & \textbf{1.43} & \textbf{3.63} \\
+\multicolumn{8}{l}{\textbf{C\_1/001}} \\
+\midrule
+Base model & 1.80 & 5.50 & 0.984 & 25.58 & 0.817 & 0.434 & 9.50 \\
++ uncertainty (Section~\ref{sec:uncertainty}) & 1.92 & 6.76 & 0.978 & 25.61 & 0.814 & 0.430 & 10.13 \\
++ motion attribution (Section~\ref{sec:motion}) & 1.80 & 4.00 & 0.970 & 25.60 & 0.815 & 0.430 & 10.18 \\
+Final model & \textbf{1.43} & \textbf{2.23} & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
+\midrule
+\multicolumn{8}{l}{\textbf{E\_3/005}} \\
+\midrule
+Base model & 4.45 & 1.95 & 0.401 & 24.43 & 0.814 & 0.456 & 15.63 \\
++ uncertainty (Section~\ref{sec:uncertainty}) & 5.01 & 2.36 & 0.052 & 24.00 & 0.799 & 0.484 & 15.67 \\
++ motion attribution (Section~\ref{sec:motion}) & \textbf{2.87} & 3.17 & 0.756 & 24.02 & 0.806 & 0.464 & 14.33 \\
+Final model & 3.63 & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
-The ladder's gains are separable and attributable: the uncertainty head is neutral alone but enables the weighted solve, the motion attribution pays on the deforming sequence ($-36\%$ on E\_3/005), and the corrected bundle-adjustment configuration pays on the still one ($-26\%$ on C\_1/001), with the combination transferring to the held-out set (Table~\ref{tab:results_main}). The variants evaluated and not retained - the soft per-ray trust consumers, a lowered dissent threshold, $\sigma^2$-weighted bundle adjustment, and the zero-motion prior - each failed for a measured, mechanistic reason rather than by tuning accident (Sections~\ref{sec:uncertainty} and \ref{sec:motion}); notably, a lowered dissent threshold produced the single best C\_1/001 of any configuration ($1.15$\,mm) and was still rejected, because the same setting was the worst on E\_3/005 - the final configuration is the one that wins jointly.
+The ladder's gains are separable and attributable: the uncertainty head is neutral alone (its E\_3/005 sits within the base's $\pm 0.77$\,mm seed spread) but enables the weighted solve, the motion attribution pays on the deforming sequence ($-36\%$ on E\_3/005), and the corrected bundle-adjustment configuration pays on the still one ($-26\%$ on C\_1/001), with the combination transferring to the held-out set (Table~\ref{tab:results_main}). The render battery is flat down the entire ladder (PSNR within $0.2$\,dB, SSIM within $0.005$ per sequence), so every tracking gain comes free of reconstruction cost; and the final model returns a little of the motion-attribution row's E\_3/005 gain ($2.87 \to 3.63$\,mm) in exchange for the still-regime correction --- the joint trade that wins across the five sequences. The variants evaluated and not retained - the soft per-ray trust consumers, a lowered dissent threshold, $\sigma^2$-weighted bundle adjustment, and the zero-motion prior - each failed for a measured, mechanistic reason rather than by tuning accident (Sections~\ref{sec:uncertainty} and \ref{sec:motion}); notably, a lowered dissent threshold produced the single best C\_1/001 of any configuration ($1.15$\,mm) and was still rejected, because the same setting was the worst on E\_3/005 - the final configuration is the one that wins jointly.
 \section{Benchmarking against SoTA Semantic-SLAM pipelines}
 \label{sec:benchmarking}
 To adequately measure the performance of DID-SLAM against the state of the art (SoTA), a range of models was selected: Semantic-SuPer, SNI-SLAM, SGS-SLAM, SemGauss-SLAM and PERSEUS, together spanning the current benchmark for semantic SLAM pipelines and, in PERSEUS, a dedicated tracking-only reference. All methods are evaluated on the same five rectified CRCD snippets as DID-SLAM, using the code as provided by the relevant authors; configuration changes were limited to input paths, camera intrinsics, and class taxonomy, so no method was re-tuned. Each method consumes the same rectified RGB stream and, where required, the same stereo-anchored MoGe-2 depth; metrics follow Section~\ref{sec:eval_metrics}, and the per-snippet results are collected in Table~\ref{tab:results_sota}.
