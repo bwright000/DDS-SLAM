@@ -574,10 +574,13 @@ However, running both raw backbones end-to-end on the evaluation sequences, the 
 
 \paragraph{Zero-motion prior (ablated).} The freeze is a hard, per-frame decision, so a softer companion was evaluated for the drift on frames that are tracked rather than frozen. On near-static sequences the pose solve still over-travels on frames the gate does not freeze - either frames that are still but sit just below the threshold, or individual pose axes that the narrow endoscopic geometry leaves weakly observable. A zero-motion prior penalises per-frame pose change directly, adding
 egin{equation}
-    \mathcal{L}_{	ext{zm}} = \lambda_r \lVert \Delta\mathbf{r} Vert^2 + \lambda_t \lVert \Delta\mathbf{t} Vert^2
+    \mathcal{L}_{	ext{zm}} = \lambda_r \lVert \Delta\mathbf{r} 
+Vert^2 + \lambda_t \lVert \Delta\mathbf{t} 
+Vert^2
     \label{eq:zeromotion}
 \end{equation}
-to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the rotation and translation of the current pose relative to the previous committed pose. The penalty is the same in every direction, but its effect is not. The SDF data term has its own per-axis curvature (approximately the squared flow Jacobian), so an observable axis with a steep gradient overrules the prior and keeps the real motion, while a flat, unobservable axis is pinned towards zero. The prior is added before the best-iterate selection so that it binds, and $\lambda_r$ and $\lambda_t$ are calibrated against the SDF loss scale. Evaluated on the design sequences, the prior brought no further gain: the drift it targets is already removed by the freeze and the corrected bundle-adjustment configuration (Table~ef{tab:results_abl}), and it is not retained in the final configuration.
+to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the rotation and translation of the current pose relative to the previous committed pose. The penalty is the same in every direction, but its effect is not. The SDF data term has its own per-axis curvature (approximately the squared flow Jacobian), so an observable axis with a steep gradient overrules the prior and keeps the real motion, while a flat, unobservable axis is pinned towards zero. The prior is added before the best-iterate selection so that it binds, and $\lambda_r$ and $\lambda_t$ are calibrated against the SDF loss scale. Evaluated on the design sequences, the prior brought no further gain: the drift it targets is already removed by the freeze and the corrected bundle-adjustment configuration (Table~
+ef{tab:results_abl}), and it is not retained in the final configuration.
 
 \FloatBarrier
 \begin{figure}[!ht]
@@ -747,7 +750,7 @@ mean (5) & & --- & 4.86 & \textbf{3.34} & $-31\%$ & 3.32 & 0.839 & 24.94 & 0.825
 \FloatBarrier
 DID-SLAM improves tracking on all five sequences, with the largest gain on a sequence it never saw during development ($-51\%$ on C\_2/001, alongside $-19\%$ and $-39\%$ on the other two held-out sequences; the longest of these, G\_3/001 at 1987 frames, produces the best result of the five at $2.15$\,mm). This behaviour was expected - the held-out set is $54$--$82\%$ camera-still, which is the regime the freeze, its bundle-adjustment re-pin and the corrected pose step were built to handle. The shape of the trajectory improves alongside its error: the aligned dominant-axis correlation on the held-out sequences reaches $0.95$--$0.98$ (C\_2, G\_3) against $0.86$--$0.93$ for the base, and the path ratio on C\_2/001 falls from $6.3$ to $1.9$. As Figure~\ref{fig:did_traj_c2} shows, the base estimate oscillates around the true path while the DID-SLAM estimate follows it.
 
-These gains carry no observable reconstruction cost. Across the five sequences the rendering battery stays level with the base (mean PSNR $24.9$, LPIPS $0.42$), consistent with the design choice to keep the map training on frozen frames. The deforming sequence remains the hardest: E\_3/005 improves by $18\%$ but keeps the weakest shape correlation ($0.46$) and the widest single-seed spread of the five. Most of its remaining error sits in a segment where the true camera motion falls below the optical-flow noise floor; no threshold on a flow statistic can recover motion the flow cannot see, and this sets the practical limit of the gate. Both points are returned to in Section~\ref{sec:discussion}.
+These gains carry no observable reconstruction cost. Across the five sequences the rendering battery stays level with the base (mean PSNR $24.9$, LPIPS $0.42$), consistent with the design choice to keep the map training on frozen frames. The base does score better on Depth-$L_1$, and the gap tracks its over-travel: an unconstrained pose acts as extra degrees of freedom that absorb the frame-to-frame inconsistency of the monocular depth, improving input-versus-output self-consistency while corrupting the trajectory --- on G\_3/001, where the base over-travels most ($18.3\times$ vs $5.9\times$), the Depth-$L_1$ gap is widest, while on E\_3/005, where the path ratios are comparable, the two are equal. The deforming sequence remains the hardest: E\_3/005 improves by $18\%$ but keeps the weakest shape correlation ($0.46$) and the widest single-seed spread of the five. Most of its remaining error sits in a segment where the true camera motion falls below the optical-flow noise floor; no threshold on a flow statistic can recover motion the flow cannot see, and this sets the practical limit of the gate. Both points are returned to in Section~\ref{sec:discussion}.
 
 \begin{figure}[!ht]
     \centering
@@ -762,11 +765,11 @@ These comparisons are reported at a single seed; the three-seed re-run of the fi
 \subsection{Comparison with the SoTA benchmark}
 \label{sec:results_sota}
 
-Table~\ref{tab:results_sota} places DID-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, split per snippet so each sequence's regime --- camera-still, large-travel, deforming --- can be read directly. The methods differ in what they natively expose, and three caveats carry through the table: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph ($\dagger$); PERSEUS and SemGauss-SLAM report ATE$_{\mathrm{mean}}$, their exported statistic ($\ddagger$); and SGS-SLAM renders only its keyframe set ($*$) and exports no comparable trajectory. SNI-SLAM's benchmark run is in flight and its rows are reported as pending.
+Table~\ref{tab:results_sota} places DID-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, split per snippet so each sequence's regime --- camera-still, large-travel, deforming --- can be read directly. The methods differ in what they natively expose, and three caveats carry through the table: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph ($\dagger$); PERSEUS and SemGauss-SLAM report ATE$_{\mathrm{mean}}$, their exported statistic ($\ddagger$); and SGS-SLAM renders only its keyframe set ($*$). SNI-SLAM's benchmark run is in flight and its rows are reported as pending.
 
 \begin{table}[!ht]
 \centering
-\caption{DID-SLAM against the benchmarked systems, one sub-table per snippet. Tracking is Sim(3) ATE$_{\mathrm{RMSE}}$ in mm except where marked ($\ddagger$ ATE$_{\mathrm{mean}}$, the method's exported statistic; $\dagger$ camera-motion proxy, not a native pose); path ratio and aligned $|r|_{\mathrm{dom}}$ per Section~\ref{sec:eval_metrics}. SGS-SLAM renders keyframes only ($*$). Depth-$L_1$ is per-model self-consistency (Section~\ref{sec:eval_depth}) and is not comparable across methods. Dashes: not exported by the method.}
+\caption{DID-SLAM against the benchmarked systems, one sub-table per snippet. Tracking is Sim(3) ATE$_{\mathrm{RMSE}}$ in mm except where marked ($\ddagger$ ATE$_{\mathrm{mean}}$, the method's exported statistic; $\dagger$ camera-motion proxy, not a native pose); path ratio and aligned $|r|_{\mathrm{dom}}$ per Section~\ref{sec:eval_metrics}. SGS-SLAM renders keyframes only ($*$); its trajectory is native (SplaTAM camera state). Depth-$L_1$ is per-model self-consistency (Section~\ref{sec:eval_depth}) and is not comparable across methods. Dashes: not exported by the method.}
 \label{tab:results_sota}
 \small
 \resizebox{\textwidth}{!}{%
@@ -774,54 +777,54 @@ Table~\ref{tab:results_sota} places DID-SLAM against the benchmarked systems of 
 \toprule
 Method & ATE (mm) & path ratio & $|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
 \midrule
-\multicolumn{8}{l}{\textbf{C\_1/001} --- 360 frames, design; camera-still with large deformations} \\
+\multicolumn{8}{l}{\textbf{C\_1/001}} \\
 \midrule
 \textbf{DID-SLAM (ours)} & \textbf{1.60} & 2.23 & 0.985 & 25.49 & \textbf{0.813} & 0.437 & 10.14 \\
 DDS-SLAM (base)~\cite{Shan2024} & 2.64 & 8.11 & 0.943 & \textbf{25.91} & 0.804 & 0.448 & 7.78 \\
 PERSEUS$^{\ddagger}$ & 1.97 & 3.31 & 0.97 & --- & --- & --- & --- \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 3.06 & 18.86 & 0.950 & 12.17 & 0.399 & 0.709 & 3.54 \\
 SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 5.98 & 3.25 & 0.76 & 20.57 & 0.771 & 0.344 & 22.5 \\
-SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 22.45 & 0.803 & \textbf{0.315} & --- \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & 4.18 & 3.39 & 0.913 & 22.45 & 0.803 & \textbf{0.315} & 23.5 \\
 SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
 \midrule
-\multicolumn{8}{l}{\textbf{C\_2/001} --- 730 frames, held-out; largest camera travel} \\
+\multicolumn{8}{l}{\textbf{C\_2/001}} \\
 \midrule
 \textbf{DID-SLAM (ours)} & 3.93 & 1.88 & 0.951 & 21.84 & \textbf{0.762} & \textbf{0.481} & 11.68 \\
 DDS-SLAM (base)~\cite{Shan2024} & 6.78 & 8.66 & 0.627 & \textbf{22.57} & 0.728 & 0.552 & 8.72 \\
 PERSEUS$^{\ddagger}$ & \textbf{3.64} & 2.93 & 0.98 & --- & --- & --- & --- \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & \multicolumn{7}{c}{\emph{halts during the gallbladder retraction}} \\
 SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 7.25 & 13.14 & 0.80 & 16.31 & 0.674 & 0.533 & 44.2 \\
-SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 17.52 & 0.701 & 0.504 & --- \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & 7.64 & 8.15 & 0.938 & 17.52 & 0.701 & 0.504 & 41.6 \\
 SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
 \midrule
-\multicolumn{8}{l}{\textbf{C\_3/001} --- 1527 frames, held-out; long, predominantly still} \\
+\multicolumn{8}{l}{\textbf{C\_3/001}} \\
 \midrule
 \textbf{DID-SLAM (ours)} & \textbf{7.61} & 3.05 & 0.820 & \textbf{24.39} & \textbf{0.828} & \textbf{0.424} & 10.67 \\
 DDS-SLAM (base)~\cite{Shan2024} & \multicolumn{7}{c}{\emph{pending (run incomplete at the time of writing)}} \\
 PERSEUS$^{\ddagger}$ & 10.69 & 0.96 & 0.48 & --- & --- & --- & --- \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 9.76 & 23.50 & 0.816 & 8.54 & 0.242 & 0.868 & 5.75 \\
 SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 8.14 & 23.60 & 0.90 & 17.78 & 0.783 & 0.503 & 24.6 \\
-SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 18.78 & 0.798 & 0.508 & --- \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & 9.31 & 13.04 & 0.619 & 18.78 & 0.798 & 0.508 & 26.1 \\
 SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
 \midrule
-\multicolumn{8}{l}{\textbf{E\_3/005} --- 265 frames, design; large, fast tissue and tool motion} \\
+\multicolumn{8}{l}{\textbf{E\_3/005}} \\
 \midrule
 \textbf{DID-SLAM (ours)} & \textbf{4.69} & 3.52 & 0.463 & 24.20 & \textbf{0.812} & 0.455 & 15.65 \\
 DDS-SLAM (base)~\cite{Shan2024} & 5.31 & 2.62 & 0.480 & \textbf{24.93} & 0.801 & 0.483 & 15.44 \\
 PERSEUS$^{\ddagger}$ & 4.84 & 0.51 & 0.18 & --- & --- & --- & --- \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 5.79 & 5.60 & 0.587 & 10.90 & 0.266 & 0.807 & 7.06 \\
 SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & 5.12 & 1.70 & 0.34 & 17.31 & 0.726 & 0.509 & 50.0 \\
-SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 19.15 & 0.780 & \textbf{0.397} & --- \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & 5.33 & 1.82 & 0.253 & 19.15 & 0.780 & \textbf{0.397} & 38.1 \\
 SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
 \midrule
-\multicolumn{8}{l}{\textbf{G\_3/001} --- 1987 frames, held-out; long close-up, predominantly still} \\
+\multicolumn{8}{l}{\textbf{G\_3/001}} \\
 \midrule
 \textbf{DID-SLAM (ours)} & \textbf{2.28} & 5.93 & 0.976 & 28.78 & \textbf{0.909} & \textbf{0.300} & 15.03 \\
 DDS-SLAM (base)~\cite{Shan2024} & 4.12 & 18.25 & 0.367 & \textbf{29.68} & 0.904 & 0.317 & 10.00 \\
 PERSEUS$^{\ddagger}$ & 4.87 & 5.03 & 0.52 & --- & --- & --- & --- \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 4.64 & 33.52 & 0.800 & 8.46 & 0.133 & 1.019 & 7.85 \\
 SemGauss-SLAM$^{\ddagger}$~\cite{semgauss} & \multicolumn{7}{c}{\emph{did not finish --- out of memory, A100-80GB (Section~\ref{sec:bench_semgauss})}} \\
-SGS-SLAM$^{*}$~\cite{sgsslam} & --- & --- & --- & 18.40 & 0.846 & 0.447 & --- \\
+SGS-SLAM$^{*}$~\cite{sgsslam} & 5.63 & 12.37 & 0.654 & 18.40 & 0.846 & 0.447 & 39.3 \\
 SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
 \bottomrule
 \end{tabular}}
@@ -832,7 +835,7 @@ SNI-SLAM~\cite{sni} & \multicolumn{7}{c}{\emph{pending}} \\
 \item DID-SLAM records the best trajectory on four of the five snippets and, on every snippet, the best SSIM of any method and the best LPIPS of the trajectory-capable systems; the base retains a small PSNR edge throughout, consistent with its softer renders (Figure~\ref{fig:bench_qual}).
 \item The one exception is instructive. On C\_2/001 --- the sequence with camera travel large enough for tracking differences to be unambiguous --- the dedicated tracking-only PERSEUS (Section~\ref{sec:bench_perseus}) edges DID-SLAM ($3.64$ vs $3.93$\,mm) while producing no reconstruction at all; DID-SLAM reaches near-parity with a dense-flow bundle-adjustment specialist while additionally rendering the scene, and beats it on the remaining four snippets, decisively so on the long, still-dominated ones ($2.28$ vs $4.87$ on G\_3/001).
 \item PERSEUS's failure mode on the deforming E\_3/005 is the mirror image of the render-loss trackers': a path ratio of $0.51$ means its estimate \emph{under}-travels, because DROID's motion filter gates sub-threshold flow and simply stops updating --- the same regime DID-SLAM's gate handles by freezing, reached from the opposite direction. Both systems conclude that when image motion falls below the flow noise floor the correct action is not to track; DID-SLAM makes that decision explicitly and reverses it when evidence returns.
-\item The Gaussian-splatting systems trade the other way: SGS-SLAM's keyframe renders carry the most high-frequency texture on two snippets (best LPIPS on C\_1 and E\_3) but no comparable trajectory, and SemGauss-SLAM exports both halves but trails on each --- on these deforming, monocular-depth sequences the neural-SDF substrate with explicit motion handling is the stronger platform.
+\item The Gaussian-splatting systems trade the other way: SGS-SLAM's keyframe renders carry the most high-frequency texture on two snippets (best LPIPS on C\_1 and E\_3) while its tracking trails DID-SLAM on every snippet, and SemGauss-SLAM trails on both halves --- on these deforming, monocular-depth sequences the neural-SDF substrate with explicit motion handling is the stronger platform.
 \item Semantic-SuPer's proxy trajectory is closest on the near-static C\_3/001, consistent with a static-camera assumption that holds there and breaks elsewhere.
 \end{itemize}
 
@@ -884,7 +887,7 @@ SNI-SLAM~\cite{sni} is the semantic neural-implicit representative: hierarchical
 
 \subsection{SGS-SLAM}
 \label{sec:bench_sgs}
-SGS-SLAM~\cite{sgsslam} represents semantic 3D-Gaussian-splatting SLAM: an explicit anisotropic-Gaussian map with per-Gaussian semantic channels, tracked by rasterisation in the SplaTAM style. In its released configuration it renders only its keyframe set (every fifth frame, marked $*$) and exports no comparable camera trajectory, so it is compared on the mapping half only. Its keyframe renders carry the most high-frequency texture of the benchmark (Figure~\ref{fig:bench_qual}).
+SGS-SLAM~\cite{sgsslam} represents semantic 3D-Gaussian-splatting SLAM: an explicit anisotropic-Gaussian map with per-Gaussian semantic channels, tracked by rasterisation in the SplaTAM style. It renders only its keyframe set (every fifth frame, marked $*$), while its camera state is exported in full and scored on the identical Sim(3) battery. Its keyframe renders carry the most high-frequency texture of the benchmark (Figure~\ref{fig:bench_qual}).
 
 \begin{figure}[t]
 \centering
