@@ -41,26 +41,6 @@
    url = {http://arxiv.org/abs/1908.08918},
    year = {2020}
 }
-@techReport{,
-   abstract = {Neural implicit representations have recently shown encouraging results in various domains, including promising progress in simultaneous localization and mapping (SLAM). Nevertheless, existing methods produce over-smoothed scene reconstructions and have difficulty scaling up to large scenes. These limitations are mainly due to their simple fully-connected network architecture that does not incorporate local information in the observations. In this paper, we present NICE-SLAM, a dense SLAM system that incorporates multi-level local information by introducing a hierarchical scene representation. Optimizing this representation with pre-trained geometric priors enables detailed reconstruction on large indoor scenes. Compared to recent neural implicit SLAM systems, our approach is more scalable, efficient, and robust. Experiments on five challenging datasets demonstrate competitive results of NICE-SLAM in both mapping and tracking quality. Project page: https:// pengsongyou.github.io/ nice-slam.},
-   author = {Zihan Zhu and Songyou Peng and Viktor Larsson and Weiwei Xu and Hujun Bao and Zhaopeng Cui and Martin R Oswald and Marc Pollefeys and Eth Zurich},
-   title = {NICE-SLAM: Neural Implicit Scalable Encoding for SLAM},
-   url = {https://github.com/cvg/nice-slam.}
-}
-@techReport{,
-   author = {Gerhard Goos and Elisa Bertino and Wen Gao and Bernhard Steffen and Moti Yung},
-   title = {Lecture Notes in Computer Science 13437 Founding Editors Editorial Board Members},
-   url = {https://link.springer.com/bookseries/558}
-}
-@article{Merz2024,
-   abstract = {The next generation of wide-field deep astronomical surveys will deliver unprecedented amounts of images through the 2020s and beyond. As both the sensitivity and depth of observations increase, more blended sources will be detected. This reality can lead to measurement biases that contaminate key astronomical inferences. We implement new deep learning models available through Facebook AI Research's Detectron2 repository to perform the simultaneous tasks of object identification, deblending, and classification on large multi-band coadds from the Hyper Suprime-Cam (HSC). We use existing detection/deblending codes and classification methods to train a suite of deep neural networks, including state-of-the-art transformers. Once trained, we find that transformers outperform traditional convolutional neural networks and are more robust to different contrast scalings. Transformers are able to detect and deblend objects closely matching the ground truth, achieving a median bounding box Intersection over Union of 0.99. Using high quality class labels from the Hubble Space Telescope, we find that the best-performing networks can classify galaxies with near 100% completeness and purity across the whole test sample and classify stars above 60% completeness and 80% purity out to HSC i-band magnitudes of 25 mag. This framework can be extended to other upcoming deep surveys such as the Legacy Survey of Space and Time and those with the Roman Space Telescope to enable fast source detection and measurement. Our code, DeepDISC is publicly available at https://github.com/grantmerz/deepdisc.},
-   author = {G. M. Merz and Y. Liu and C. J. Burke and P. D. Aleo and X. Liu and M. C. Kind and V. Kindratenko and Y. Liu},
-   doi = {10.1093/mnras/stad2785},
-   month = {11},
-   title = {Detection, Instance Segmentation, and Classification for Astronomical Surveys with Deep Learning (DeepDISC): Detectron2 Implementation and Demonstration with Hyper Suprime-Cam Data},
-   url = {http://arxiv.org/abs/2307.05826 http://dx.doi.org/10.1093/mnras/stad2785},
-   year = {2024}
-}
 @article{Carion2025,
    abstract = {We present Segment Anything Model (SAM) 3, a unified model that detects, segments, and tracks objects in images and videos based on concept prompts, which we define as either short noun phrases (e.g., "yellow school bus"), image exemplars, or a combination of both. Promptable Concept Segmentation (PCS) takes such prompts and returns segmentation masks and unique identities for all matching object instances. To advance PCS, we build a scalable data engine that produces a high-quality dataset with 4M unique concept labels, including hard negatives, across images and videos. Our model consists of an image-level detector and a memory-based video tracker that share a single backbone. Recognition and localization are decoupled with a presence head, which boosts detection accuracy. SAM 3 doubles the accuracy of existing systems in both image and video PCS, and improves previous SAM capabilities on visual segmentation tasks. We open source SAM 3 along with our new Segment Anything with Concepts (SA-Co) benchmark for promptable concept segmentation.},
    author = {Nicolas Carion and Laura Gustafson and Yuan-Ting Hu and Shoubhik Debnath and Ronghang Hu and Didac Suris and Chaitanya Ryali and Kalyan Vasudev Alwala and Haitham Khedr and Andrew Huang and Jie Lei and Tengyu Ma and Baishan Guo and Arpit Kalla and Markus Marks and Joseph Greer and Meng Wang and Peize Sun and Roman Rädle and Triantafyllos Afouras and Effrosyni Mavroudi and Katherine Xu and Tsung-Han Wu and Yu Zhou and Liliane Momeni and Rishi Hazra and Shuangrui Ding and Sagar Vaze and Francois Porcher and Feng Li and Siyuan Li and Aishwarya Kamath and Ho Kei Cheng and Piotr Dollár and Nikhila Ravi and Kate Saenko and Pengchuan Zhang and Christoph Feichtenhofer},
@@ -101,12 +81,6 @@
    url = {http://arxiv.org/abs/2304.02643},
    year = {2023}
 }
-@techReport{,
-   abstract = {Neural implicit representations have recently shown encouraging results in various domains, including promising progress in simultaneous localization and mapping (SLAM). Nevertheless, existing methods produce over-smoothed scene reconstructions and have difficulty scaling up to large scenes. These limitations are mainly due to their simple fully-connected network architecture that does not incorporate local information in the observations. In this paper, we present NICE-SLAM, a dense SLAM system that incorporates multi-level local information by introducing a hierarchical scene representation. Optimizing this representation with pre-trained geometric priors enables detailed reconstruction on large indoor scenes. Compared to recent neural implicit SLAM systems, our approach is more scalable, efficient, and robust. Experiments on five challenging datasets demonstrate competitive results of NICE-SLAM in both mapping and tracking quality. Project page: https:// pengsongyou.github.io/ nice-slam.},
-   author = {Zihan Zhu and Songyou Peng and Viktor Larsson and Weiwei Xu and Hujun Bao and Zhaopeng Cui and Martin R Oswald and Marc Pollefeys and Eth Zurich},
-   title = {NICE-SLAM: Neural Implicit Scalable Encoding for SLAM},
-   url = {https://github.com/cvg/nice-slam.}
-}
 @article{Wang2022,
    abstract = {Reconstruction of the soft tissues in robotic surgery from endoscopic stereo videos is important for many applications such as intra-operative navigation and image-guided robotic surgery automation. Previous works on this task mainly rely on SLAM-based approaches, which struggle to handle complex surgical scenes. Inspired by recent progress in neural rendering, we present a novel framework for deformable tissue reconstruction from binocular captures in robotic surgery under the single-viewpoint setting. Our framework adopts dynamic neural radiance fields to represent deformable surgical scenes in MLPs and optimize shapes and deformations in a learning-based manner. In addition to non-rigid deformations, tool occlusion and poor 3D clues from a single viewpoint are also particular challenges in soft tissue reconstruction. To overcome these difficulties, we present a series of strategies of tool mask-guided ray casting, stereo depth-cueing ray marching and stereo depth-supervised optimization. With experiments on DaVinci robotic surgery videos, our method significantly outperforms the current state-of-the-art reconstruction method for handling various complex non-rigid deformations. To our best knowledge, this is the first work leveraging neural rendering for surgical scene 3D reconstruction with remarkable potential demonstrated. Code is available at: https://github.com/med-air/EndoNeRF.},
    author = {Yuehao Wang and Yonghao Long and Siu Hin Fan and Qi Dou},
@@ -114,9 +88,6 @@
    title = {Neural Rendering for Stereo 3D Reconstruction of Deformable Tissues in Robotic Surgery},
    url = {http://arxiv.org/abs/2206.15255},
    year = {2022}
-}
-@article{,
-   title = {Least-squares_estimation_of_transformation_parameters_between_two_point_patterns}
 }
 @article{Wang2024,
    abstract = {Precise camera tracking, high-fidelity 3D tissue reconstruction, and real-time online visualization are critical for intrabody medical imaging devices such as endoscopes and capsule robots. However, existing SLAM (Simultaneous Localization and Mapping) methods often struggle to achieve both complete high-quality surgical field reconstruction and efficient computation, restricting their intraoperative applications among endoscopic surgeries. In this paper, we introduce EndoGSLAM, an efficient SLAM approach for endoscopic surgeries, which integrates streamlined Gaussian representation and differentiable rasterization to facilitate over 100 fps rendering speed during online camera tracking and tissue reconstructing. Extensive experiments show that EndoGSLAM achieves a better trade-off between intraoperative availability and reconstruction quality than traditional or neural SLAM approaches, showing tremendous potential for endoscopic surgeries. The project page is at https://EndoGSLAM.loping151.com},
@@ -184,7 +155,6 @@
  keywords = {rgb-d,rgb-d benchmark,vslam},
  titleurl = {sturm_et_al_rss11-talk.pdf},
 }
-
 @misc{grupp2017evo,
   title={evo: Python package for the evaluation of odometry and SLAM.},
   author={Grupp, Michael},
@@ -312,24 +282,66 @@
   pages = {328--341},
   year = {2008}
 }
-
 @inproceedings{Kingma2015,
   author    = {Diederik P. Kingma and Jimmy Ba},
   title     = {Adam: {A} Method for Stochastic Optimization},
   booktitle = {International Conference on Learning Representations (ICLR)},
   year      = {2015}
 }
-
 @article{Simeoni2025,
   author  = {Oriane Sim{\'e}oni and Huy V. Vo and Maximilian Seitzer and others},
   title   = {{DINOv3}},
   journal = {arXiv preprint arXiv:2508.10104},
   year    = {2025}
 }
-
 @inproceedings{Teed2021,
   author    = {Zachary Teed and Jia Deng},
   title     = {{DROID-SLAM}: Deep Visual {SLAM} for Monocular, Stereo, and {RGB-D} Cameras},
   booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
   year      = {2021}
+}
+@article{Hong2020,
+  author  = {W.-Y. Hong and C.-L. Kao and Y.-H. Kuo and J.-R. Wang and W.-L. Chang and C.-S. Shih},
+  title   = {{CholecSeg8k}: A Semantic Segmentation Dataset for Laparoscopic Cholecystectomy Based on {Cholec80}},
+  journal = {arXiv preprint arXiv:2012.12453},
+  year    = {2020}
+}
+@article{Alabi2025,
+  author  = {Oluwatosin Alabi and Ko Ko Zayar Toe and Zijian Zhou and Charlie Budd and Nicholas Raison and Miaojing Shi and Tom Vercauteren},
+  title   = {{CholecInstanceSeg}: A Tool Instance Segmentation Dataset for Laparoscopic Surgery},
+  journal = {Scientific Data},
+  volume  = {12},
+  year    = {2025}
+}
+@article{Murali2024,
+  author  = {Aditya Murali and Deepak Alapatt and Pietro Mascagni and Armine Vardazaryan and Alain Garcia and Nariaki Okamoto and Guido Costamagna and Didier Mutter and Jacques Marescaux and Bernard Dallemagne and Nicolas Padoy},
+  title   = {The {Endoscapes} Dataset for Surgical Scene Segmentation, Object Detection, and Critical View of Safety Assessment: Official Splits and Benchmark},
+  journal = {arXiv preprint arXiv:2312.12429},
+  year    = {2023}
+}
+@article{Wagner2023,
+  author  = {Martin Wagner and Beat-Peter M{\"u}ller-Stich and Anna Kisilenko and Duc Tran and Patrick Heger and Lars M{\"u}ndermann and David M. Lubotsky and Benjamin M{\"u}ller and Tornike Davitashvili and Manuela Capek and others},
+  title   = {Comparative Validation of Machine Learning Algorithms for Surgical Workflow and Skill Analysis with the {HeiChole} Benchmark},
+  journal = {Medical Image Analysis},
+  volume  = {86},
+  pages   = {102770},
+  year    = {2023}
+}
+@inproceedings{semgauss,
+  author    = {Siting Zhu and Renjie Qin and Guangming Wang and Jiuming Liu and Hesheng Wang},
+  title     = {{SemGauss-SLAM}: Dense Semantic Gaussian Splatting {SLAM}},
+  booktitle = {IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  year      = {2025}
+}
+@inproceedings{Ren2024,
+  author    = {Weining Ren and Zihan Zhu and Boyang Sun and Jiaqi Chen and Marc Pollefeys and Songyou Peng},
+  title     = {{NeRF} On-the-go: Exploiting Uncertainty for Distractor-free {NeRFs} in the Wild},
+  booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year      = {2024}
+}
+@inproceedings{Darcet2024,
+  author    = {Timoth{'e}e Darcet and Maxime Oquab and Julien Mairal and Piotr Bojanowski},
+  title     = {Vision Transformers Need Registers},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024}
 }
