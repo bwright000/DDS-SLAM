@@ -573,14 +573,13 @@ However, running both raw backbones end-to-end on the evaluation sequences, the 
 \paragraph{Per-ray trust variants (ablated).} The same votes support a softer consumer: the fit residuals of \eqref{eq:vote-trust}, or a depth-normalised deviation from the district consensus, can be painted into a dense per-ray motion trust and applied in the pose solve multiplicatively with the uncertainty weight of \eqref{eq:unc-weight} on tracked frames. These variants are evaluated in the ablations and not retained in the locked configuration, for measured reasons. Behavioural audits against kinematic ground truth showed the depth-pooled variant responds to camera rotation rather than to scene motion: its normalisation is exact for camera-translation parallax, which scales as $1/Z$, but mis-scales rotational flow, which is depth-independent. The sharper de-rotated variant discriminates scene motion nearly perfectly on the design sequences yet degrades held-out sequences, its per-frame muting noise compounding over long trajectories. And stacking any trust behind the freeze gate starves the solve: the gate has already removed the confidently-still frames, so the trust mutes precisely the frames that still need tracking. The freeze decision --- which removes ambiguous frames outright rather than re-weighting within them --- is the consumer that survives measurement.
 
 \paragraph{Zero-motion prior (ablated).} The freeze is a hard, per-frame decision, so a softer companion was evaluated for the drift on frames that are tracked rather than frozen. On near-static sequences the pose solve still over-travels on frames the gate does not freeze - either frames that are still but sit just below the threshold, or individual pose axes that the narrow endoscopic geometry leaves weakly observable. A zero-motion prior penalises per-frame pose change directly, adding
-egin{equation}
-    \mathcal{L}_{	ext{zm}} = \lambda_r \lVert \Delta\mathbf{r} 
+\begin{equation}
+    \mathcal{L}_{\text{zm}} = \lambda_r \lVert \Delta\mathbf{r} 
 Vert^2 + \lambda_t \lVert \Delta\mathbf{t} 
 Vert^2
     \label{eq:zeromotion}
 \end{equation}
-to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the rotation and translation of the current pose relative to the previous committed pose. The penalty is the same in every direction, but its effect is not. The SDF data term has its own per-axis curvature (approximately the squared flow Jacobian), so an observable axis with a steep gradient overrules the prior and keeps the real motion, while a flat, unobservable axis is pinned towards zero. The prior is added before the best-iterate selection so that it binds, and $\lambda_r$ and $\lambda_t$ are calibrated against the SDF loss scale. Evaluated on the design sequences, the prior brought no further gain: the drift it targets is already removed by the freeze and the corrected bundle-adjustment configuration (Table~
-ef{tab:results_abl}), and it is not retained in the final configuration.
+to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the rotation and translation of the current pose relative to the previous committed pose. The penalty is the same in every direction, but its effect is not. The SDF data term has its own per-axis curvature (approximately the squared flow Jacobian), so an observable axis with a steep gradient overrules the prior and keeps the real motion, while a flat, unobservable axis is pinned towards zero. The prior is added before the best-iterate selection so that it binds, and $\lambda_r$ and $\lambda_t$ are calibrated against the SDF loss scale. Evaluated on the design sequences, the prior brought no further gain: the drift it targets is already removed by the freeze and the corrected bundle-adjustment configuration, and it is not retained in the final configuration.
 
 \FloatBarrier
 \begin{figure}[!ht]
@@ -846,29 +845,22 @@ Every component of the final configuration was adopted or rejected on the design
 
 \begin{table}[!ht]
 \centering
-\caption{Component ladder on the design sequences (Sim(3) ATE$_{\mathrm{mean}}$, mm, single seed; base E\_3/005 is $n{=}3$; the corrected-BA-step E\_3/005 value is the observed single-seed range across runs). Upper block: the cumulative locked configuration. Lower block: variants evaluated and not retained, with the measured reason.}
+\caption{Component ladder on the design sequences (Sim(3) ATE$_{\mathrm{mean}}$, mm, single seed; base E\_3/005 is the mean of three seeds). Each row adds one component to the row above; the final model additionally carries the corrected bundle-adjustment configuration (Section~\ref{sec:hyperparams}) and the DINOv3 districts (Section~\ref{sec:motion}).}
 \label{tab:results_abl}
 \small
-\begin{tabular}{l rr l}
+\begin{tabular}{l rr}
 \toprule
-Configuration & C\_1/001 & E\_3/005 & Verdict \\
+Configuration & C\_1/001 & E\_3/005 \\
 \midrule
-DDS-SLAM base & 1.80 & 4.45 & reference \\
-+ uncertainty (Sec.~\ref{sec:uncertainty}) & 1.92 & --- & neutral alone; enables the weighting \\
-+ vote freeze, BA re-pin (Sec.~\ref{sec:motion}) & 1.80 & 2.87 & deforming sequence $-36\%$ \\
-+ corrected BA configuration (Sec.~\ref{sec:hyperparams}) & 1.34 & 3.2--3.6 & still sequence $-26\%$; keyframe walk $0.35 \to 0.04$\,mm \\
-+ base DINOv3 districts (= final) & 1.43 & 3.2--3.6 & decision $95\%$ invariant; small edge retained \\
-\midrule
-per-ray motion trust (de-rotated) & 1.45 & 3.83 & best soft variant; degrades held-out sequences \\
-trust stacked behind the freeze & --- & 4.86 & starves the solve on the frames still tracked \\
-dissent threshold $0.33$ & 1.15 & 4.27 & still-regime specialist; mis-freezes deformation \\
-$\sigma^2$-weighted bundle adjustment & 2.17 & 3.45 & damps deformation pull; does not stop the walk \\
-zero-motion prior & 1.46 & 3.18 & drift already removed by freeze + BA step \\
+Base model & 1.80 & 4.45 \\
++ uncertainty (Section~\ref{sec:uncertainty}) & 1.92 & --- \\
++ motion attribution (Section~\ref{sec:motion}) & 1.80 & 2.87 \\
+Final model & \textbf{1.43} & \textbf{3.63} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Three points the ladder makes. First, the gains are separable and attributable: the freeze pays on the deforming sequence, the corrected bundle-adjustment step pays on the still one, and their combination transfers to the held-out set (Table~\ref{tab:results_main}). Second, the rejected variants fail for measured, mechanistic reasons rather than by tuning accident - soft per-frame weighting compounds over long sequences, weighting stacked behind the freeze removes the signal the solve still needs, and a lowered dissent threshold buys one regime at the cost of the other. Third, no single-sequence winner survives: the $1.15$\,mm C\_1/001 of the lowered dissent threshold is the best number in the table and is still rejected, because the same setting is the worst E\_3/005 - the final configuration is the one that wins jointly.
+The ladder's gains are separable and attributable: the uncertainty head is neutral alone but enables the weighted solve, the motion attribution pays on the deforming sequence ($-36\%$ on E\_3/005), and the corrected bundle-adjustment configuration pays on the still one ($-26\%$ on C\_1/001), with the combination transferring to the held-out set (Table~\ref{tab:results_main}). The variants evaluated and not retained - the soft per-ray trust consumers, a lowered dissent threshold, $\sigma^2$-weighted bundle adjustment, and the zero-motion prior - each failed for a measured, mechanistic reason rather than by tuning accident (Sections~\ref{sec:uncertainty} and \ref{sec:motion}); notably, a lowered dissent threshold produced the single best C\_1/001 of any configuration ($1.15$\,mm) and was still rejected, because the same setting was the worst on E\_3/005 - the final configuration is the one that wins jointly.
 \section{Benchmarking against SoTA Semantic-SLAM pipelines}
 \label{sec:benchmarking}
 To adequately measure the performance of DID-SLAM against the state of the art (SoTA), a range of models was selected: Semantic-SuPer, SNI-SLAM, SGS-SLAM, SemGauss-SLAM and PERSEUS, together spanning the current benchmark for semantic SLAM pipelines and, in PERSEUS, a dedicated tracking-only reference. All methods are evaluated on the same five rectified CRCD snippets as DID-SLAM, using the code as provided by the relevant authors; configuration changes were limited to input paths, camera intrinsics, and class taxonomy, so no method was re-tuned. Each method consumes the same rectified RGB stream and, where required, the same stereo-anchored MoGe-2 depth; metrics follow Section~\ref{sec:eval_metrics}, and the per-snippet results are collected in Table~\ref{tab:results_sota}.
