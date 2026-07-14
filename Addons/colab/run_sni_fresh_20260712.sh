@@ -295,7 +295,13 @@ case "${1:-all}" in
     build_env && inject_crcd && { for V in faithful oracle depthpin noconst; do
       run_one "${2:-C1_001}" "$V" || true; done; }
     overnight_summary ;;
-  all)  build_env && inject_crcd && { for NAME in $SNIPPETS; do run_one "$NAME" faithful || true; done; } ;;
+  # BENCH_VARIANT: the arm the 5-snippet bench runs. USER-LOCKED 2026-07-14 = noconst
+  # (const_speed_assumption=False): the C1 factorial showed const-vel inflates trajectory
+  # scale ~280x until the camera exits the scene bound (renders die ~frame 70); the single
+  # correction recovers near-metric scale + full-sequence renders at comparable ATE -- the
+  # IDENTICAL dataset correction DID-SLAM's own final config applies (const-vel init off).
+  all)  build_env && inject_crcd && { for NAME in $SNIPPETS; do run_one "$NAME" "${BENCH_VARIANT:-noconst}" || true; done; }
+        overnight_summary ;;
   *)    build_env && inject_crcd && run_one "$1" "${2:-faithful}" ;;
 esac
 say "fresh bench complete -> $DRIVE_OUT"
