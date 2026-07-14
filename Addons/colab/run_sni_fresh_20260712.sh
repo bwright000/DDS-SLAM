@@ -210,8 +210,9 @@ PY
   [ "$RC" -eq 0 ] || { echo "FAILED run.py rc=$RC" > "$DST/status.txt"; say "$TAG FAILED (isolated) -> next"; return 1; }
   local OUTD="$SNI_REPO/output/CRCD/$TAG"
   # ---- export est trajectory ----
-  # SNI's Logger writes '{idx:05d}.tar' (Logger.py:50), NOT .pt -- glob both, newest first
-  local CKPT; CKPT=$(ls -t "$OUTD"/ckpt/*.tar "$OUTD"/ckpt/*.pt 2>/dev/null | head -1)
+  # SNI writes '{idx:05d}.tar' into 'ckpts/' -- PLURAL (verified on-box 2026-07-14; run.py's own
+  # INFO banner says 'ckpt/' and lies). Glob all spellings, newest first.
+  local CKPT; CKPT=$(ls -t "$OUTD"/ckpts/*.tar "$OUTD"/ckpt/*.tar "$OUTD"/ckpt/*.pt 2>/dev/null | head -1)
   [ -n "$CKPT" ] || { say "no ckpt"; echo FAILED > "$DST/status.txt"; return 1; }
   PYTHONPATH= "$SNI_PY" - "$CKPT" "$DST/est_c2w_data.txt" <<'PY' || { say "export fail"; return 1; }
 import sys, torch, numpy as np
