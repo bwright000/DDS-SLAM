@@ -238,9 +238,10 @@ PY
   python3 "$REPO/Addons/eval/sim3_ate.py" --est "$DST/est_c2w_data.txt" --gt "$SD/groundtruth.txt" \
      --name "SNI-fresh $TAG" --out "$DST/sim3_metrics.txt" || say "WARN sim3"
   python3 "$REPO/Addons/eval/eval_rendering.py" --gt_dir "$SD/video_frames" --render_dir "$DST/render" \
-     --name "SNI-fresh" --sequence "CRCD ($TAG)" --output_csv "$DST/render_eval.csv" > "$DST/render_eval.txt" 2>&1 || say "WARN render eval"
+     --name "SNI-fresh" --sequence "CRCD ($NAME)" --output_csv "$DST/render_eval.csv" > "$DST/render_eval.txt" 2>&1 || say "WARN render eval"
   python3 "$REPO/Addons/eval/depth_l1.py" --render_depth_dir "$DST/render/depth" --render_scale 10000 \
-     --gt_depth_dir "$SD/depth" --png_depth_scale 10000 --out "$DST/depth_l1.txt" || say "WARN depth_l1"
+     --input_depth_dir "$SD/depth" --input_pattern '[0-9]*.png' --input_scale 10000 \
+     --out "$DST/depth_l1.txt" || say "WARN depth_l1"
   python3 "$REPO/Addons/viz/generate_video.py" --rgb_input_dir "$SD/video_frames" --rgb_input_pattern '*l.png' \
      --rgb_output_dir "$DST/render" --rgb_output_pattern '[0-9]*.jpg' \
      --depth_input_dir "$SD/depth" --depth_output_dir "$DST/render/depth" --png_depth_scale 10000 \
