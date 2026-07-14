@@ -871,38 +871,6 @@ Final model & 3.63 & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
 \end{table}
 
 The ladder's gains are separable and attributable: the uncertainty head is neutral alone (its E\_3/005 sits within the base's $\pm 0.77$\,mm seed spread) but enables the weighted solve, the motion attribution pays on the deforming sequence ($-36\%$ on E\_3/005), and the corrected bundle-adjustment configuration pays on the still one ($-26\%$ on C\_1/001), with the combination transferring to the held-out set (Table~\ref{tab:results_main}). The render battery is flat down the entire ladder (PSNR within $0.2$\,dB, SSIM within $0.005$ per sequence), so every tracking gain comes free of reconstruction cost; and the final model returns a little of the motion-attribution row's E\_3/005 gain ($2.87 \to 3.63$\,mm) in exchange for the still-regime correction --- the joint trade that wins across the five sequences. The variants evaluated and not retained - the soft per-ray trust consumers, a lowered dissent threshold, $\sigma^2$-weighted bundle adjustment, and the zero-motion prior - each failed for a measured, mechanistic reason rather than by tuning accident (Sections~\ref{sec:uncertainty} and \ref{sec:motion}); notably, a lowered dissent threshold produced the single best C\_1/001 of any configuration ($1.15$\,mm) and was still rejected, because the same setting was the worst on E\_3/005 - the final configuration is the one that wins jointly.
-
-The ladder shows how the model was built; a complementary leave-one-out ablation asks what each component is worth \emph{inside} the final configuration, by switching exactly one component off and re-running (Table~\ref{tab:results_loo}).
-
-\begin{table}[!ht]
-\centering
-\caption{Leave-one-out ablation: the final model with exactly one component disabled, single seed, full battery as Table~\ref{tab:results_abl}. The final-model rows repeat Table~\ref{tab:results_main} for reference.}
-\label{tab:results_loo}
-\small
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{l rrr rrrr}
-\toprule
-Configuration & ATE (mm) & path ratio & $|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
-\midrule
-\multicolumn{8}{l}{\textbf{C\_1/001}} \\
-\midrule
-Final model & 1.43 & 2.23 & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
-$-$ uncertainty & \textbf{1.33} & 2.21 & 0.986 & 25.42 & 0.813 & 0.438 & 9.37 \\
-$-$ motion attribution & 1.58 & 3.46 & 0.985 & 25.59 & 0.812 & 0.439 & 10.09 \\
-$-$ corrected BA configuration & 1.76 & 3.53 & 0.972 & 25.62 & 0.817 & \textbf{0.424} & 10.35 \\
-\midrule
-\multicolumn{8}{l}{\textbf{E\_3/005}} \\
-\midrule
-Final model & 3.63 & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
-$-$ uncertainty & \textbf{3.24} & 3.00 & 0.686 & 24.15 & 0.818 & \textbf{0.450} & 17.99 \\
-$-$ motion attribution & 3.34 & 2.83 & 0.873 & 24.55 & 0.813 & 0.460 & 15.38 \\
-$-$ corrected BA configuration & 3.44 & 1.13 & 0.511 & 24.09 & 0.808 & 0.457 & 14.42 \\
-\bottomrule
-\end{tabular}}
-\end{table}
-\FloatBarrier
-
-The leave-one-out view sharpens the attribution on the still-dominated regime and exposes the limits of single-seed measurement on the deforming one. On C\_1/001 the corrected bundle-adjustment configuration is the load-bearing component ($+0.33$\,mm when removed, consistent with the ladder), the motion attribution contributes $+0.15$\,mm, and removing the uncertainty is marginally \emph{better} at this seed ($-0.10$\,mm) --- the uncertainty's value is not visible on the design sequences and rests on the held-out transfers of Table~\ref{tab:results_main}. On E\_3/005 no removal resolves: all three land within the final configuration's own seed-to-seed spread on this sequence ($3.16$--$3.63$\,mm across identical-configuration runs), which is precisely why the three-seed protocol, not the design-sequence point estimates, is the confirmation step. One shape diagnostic is worth noting: removing the corrected bundle-adjustment configuration collapses the E\_3/005 path ratio to $1.13$ while its ATE stays unresolved --- the trajectories differ in character well before they differ in error, underlining why the shape diagnostics are reported throughout.
 \section{Benchmarking against SoTA Semantic-SLAM pipelines}
 \label{sec:benchmarking}
 To adequately measure the performance of DID-SLAM against the state of the art (SoTA), a range of models was selected: Semantic-SuPer, SNI-SLAM, SGS-SLAM, SemGauss-SLAM and PERSEUS, together spanning the current benchmark for semantic SLAM pipelines and, in PERSEUS, a dedicated tracking-only reference. All methods are evaluated on the same five rectified CRCD snippets as DID-SLAM, using the code as provided by the relevant authors; configuration changes were limited to input paths, camera intrinsics, and class taxonomy, so no method was re-tuned. Each method consumes the same rectified RGB stream and, where required, the same stereo-anchored MoGe-2 depth; metrics follow Section~\ref{sec:eval_metrics}, and the per-snippet results are collected in Table~\ref{tab:results_sota}.
