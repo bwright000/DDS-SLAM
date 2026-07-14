@@ -593,7 +593,7 @@ to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the ro
 \subsection{Evaluation Metrics}
 \label{sec:eval_metrics}
 
-Evaluation covers the two halves of a SLAM system --- \emph{tracking} (camera-pose accuracy) and \emph{mapping} (reconstruction quality, judged through rendering) --- plus behavioural diagnostics designed for the specific failure modes of monocular surgical sequences, and segmentation accuracy for the semantic components. Quantitative results in this work-in-progress are currently reported at a single random seed ($n{=}1$) as screening runs; the target protocol reports the mean over $n{=}3$ random seeds, with the baseline's seed-to-seed standard deviation defining the noise floor that an improvement must clear before it is claimed.
+Evaluation covers the two halves of a SLAM system --- \emph{tracking} (camera-pose accuracy) and \emph{mapping} (reconstruction quality, judged through rendering) --- plus behavioural diagnostics designed for the specific failure modes of monocular surgical sequences, and segmentation accuracy for the semantic components. Quantitative results are reported at a single random seed ($n{=}1$); where a baseline's seed-to-seed spread has been measured it is quoted alongside the result, and the single-seed protocol is discussed as a limitation of the study in Section~\ref{sec:discussion}.
 
 \subsubsection{Tracking: Sim(3) Absolute Trajectory Error}
 \label{sec:eval_ate}
@@ -759,12 +759,12 @@ These gains carry no observable reconstruction cost. Across the five sequences t
 \end{figure}
 \FloatBarrier
 
-These comparisons are reported at a single seed; the three-seed re-run of the final configuration is the confirmation step, with the base seed spread ($\pm 0.76$\,mm on E\_3/005) as the noise floor.
+These comparisons are reported at a single seed; the base's measured seed-to-seed spread on E\_3/005 ($\pm 0.76$\,mm) indicates the scale of run-to-run variability, and the single-seed protocol is discussed as a limitation in Section~\ref{sec:discussion}.
 
 \subsection{Comparison with the SoTA benchmark}
 \label{sec:results_sota}
 
-Table~\ref{tab:results_sota} places DID-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, split per snippet so each sequence's regime --- camera-still, large-travel, deforming --- can be read directly. The methods differ in what they natively expose, and three caveats carry through the table: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph ($\dagger$); PERSEUS and SemGauss-SLAM report ATE$_{\mathrm{mean}}$, their exported statistic ($\ddagger$); and SGS-SLAM renders only its keyframe set ($*$). SNI-SLAM's benchmark run is in flight and its rows are reported as pending.
+Table~\ref{tab:results_sota} places DID-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, split per snippet so each sequence's regime --- camera-still, large-travel, deforming --- can be read directly. The methods differ in what they natively expose, and three caveats carry through the table: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph ($\dagger$); PERSEUS and SemGauss-SLAM report ATE$_{\mathrm{mean}}$, their exported statistic ($\ddagger$); and SGS-SLAM renders only its keyframe set ($*$). SNI-SLAM's benchmark run is being repeated at the time of writing and its rows are reported as pending.
 
 \begin{table}[!ht]
 \centering
@@ -830,13 +830,7 @@ Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 4.64 & 33.52 & 0.800 & 8.46 & 0.133 
 \end{table}
 \FloatBarrier
 
-\begin{itemize}
-\item DID-SLAM records the best trajectory on four of the five snippets, the best SSIM of any method on every snippet, and the best LPIPS on three of the five (SGS-SLAM's keyframe-only renders lead on the other two); the base retains a small PSNR edge throughout, consistent with its softer renders (Figure~\ref{fig:bench_qual}).
-\item The one exception is instructive. On C\_2/001 --- the sequence with camera travel large enough for tracking differences to be unambiguous --- the dedicated tracking-only PERSEUS (Section~\ref{sec:bench_perseus}) edges DID-SLAM ($3.64$ vs $3.93$\,mm) while producing no reconstruction at all; DID-SLAM reaches near-parity with a dense-flow bundle-adjustment specialist while additionally rendering the scene, and beats it on the remaining four snippets, decisively so on the long, still-dominated ones ($2.28$ vs $4.87$ on G\_3/001).
-\item PERSEUS's failure mode on the deforming E\_3/005 is the mirror image of the render-loss trackers': a path ratio of $0.51$ means its estimate \emph{under}-travels, because DROID's motion filter gates sub-threshold flow and simply stops updating --- the same regime DID-SLAM's gate handles by freezing, reached from the opposite direction. Both systems conclude that when image motion falls below the flow noise floor the correct action is not to track; DID-SLAM makes that decision explicitly and reverses it when evidence returns.
-\item The Gaussian-splatting systems trade the other way: SGS-SLAM's keyframe renders carry the most high-frequency texture on two snippets (best LPIPS on C\_1 and E\_3) while its tracking trails DID-SLAM on every snippet, and SemGauss-SLAM trails on both halves --- on these deforming, monocular-depth sequences the neural-SDF substrate with explicit motion handling is the stronger platform.
-\item Semantic-SuPer's proxy trajectory is closest on the near-static C\_3/001, consistent with a static-camera assumption that holds there and breaks elsewhere.
-\end{itemize}
+The patterns this table carries --- where DID-SLAM wins, where the specialists edge it, and what the shape diagnostics reveal about every system --- are taken up in the Discussion (Section~\ref{sec:discussion}).
 
 \subsection{Ablations}
 \label{sec:results_ablations}
@@ -885,7 +879,7 @@ Semantic-SuPer~\cite{Lin2023} is the deformable-reconstruction representative: a
 
 \subsection{SNI-SLAM}
 \label{sec:bench_sni}
-SNI-SLAM~\cite{Zhu2024} is the semantic neural-implicit representative: hierarchical semantic features fused with appearance and geometry through cross-attention over a multi-resolution feature-grid map. It consumes the same rectified RGB, depth and four-class semantics as the other systems. Its benchmark run is in flight at the time of writing; its rows in Table~\ref{tab:results_sota} are reported as pending.
+SNI-SLAM~\cite{Zhu2024} is the semantic neural-implicit representative: hierarchical semantic features fused with appearance and geometry through cross-attention over a multi-resolution feature-grid map. It consumes the same rectified RGB, depth and four-class semantics as the other systems. Its benchmark run is being repeated at the time of writing; its rows in Table~\ref{tab:results_sota} are reported as pending.
 
 \subsection{SGS-SLAM}
 \label{sec:bench_sgs}
@@ -913,7 +907,15 @@ PERSEUS is the dedicated-tracking reference: a DROID-SLAM~\cite{Teed2021} fork a
 \section{Discussion}
 \label{sec:discussion}
 
-% TODO: extend once SNI-SLAM and SemGauss SLAM results are in.
+Taken together, the benchmark places DID-SLAM where it was designed to sit. It records the best trajectory on four of the five sequences and the best SSIM of any method on every sequence, and it is the only system in the comparison that is strong on both halves of the SLAM problem: the render-capable systems trail it on tracking, and the tracking specialist renders nothing. The one exception is instructive rather than damaging. On C\_2/001 --- the sequence with camera travel large enough for tracking differences to be unambiguous --- the dedicated tracking-only PERSEUS edges DID-SLAM ($3.64$ vs $3.93$\,mm) while producing no reconstruction at all. Reaching near-parity with a dense-flow bundle-adjustment specialist, while additionally rendering the scene, is precisely the trade this thesis set out to make; on the remaining four sequences DID-SLAM beats it outright, decisively so on the long, still-dominated ones ($2.28$ vs $4.87$\,mm on G\_3/001).
+
+The clearest pattern in the benchmark is not a ranking but a shared failure regime. CRCD camera motion is small enough that, for long stretches, the true inter-frame motion falls below the optical-flow noise floor, and every system must implicitly decide what to do when the image no longer carries motion evidence. The render-loss trackers manufacture motion: the base, SGS-SLAM and SemGauss-SLAM over-travel the true path by $3$--$24\times$, oscillating around it as sampling noise and deforming content are absorbed into the pose. PERSEUS reaches the opposite failure from the same cause: its motion filter gates sub-threshold flow and simply stops updating, so on the deforming E\_3/005 its estimate under-travels (path ratio $0.51$). Both behaviours agree that when image motion falls below the noise floor the correct action is not to track --- they differ only in whether that decision is made by accident. DID-SLAM makes it explicitly, through the motion-attribution gate, and reverses it when evidence returns; this is also why the shape diagnostics are reported throughout, since on near-still sequences ATE alone rewards a compact trajectory whether or not it is a correct one.
+
+The substrate comparisons cut both ways. SGS-SLAM's keyframe renders carry the most high-frequency texture in the benchmark and lead LPIPS on two sequences, but its tracking trails DID-SLAM on every sequence; the smooth neural-SDF render costs texture but tracks. SemGauss-SLAM exports both halves of the problem and trails on each, and its per-Gaussian semantic feature field sets a memory ceiling that an exploratory endoscopic sequence duly collects --- its G\_3/001 run exhausted an A100-80GB at eleven million Gaussians. Semantic-SuPer's proxy trajectory is closest on the near-static C\_3/001, consistent with a static-camera assumption that holds there and breaks everywhere else. On deforming sequences supervised by monocular depth, a neural-SDF substrate with explicit motion handling is the stronger platform.
+
+The deforming sequence marks the practical limit of the approach. E\_3/005 improves by $18\%$ over the base yet keeps the weakest shape correlation of the five, and most of its remaining error sits in a segment where the true camera motion falls below the flow noise floor. No threshold on a flow statistic can recover motion the flow cannot see: the gate can decide not to be fooled, but it cannot conjure evidence. Progress on this regime requires either a motion sensor that does not saturate at the flow noise floor, or a map that explains the deformation instead of asking the pose solve to survive it.
+
+\paragraph{Limitations.} The quantitative results in this thesis are reported at a single random seed per configuration. The intended protocol --- a mean over repeated seeds, judged against the baseline's seed-to-seed spread --- was applied only where noted (the base on E\_3/005), because the compute time to repeat every configuration, sequence and benchmark system was not available within the project; covering the full method and the five-system benchmark at a single seed was prioritised over covering a subset of it at three. The consequence is stated rather than hidden: the baseline's measured spread on the deforming sequence is of the same order as several of the single-seed differences reported there, so small deltas on E\_3/005 should be read as unresolved, and the held-out improvements --- which are large relative to that spread --- carry the weight of the claims. Beyond the seed protocol, the study inherits the limitations of its data: the ex-vivo porcine setting removes respiratory motion, the semantic masks are SAM~3 propagations verified by a single annotator, and depth is monocular and up-to-scale, anchored by stereo at intervals, so tracking is necessarily evaluated under Sim(3) rather than SE(3).
 
 \section{Conclusion}
 \label{sec:conclusion}
