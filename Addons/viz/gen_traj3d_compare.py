@@ -40,7 +40,7 @@ def draw(ax, gt_mm, curves, title):
         xyz = xyz.copy()                       # mpl3d does not clip -- NaN points outside the box
         xyz[np.any(np.abs(xyz - c) > r, axis=1)] = np.nan
         ax.plot(*xyz.T, color=colr, lw=lw, alpha=0.9, label=name)
-    ax.set_title(title, fontsize=13, fontweight='bold', color='#202124')
+    ax.set_title(title, fontsize=11.5, fontweight='bold', color='#202124', pad=0)
     ax.set_xlabel('x (mm)', fontsize=9, labelpad=-4)
     ax.set_ylabel('y (mm)', fontsize=9, labelpad=-4)
     ax.set_zlabel('z (mm)', fontsize=9, labelpad=-4)
@@ -63,18 +63,25 @@ def main():
         curves[name] = ((aligned - gt[:n].mean(0)) * 1000.0, colr, lw)
         print(f'  {name}: {len(est)} poses, {raw.shape[1]} cols, aligned')
 
-    fig = plt.figure(figsize=(13.2, 5.6))
-    ax1 = fig.add_subplot(1, 2, 1, projection='3d')
-    draw(ax1, gt_mm, curves, 'all benchmarked systems')
-    ax2 = fig.add_subplot(1, 2, 2, projection='3d')
-    draw(ax2, gt_mm, {k: v for k, v in curves.items() if 'DID' in k or 'base' in k},
-         'DID-SLAM vs the base')
-    h, l = ax1.get_legend_handles_labels()
-    fig.legend(h, l, loc='lower center', ncol=4, fontsize=10, frameon=False,
-               bbox_to_anchor=(0.5, -0.02))
-    fig.suptitle('C_2/001 -- Sim(3)-aligned trajectories vs ground truth', fontsize=14,
-                 fontweight='bold', color='#202124')
-    fig.tight_layout(rect=[0, 0.07, 1, 0.97])
+    fig = plt.figure(figsize=(15.5, 8.2))
+    ATE = {'DID-SLAM (ours)': 3.93, 'DDS-SLAM (base)': 6.78, 'PERSEUS': 4.07,
+           'SNI-SLAM': 7.24, 'SGS-SLAM': 7.64, 'SemGauss-SLAM': 8.64, 'Semantic-SuPer': 8.32}
+    order = list(EST.keys())
+    for i, name in enumerate(order):
+        ax = fig.add_subplot(2, 4, i + 1, projection='3d')
+        draw(ax, gt_mm, {name: curves[name]},
+             f"{name}  ({ATE[name]:.2f} mm)")
+    # legend cell
+    axl = fig.add_subplot(2, 4, 8)
+    axl.axis('off')
+    import matplotlib.lines as mlines
+    axl.legend(handles=[mlines.Line2D([], [], color='#202124', lw=2.6, label='ground truth'),
+                        mlines.Line2D([], [], color='#9aa0a6', lw=1.6,
+                                      label='estimated trajectory\n(colour per panel)')],
+               loc='center', fontsize=12, frameon=False)
+    fig.suptitle('C_2/001 -- Sim(3)-aligned trajectories vs ground truth (ATE$_{RMSE}$ per panel)',
+                 fontsize=15, fontweight='bold', color='#202124')
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
     out = os.path.join(os.path.dirname(__file__), '..', '..', 'figures', 'fig_traj3d_compare.png')
     fig.savefig(out, dpi=150, bbox_inches='tight')
     print('wrote', os.path.abspath(out))
