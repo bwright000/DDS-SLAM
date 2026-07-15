@@ -542,7 +542,7 @@ Two guards control the weight. First, on rays where the map holds an accumulated
 \subsection{Motion Attribution}
 \label{sec:motion}
 The second contribution decides, for every frame, whether the camera is moving and which regions move independently of it, and gates the pose solve accordingly.
-\paragraph{Semantic districts.} A frozen self-supervised vision transformer (base DINOv3-B/16~\cite{Simoni2025}; the choice of backbone is examined below) produces a patch feature grid; its $\ell_2$-normalised rows are clustered into $K$ districts with k-means. Districts are \emph{semantic} rather than spatial: an instrument votes as one bloc regardless of where it lies in the frame, which lets independent movers self-identify without a mask.
+\paragraph{Semantic districts.} A frozen self-supervised vision transformer (base DINOv3-B/16~\cite{Simeoni2025}; the choice of backbone is examined below) produces a patch feature grid; its $\ell_2$-normalised rows are clustered into $K$ districts with k-means. Districts are \emph{semantic} rather than spatial: an instrument votes as one bloc regardless of where it lies in the frame, which lets independent movers self-identify without a mask.
 
 \begin{figure}[!ht]
     \centering
