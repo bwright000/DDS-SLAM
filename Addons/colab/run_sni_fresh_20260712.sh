@@ -187,6 +187,20 @@ OV = {
   'oracle':   {'func': {'use_gt_pose': True}, 'mapping': {'joint_opt': False}},
   'depthpin': {'tracking': {'w_depth': 5}},
   'noconst':  {'tracking': {'const_speed_assumption': False}},
+  # 'scaled' = noconst + the 3 scale corrections (audit 2026-07-15, user-locked "all three"):
+  #  - planes_res ratio-true to authors' Replica cells/axis (our config was 2.5-3x coarser
+  #    than its own declared ratio principle: geo 133 -> 50 cells; render-quality fix)
+  #  - joint_opt_cam_lr 1e-3 -> 1e-5: BA pose step is METRES; 1mm/Adam-step vs 0.05-0.4mm/frame
+  #    true motion = the same optimiser-noise-floor mechanism DID corrects in DDS
+  #  - lr_T/lr_R 1e-4 -> 1e-5: tracking step also metres; scale-consistent with the 100x
+  #    smaller scene (authors: 1e-3 vs cm/frame)
+  'scaled': {
+    'tracking': {'const_speed_assumption': False, 'lr_T': 1.0e-5, 'lr_R': 1.0e-5},
+    'mapping': {'joint_opt_cam_lr': 1.0e-5},
+    'planes_res':   {'coarse': 0.003, 'fine': 0.001, 'bound_dividable': 0.003},
+    'c_planes_res': {'coarse': 0.003, 'fine': 0.0005},
+    's_planes_res': {'coarse': 0.003, 'fine': 0.0005},
+  },
 }[v]
 cfg = yaml.safe_load(open(p)) or {}
 def merge(dst, src):
