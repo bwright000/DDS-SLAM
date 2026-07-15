@@ -882,21 +882,23 @@ Figures~\ref{fig:traj3d_compare} and \ref{fig:render_compare} put the two halves
     \centering
     \includegraphics[width=\linewidth]{figures/fig_traj3d_compare.png}
     \caption{Sim(3)-aligned trajectories of every benchmarked system against ground
-    truth on C\_2/001. Left: all systems --- the render-loss trackers oscillate around
-    the true path while under- and over-travelling it. Right: DID-SLAM against the
-    base in isolation; the base scribbles around the path it is following, DID-SLAM
-    follows it. Estimates outside the plotted volume are clipped for legibility.}
+    truth on C\_2/001. One panel per system (ATE$_{\mathrm{RMSE}}$ in each
+    title): DID-SLAM follows the true path; the render-loss trackers oscillate
+    around it while under- and over-travelling. Estimates outside the plotted
+    volume are clipped for legibility.}
     \label{fig:traj3d_compare}
 \end{figure}
 
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_render_compare.png}
-    \caption{The same C\_2/001 frame rendered by every benchmarked system, against the
-    input frame. DID-SLAM and the base render sharpest; SNI-SLAM blurs where its
-    depth-pinned sampling finds no surface; the splatting systems smear under the
-    camera travel; Semantic-SuPer's rasterised surfels are sparse. PERSEUS is
-    tracking-only and produces no reconstruction.}
+    \caption{Three C\_2/001 frames (early, mid, late) rendered by every render-capable
+    system, against the input frame. Frames are chosen where all systems score
+    their best joint PSNR, so each row shows every system near its best. DID-SLAM
+    and the base render sharpest; SNI-SLAM blurs where its depth-pinned sampling
+    finds no surface; the splatting systems smear under camera travel; and
+    Semantic-SuPer's rasterised surfels grow sparse as the sequence progresses.
+    PERSEUS is tracking-only and renders nothing.}
     \label{fig:render_compare}
 \end{figure}
 \FloatBarrier

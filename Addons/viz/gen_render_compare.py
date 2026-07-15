@@ -1,14 +1,14 @@
 #!/usr/bin/env python
-"""figures/fig_render_compare.png -- one C_2/001 frame rendered by every benchmarked system.
+"""figures/fig_render_compare.png -- three C_2/001 frames rendered by every render-capable
+system, 3 rows (frames) x 7 columns (GT + 6 systems). PERSEUS is tracking-only and excluded.
 
-Tiles: GT + DID-SLAM + DDS-SLAM(base) + SNI-SLAM + SGS-SLAM + SemGauss-SLAM + Semantic-SuPer
-(PERSEUS renders nothing; noted in the empty cell). DID/base renders are not shipped as frames
-in their drops, so they are cropped from the Rendered-RGB panel of panels.mp4 (always grid cell
-row 0, col 1 at 480x360) and restored to 16:9. Frame index is chosen from SGS-SLAM's keyframe
-set (the sparsest renderer) nearest the requested target.
+Frame selection: at every SGS keyframe index (the sparsest renderer), compute each model's
+PSNR against the GT frame; score the frame by the MINIMUM PSNR across models (frames every
+system renders reasonably), and pick the best-scoring frame from each third of the sequence
+so the rows span early/mid/late. DID/base renders are cropped from the Rendered-RGB panel of
+their panels.mp4 (grid cell row 0 col 1; burned-in label strip skipped) and restored to 16:9.
 
-Local usage:
-  python Addons/viz/gen_render_compare.py --target 330 --out figures/fig_render_compare.png
+Local usage: python Addons/viz/gen_render_compare.py --out figures/fig_render_compare.png
 """
 import argparse
 import os
@@ -26,69 +26,91 @@ SRC = {
     'semgauss': B + r'/SemGauss-SLAM_bench_20260704-20260712T170730Z-2-001/SemGauss-SLAM_bench_20260704/C2_001',
     'semsup': B + r'/SemanticSuPer_crcd_20260703-20260704T145257Z-3-002/SemanticSuPer_crcd_20260703/C2_001/C2_001',
 }
-TW, TH = 480, 270
+TW, TH = 300, 169
+CMP = (320, 180)   # PSNR comparison resolution
 
 
-def video_render_tile(path, idx):
+def video_tile(path, idx):
     cap = cv2.VideoCapture(path)
     cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
     ok, fr = cap.read()
     cap.release()
     assert ok, (path, idx)
-    tile = fr[30:360, 480:960]                # Rendered RGB = grid cell (0,1); skip the burned-in label strip
-    return cv2.resize(tile, (TW, TH))         # restore 16:9
+    return fr[30:360, 480:960]
 
 
-def img_tile(path):
-    im = cv2.imread(path)
-    assert im is not None, path
-    return cv2.resize(im, (TW, TH))
+def model_tiles(idx):
+    """dict name->BGR image (native sizes) for frame idx."""
+    return {
+        'DID-SLAM (ours)': video_tile(SRC['did_video'], idx),
+        'DDS-SLAM (base)': video_tile(SRC['base_video'], idx),
+        'SNI-SLAM': cv2.imread(f"{SRC['sni']}/{idx}.jpg"),
+        'SGS-SLAM': cv2.imread(f"{SRC['sgs']}/{idx}.jpg"),
+        'SemGauss-SLAM': cv2.imread(f"{SRC['semgauss']}/{idx}.jpg"),
+        'Semantic-SuPer': cv2.imread(f"{SRC['semsup']}/{idx}.jpg"),
+    }
+
+
+def psnr(a, b):
+    a = cv2.resize(a, CMP).astype(np.float32) / 255.0
+    b = cv2.resize(b, CMP).astype(np.float32) / 255.0
+    mse = float(np.mean((a - b) ** 2))
+    return 99.0 if mse < 1e-12 else -10.0 * np.log10(mse)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--target', type=int, default=330)
     ap.add_argument('--out', default='figures/fig_render_compare.png')
     args = ap.parse_args()
 
     sgs_idx = sorted(int(m.group(1)) for f in os.listdir(SRC['sgs'])
                      if (m := re.match(r'^(\d+)\.jpg$', f)))
-    idx = min(sgs_idx, key=lambda i: abs(i - args.target))
-    print(f'frame index: {idx} (nearest SGS keyframe to {args.target})')
+    sgs_idx = [i for i in sgs_idx if i >= 60]   # skip the trivial fresh-map opening
+    scores = {}
+    for i in sgs_idx:
+        gtp = f"{SRC['semgauss']}/{i}_gt.png"
+        gt = cv2.imread(gtp)
+        if gt is None:
+            continue
+        try:
+            tiles = model_tiles(i)
+        except AssertionError:
+            continue
+        if any(v is None for v in tiles.values()):
+            continue
+        scores[i] = min(psnr(v, gt) for v in tiles.values())
+    a, b = min(scores), max(scores) + 1
+    third = (b - a) // 3
+    picks = []
+    for lo, hi in [(a, a + third), (a + third, a + 2 * third), (a + 2 * third, b)]:
+        cand = {i: s for i, s in scores.items() if lo <= i < hi}
+        picks.append(max(cand, key=cand.get))
+    print('picked frames (best min-PSNR per third):', picks,
+          '| scores:', [round(scores[i], 2) for i in picks])
 
-    tiles = [
-        ('ground truth (frame %d)' % idx, img_tile(f"{SRC['semgauss']}/{idx}_gt.png")),
-        ('DID-SLAM (ours)', video_render_tile(SRC['did_video'], idx)),
-        ('DDS-SLAM (base)', video_render_tile(SRC['base_video'], idx)),
-        ('SNI-SLAM', img_tile(f"{SRC['sni']}/{idx}.jpg")),
-        ('SGS-SLAM', img_tile(f"{SRC['sgs']}/{idx}.jpg")),
-        ('SemGauss-SLAM', img_tile(f"{SRC['semgauss']}/{idx}.jpg")),
-        ('Semantic-SuPer', img_tile(f"{SRC['semsup']}/{idx}.jpg")),
-        ('PERSEUS', None),                    # tracking-only
-    ]
+    COLS = ['ground truth', 'DID-SLAM (ours)', 'DDS-SLAM (base)', 'SNI-SLAM',
+            'SGS-SLAM', 'SemGauss-SLAM', 'Semantic-SuPer']
 
     from PIL import Image, ImageDraw, ImageFont
     F = lambda sz, b=False: ImageFont.truetype(
         r'C:\Windows\Fonts\arial' + ('bd' if b else '') + '.ttf', sz)
-    GAP, PADT = 8, 34
-    COLS, ROWS = 4, 2
-    W = COLS * (TW + GAP) + GAP
-    H = ROWS * (TH + PADT + GAP) + GAP
+    GAP, PADT, PADL = 6, 30, 86
+    W = PADL + 7 * (TW + GAP) + GAP
+    H = PADT + 3 * (TH + GAP) + GAP
     img = Image.new('RGB', (W, H), 'white')
     d = ImageDraw.Draw(img)
-    for i, (label, tile) in enumerate(tiles):
-        r, c = divmod(i, COLS)
-        x = GAP + c * (TW + GAP)
-        y = GAP + r * (TH + PADT + GAP)
-        d.text((x + TW // 2, y + PADT // 2), label, font=F(16, True),
-               fill=(32, 33, 36), anchor='mm')
-        if tile is None:
-            d.rectangle([x, y + PADT, x + TW - 1, y + PADT + TH - 1],
-                        outline=(200, 200, 200), width=1)
-            d.text((x + TW // 2, y + PADT + TH // 2), 'tracking-only\n(no reconstruction)',
-                   font=F(15), fill=(150, 150, 150), anchor='mm', align='center')
-        else:
-            img.paste(Image.fromarray(cv2.cvtColor(tile, cv2.COLOR_BGR2RGB)), (x, y + PADT))
+    for c, h in enumerate(COLS):
+        d.text((PADL + c * (TW + GAP) + TW // 2, PADT // 2 + 2), h,
+               font=F(13, True), fill=(32, 33, 36), anchor='mm')
+    for r, idx in enumerate(picks):
+        y = PADT + r * (TH + GAP)
+        d.text((PADL - 10, y + TH // 2), f'frame\n{idx}', font=F(13),
+               fill=(60, 60, 60), anchor='rm', align='right')
+        row = [cv2.imread(f"{SRC['semgauss']}/{idx}_gt.png")] + list(model_tiles(idx).values())
+        for c, tile in enumerate(row):
+            tile = cv2.resize(tile, (TW, TH))
+            img.paste(Image.fromarray(cv2.cvtColor(tile, cv2.COLOR_BGR2RGB)),
+                      (PADL + c * (TW + GAP), y))
     img.save(args.out)
     print('wrote', args.out, img.size)
 
