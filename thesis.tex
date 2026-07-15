@@ -543,6 +543,19 @@ Two guards control the weight. First, on rays where the map holds an accumulated
 \label{sec:motion}
 The second contribution decides, for every frame, whether the camera is moving and which regions move independently of it, and gates the pose solve accordingly.
 \paragraph{Semantic districts.} A frozen self-supervised vision transformer (base DINOv3-B/16~\cite{Simoni2025}; the choice of backbone is examined below) produces a patch feature grid; its $\ell_2$-normalised rows are clustered into $K$ districts with k-means. Districts are \emph{semantic} rather than spatial: an instrument votes as one bloc regardless of where it lies in the frame, which lets independent movers self-identify without a mask.
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=\linewidth]{figures/fig_dino_districts.png}
+    \caption{From features to districts. Left: the input frame. Centre: PCA
+    projection of the DINOv3-B/16 patch tokens --- the frame as the featuriser
+    sees it, with the instruments feature-distinct from the tissue they touch.
+    Right: the $K = 12$ k-means districts the deployed gate computes from
+    exactly these tokens; districts are semantic rather than spatial, so an
+    instrument votes as one bloc regardless of where it lies in the frame.}
+    \label{fig:dino_districts}
+\end{figure}
+\FloatBarrier
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=1\linewidth]{figures/fig_semantic_districts.png}

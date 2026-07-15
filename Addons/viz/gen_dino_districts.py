@@ -116,7 +116,7 @@ def main():
 
     font_b, font = get_font(18, bold=True), get_font(15)
     HEADS = ['input frame', 'DINOv3 patch tokens (PCA)', f'k-means districts (K = {args.n_groups})']
-    GAP, PADT, PADL = 8, 46, (150 if args.labels else 10)
+    GAP, PADT, PADL = 8, 46, (210 if args.labels else 10)
     pw, ph = args.panel_w, rows[0][0].shape[0]
     Wc = PADL + 3 * (pw + GAP) + 4
     Hc = PADT + len(rows) * (ph + GAP) + 4
