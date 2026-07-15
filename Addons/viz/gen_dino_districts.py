@@ -98,12 +98,23 @@ def main():
 
     # compose with headers + row labels (PIL for text quality)
     from PIL import Image, ImageDraw, ImageFont
-    try:
-        font_b = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 18)
-        font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', 15)
-    except OSError:
-        font_b = ImageFont.truetype(r'C:\Windows\Fonts\arialbd.ttf', 18)
-        font = ImageFont.truetype(r'C:\Windows\Fonts\arial.ttf', 15)
+
+    def get_font(size, bold=False):
+        cands = ['/usr/share/fonts/truetype/dejavu/DejaVuSans%s.ttf' % ('-Bold' if bold else ''),
+                 r'C:\Windows\Fonts\arial%s.ttf' % ('bd' if bold else '')]
+        try:  # matplotlib ships DejaVu -- present wherever the eval stack is
+            from matplotlib import font_manager
+            cands.insert(0, font_manager.findfont('DejaVu Sans' + (':bold' if bold else '')))
+        except Exception:
+            pass
+        for p in cands:
+            try:
+                return ImageFont.truetype(p, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    font_b, font = get_font(18, bold=True), get_font(15)
     HEADS = ['input frame', 'DINOv3 patch tokens (PCA)', f'k-means districts (K = {args.n_groups})']
     GAP, PADT, PADL = 8, 46, (150 if args.labels else 10)
     pw, ph = args.panel_w, rows[0][0].shape[0]
