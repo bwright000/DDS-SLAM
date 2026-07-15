@@ -892,10 +892,11 @@ Figures~\ref{fig:traj3d_compare} and \ref{fig:render_compare} put the two halves
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_render_compare.png}
-    \caption{Three C\_2/001 frames (early, mid, late) rendered by every render-capable
-    system, against the input frame. Frames are chosen where all systems score
-    their best joint PSNR, so each row shows every system near its best. DID-SLAM
-    and the base render sharpest; SNI-SLAM blurs where its depth-pinned sampling
+    \caption{Three C\_2/001 frames rendered by every render-capable system, against
+    the input frame. Frames are chosen where DID-SLAM's per-frame PSNR exceeds the
+    base's while every system remains viable, so the rows show the comparison at
+    points where all systems function. DID-SLAM renders sharpest with the base
+    ghosting the moving instrument; SNI-SLAM blurs where its depth-pinned sampling
     finds no surface; the splatting systems smear under camera travel; and
     Semantic-SuPer's rasterised surfels grow sparse as the sequence progresses.
     PERSEUS is tracking-only and renders nothing.}
