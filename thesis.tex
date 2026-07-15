@@ -876,6 +876,30 @@ Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 4.64 & 33.52 & 0.800 & 8.46 & 0.133 
 \end{table}
 \FloatBarrier
 
+Figures~\ref{fig:traj3d_compare} and \ref{fig:render_compare} put the two halves of the table side by side on the largest-travel sequence.
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=\linewidth]{figures/fig_traj3d_compare.png}
+    \caption{Sim(3)-aligned trajectories of every benchmarked system against ground
+    truth on C\_2/001. Left: all systems --- the render-loss trackers oscillate around
+    the true path while under- and over-travelling it. Right: DID-SLAM against the
+    base in isolation; the base scribbles around the path it is following, DID-SLAM
+    follows it. Estimates outside the plotted volume are clipped for legibility.}
+    \label{fig:traj3d_compare}
+\end{figure}
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=\linewidth]{figures/fig_render_compare.png}
+    \caption{The same C\_2/001 frame rendered by every benchmarked system, against the
+    input frame. DID-SLAM and the base render sharpest; SNI-SLAM blurs where its
+    depth-pinned sampling finds no surface; the splatting systems smear under the
+    camera travel; Semantic-SuPer's rasterised surfels are sparse. PERSEUS is
+    tracking-only and produces no reconstruction.}
+    \label{fig:render_compare}
+\end{figure}
+\FloatBarrier
 \subsection{Ablations}
 \label{sec:results_ablations}
 
