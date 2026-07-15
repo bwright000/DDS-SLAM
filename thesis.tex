@@ -46,11 +46,11 @@ aleatoric uncertainty that down-weights measurements the static map cannot
 explain, and a label-free motion attribution that separates camera ego-motion
 from independent scene motion and freezes the pose when the camera is still.
 Calibrated on two design sequences and evaluated unseen on three held-out
-ones, DID-SLAM lowers absolute trajectory error on all five ($-31\%$ on
-average, $-51\%$ on the largest-travel held-out sequence) at unchanged
+ones, DID-SLAM lowers absolute trajectory error on all five ($-27\%$ on
+average, $-49\%$ on the largest-travel held-out sequence) at unchanged
 rendering quality, and records the best trajectory of six benchmarked systems
-on four of five sequences while reaching parity with a dedicated tracking-only
-method on the fifth. The results indicate that on deforming, monocular-depth
+on every sequence, the closest contest decided by $0.15$\,mm against a
+dedicated tracking-only method. The results indicate that on deforming, monocular-depth
 surgical scenes, a neural-SDF substrate with explicit motion handling tracks
 more reliably than either render-loss or splatting alternatives.
 \end{abstract}
@@ -63,7 +63,7 @@ In surgery, the static-world assumption breaks: the map itself is dynamic, so ca
 
 This thesis addresses that gap on the Comprehensive Robotic Cholecystectomy Dataset (CRCD)~\cite{Oh2024}, which supplies stereo endoscopic video and synchronised robot kinematics across 18 ex-vivo procedures but lacks the additional modalities a semantic SLAM pipeline requires. We augment it into a reusable benchmark: instrument and tissue masks are re-propagated with current foundation-model segmentation, metric depth is generated with MoGe-2 and stereo-matched for correct scale, and the camera trajectory is extracted and cleaned from the kinematic stream (Section~\ref{sec:motion_analysis}). The result is a set of self-contained sequences carrying every file a semantic SLAM method needs, laid out to load under both the TUM and Replica benchmark conventions for drop-in reuse.
 
-This augmented dataset proves challenging for existing pipelines, whose tracking and mapping degrade under its wide range of deformation and camera motion. In parallel we present \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), which extends the deformable neural-SDF system DDS-SLAM~\cite{Shan2024} along two axes --- attenuating measurements the static map cannot explain, and attributing each frame's motion to the camera or to the scene --- giving the tracker an explicit sense of what in the view is moving and why. Both mechanisms are set out in full as the third contribution below. Calibrated on two design sequences and evaluated unseen on three held-out ones, DID-SLAM lowers trajectory error on all five ($-31\%$ mean, up to $-51\%$ held-out) at unchanged rendering quality; against the benchmarked state-of-the-art it records the best trajectory on four of the five sequences and reaches parity with a dedicated tracking-only system on the fifth, while remaining the only method strong on both halves of the problem.
+This augmented dataset proves challenging for existing pipelines, whose tracking and mapping degrade under its wide range of deformation and camera motion. In parallel we present \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), which extends the deformable neural-SDF system DDS-SLAM~\cite{Shan2024} along two axes --- attenuating measurements the static map cannot explain, and attributing each frame's motion to the camera or to the scene --- giving the tracker an explicit sense of what in the view is moving and why. Both mechanisms are set out in full as the third contribution below. Calibrated on two design sequences and evaluated unseen on three held-out ones, DID-SLAM lowers trajectory error on all five ($-27\%$, up to $-49\%$ held-out) at unchanged rendering quality; against the benchmarked state-of-the-art it records the best trajectory on every sequence --- the closest contest decided by $0.15$\,mm against a dedicated tracking-only system --- while remaining the only method strong on both halves of the problem.
 
 
 
@@ -72,7 +72,7 @@ This thesis makes three contributions:
 \begin{enumerate}
 \item A one-shot, human-in-the-loop segmentation strategy for unseen surgical domains built on the frozen foundation model SAM~3~\cite{Carion2025}: sparse human-annotated anchor keyframes seed SAM~3's video propagation to generate the dense per-frame semantic annotations a semantic SLAM pipeline requires, without fine-tuning the model.
 \item A reorganisation of the CRCD~\cite{Oh2024} into self-contained \texttt{Sequences} consumable by both TUM and Replica data-loaders (Section~\ref{sec:data_packs}), establishing a benchmark for semantic SLAM in surgical environments.
-\item \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), an uncertainty-aware extension of DDS-SLAM~\cite{Shan2024} on a neural-SDF substrate, contributing: (i) aleatoric-uncertainty down-weighting, ported from WildGS-SLAM~\cite{Zheng2024} to a surgical neural-SDF system via a small uncertainty head (UncertaintyNet) that drives both tracking and mapping; (ii) a label-free split of camera ego-motion from independent scene motion, combining frozen self-supervised vision-transformer features~\cite{Oquab2023,Simeoni2025} with a depth-signature egomotion fit and a geometric epipolar agreement, with no trained segmenter --- consumed as a pose freeze that is re-pinned through bundle adjustment so the decision persists in the trajectory. Design choices were locked on two design sequences and evaluated unseen on three held-out ones; the combination improves tracking on all five ($-31\%$ mean ATE against the unmodified base, $-51\%$ on the largest-travel held-out sequence) at level rendering quality.
+\item \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), an uncertainty-aware extension of DDS-SLAM~\cite{Shan2024} on a neural-SDF substrate, contributing: (i) aleatoric-uncertainty down-weighting, ported from WildGS-SLAM~\cite{Zheng2024} to a surgical neural-SDF system via a small uncertainty head (UncertaintyNet) that drives both tracking and mapping; (ii) a label-free split of camera ego-motion from independent scene motion, combining frozen self-supervised vision-transformer features~\cite{Oquab2023,Simeoni2025} with a depth-signature egomotion fit and a geometric epipolar agreement, with no trained segmenter --- consumed as a pose freeze that is re-pinned through bundle adjustment so the decision persists in the trajectory. Design choices were locked on two design sequences and evaluated unseen on three held-out ones; the combination improves tracking on all five ($-27\%$ ATE against the unmodified base, $-49\%$ on the largest-travel held-out sequence) at level rendering quality.
 \end{enumerate}
 
 
@@ -759,7 +759,7 @@ The final DID-SLAM configuration was locked using the two test sequences (C\_1/0
 
 \begin{table}[!ht]
 \centering
-\caption{DID-SLAM (final configuration) against the unmodified DDS-SLAM base on the five evaluation sequences, identical pipeline, single seed (base E\_3/005 is the mean of three seeds). Sim(3) ATE$_{\mathrm{mean}}$ in mm; path ratio, aligned $|r|_{\mathrm{dom}}$ and rendering metrics per Section~\ref{sec:eval_metrics}. The three held-out sequences were never used during development.}
+\caption{DID-SLAM (final configuration) against the unmodified DDS-SLAM base on the five evaluation sequences, identical pipeline, single seed (base E\_3/005 is the mean of three seeds). Sim(3) ATE$_{\mathrm{RMSE}}$ in mm; path ratio, aligned $|r|_{\mathrm{dom}}$ and rendering metrics per Section~\ref{sec:eval_metrics}. The three held-out sequences were never used during development.}
 \label{tab:results_main}
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{l l r rrr rr rrrr}
@@ -769,20 +769,20 @@ The final DID-SLAM configuration was locked using the two test sequences (C\_1/0
 Sequence & Role & $N$ & base & DID & $\Delta$ & path ratio & $|r|_{\mathrm{dom}}$ &
 PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
 \midrule
-C\_1/001 & test   &  360 & 1.80 & \textbf{1.43} & $-21\%$ & 2.23 & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
-E\_3/005 & test   &  265 & 4.45 & \textbf{3.63} & $-18\%$ & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
-C\_2/001 & eval. &  730 & 6.99 & \textbf{3.41} & $-51\%$ & 1.88 & 0.951 & 21.84 & 0.762 & 0.481 & 11.68 \\
-C\_3/001 & eval. & 1527 & 7.55 & \textbf{6.09} & $-19\%$ & 3.05 & 0.820 & 24.39 & 0.828 & 0.424 & 10.67 \\
-G\_3/001 & eval. & 1987 & 3.51 & \textbf{2.15} & $-39\%$ & 5.93 & 0.976 & 28.78 & 0.909 & 0.300 & 15.03 \\
+C\_1/001 & test   &  360 & 2.03 & \textbf{1.60} & $-21\%$ & 2.23 & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
+E\_3/005 & test   &  265 & 5.49 & \textbf{4.69} & $-15\%$ & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
+C\_2/001 & eval. &  730 & 7.66 & \textbf{3.93} & $-49\%$ & 1.88 & 0.951 & 21.84 & 0.762 & 0.481 & 11.68 \\
+C\_3/001 & eval. & 1527 & 8.29 & \textbf{7.61} & $-8\%$ & 3.05 & 0.820 & 24.39 & 0.828 & 0.424 & 10.67 \\
+G\_3/001 & eval. & 1987 & 4.21 & \textbf{2.28} & $-46\%$ & 5.93 & 0.976 & 28.78 & 0.909 & 0.300 & 15.03 \\
 \midrule
-mean (5) & & --- & 4.86 & \textbf{3.34} & $-31\%$ & 3.32 & 0.839 & 24.94 & 0.825 & 0.419 & 12.63 \\
+mean (5) & & --- & 5.54 & \textbf{4.02} & $-27\%$ & 3.32 & 0.839 & 24.94 & 0.825 & 0.419 & 12.63 \\
 \bottomrule
 \end{tabular}}
 \end{table}
 \FloatBarrier
-DID-SLAM improves tracking on all five sequences, with the largest gain on a sequence it never saw during development ($-51\%$ on C\_2/001, alongside $-19\%$ and $-39\%$ on the other two held-out sequences; the longest of these, G\_3/001 at 1987 frames, produces the best result of the five at $2.15$\,mm). This behaviour was expected - the held-out set is $54$--$82\%$ camera-still, which is the regime the freeze, its bundle-adjustment re-pin and the corrected pose step were built to handle. The shape of the trajectory improves alongside its error: the aligned dominant-axis correlation on the held-out sequences reaches $0.95$--$0.98$ (C\_2, G\_3) against $0.86$--$0.93$ for the base, and the path ratio on C\_2/001 falls from $6.3$ to $1.9$. As Figure~\ref{fig:did_traj_c2} shows, the base estimate oscillates around the true path while the DID-SLAM estimate follows it.
+DID-SLAM improves tracking on all five sequences, with the largest gain on a sequence it never saw during development ($-49\%$ on C\_2/001, alongside $-8\%$ and $-46\%$ on the other two held-out sequences; the longest of these, G\_3/001 at 1987 frames, produces the best of the held-out three at $2.28$\,mm). This behaviour was expected - the held-out set is $54$--$82\%$ camera-still, which is the regime the freeze, its bundle-adjustment re-pin and the corrected pose step were built to handle. The shape of the trajectory improves alongside its error: the aligned dominant-axis correlation on the held-out sequences reaches $0.95$--$0.98$ (C\_2, G\_3) against $0.86$--$0.93$ for the base, and the path ratio on C\_2/001 falls from $6.3$ to $1.9$. As Figure~\ref{fig:did_traj_c2} shows, the base estimate oscillates around the true path while the DID-SLAM estimate follows it.
 
-These gains carry no observable reconstruction cost. Across the five sequences the rendering battery stays level with the base (mean PSNR $24.9$, LPIPS $0.42$), consistent with the design choice to keep the map training on frozen frames. The base does score better on Depth-$L_1$, and the gap tracks its over-travel: an unconstrained pose acts as extra degrees of freedom that absorb the frame-to-frame inconsistency of the monocular depth, improving input-versus-output self-consistency while corrupting the trajectory --- on G\_3/001, where the base over-travels most ($18.3\times$ vs $5.9\times$), the Depth-$L_1$ gap is widest, while on E\_3/005, where the path ratios are comparable, the two are equal. The deforming sequence remains the hardest: E\_3/005 improves by $18\%$ but keeps the weakest shape correlation ($0.46$) and the widest single-seed spread of the five. Most of its remaining error sits in a segment where the true camera motion falls below the optical-flow noise floor; no threshold on a flow statistic can recover motion the flow cannot see, and this sets the practical limit of the gate. Both points are returned to in Section~\ref{sec:discussion}.
+These gains carry no observable reconstruction cost. Across the five sequences the rendering battery stays level with the base (mean PSNR $24.9$, LPIPS $0.42$), consistent with the design choice to keep the map training on frozen frames. The base does score better on Depth-$L_1$, and the gap tracks its over-travel: an unconstrained pose acts as extra degrees of freedom that absorb the frame-to-frame inconsistency of the monocular depth, improving input-versus-output self-consistency while corrupting the trajectory --- on G\_3/001, where the base over-travels most ($18.3\times$ vs $5.9\times$), the Depth-$L_1$ gap is widest, while on E\_3/005, where the path ratios are comparable, the two are equal. The deforming sequence remains the hardest: E\_3/005 improves by $15\%$ but keeps the weakest shape correlation ($0.46$) and the widest single-seed spread of the five. Most of its remaining error sits in a segment where the true camera motion falls below the optical-flow noise floor; no threshold on a flow statistic can recover motion the flow cannot see, and this sets the practical limit of the gate. Both points are returned to in Section~\ref{sec:discussion}.
 
 \begin{figure}[!ht]
     \centering
@@ -792,16 +792,16 @@ These gains carry no observable reconstruction cost. Across the five sequences t
 \end{figure}
 \FloatBarrier
 
-These comparisons are reported at a single seed; the base's measured seed-to-seed spread on E\_3/005 ($\pm 0.76$\,mm) indicates the scale of run-to-run variability, and the single-seed protocol is discussed as a limitation in Section~\ref{sec:discussion}.
+These comparisons are reported at a single seed; the base's measured seed-to-seed spread on E\_3/005 ($\pm 0.60$\,mm) indicates the scale of run-to-run variability, and the single-seed protocol is discussed as a limitation in Section~\ref{sec:discussion}.
 
 \subsection{Comparison with the SoTA benchmark}
 \label{sec:results_sota}
 
-Table~\ref{tab:results_sota} places DID-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, split per snippet so each sequence's regime --- camera-still, large-travel, deforming --- can be read directly. The methods differ in what they natively expose, and three caveats carry through the table: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph ($\dagger$); PERSEUS and SemGauss-SLAM report ATE$_{\mathrm{mean}}$, their exported statistic ($\ddagger$); and SGS-SLAM renders only its keyframe set ($*$). SNI-SLAM's benchmark run is being repeated at the time of writing and its rows are reported as pending.
+Table~\ref{tab:results_sota} places DID-SLAM against the benchmarked systems of Section~\ref{sec:benchmarking}, split per snippet so each sequence's regime --- camera-still, large-travel, deforming --- can be read directly. The methods differ in what they natively expose, and two caveats carry through the table: Semantic-SuPer's trajectory is a camera-motion proxy read out of its deformation graph ($\dagger$), and SGS-SLAM renders only its keyframe set ($*$). Every trajectory, native or proxy, is scored by the identical Sim(3) evaluation, so every ATE in the table is the same statistic. SNI-SLAM's benchmark run is being repeated at the time of writing and its rows are reported as pending.
 
 \begin{table}[!ht]
 \centering
-\caption{DID-SLAM against the benchmarked systems, one sub-table per snippet. Tracking is Sim(3) ATE$_{\mathrm{RMSE}}$ in mm except where marked ($\ddagger$ ATE$_{\mathrm{mean}}$, the method's exported statistic; $\dagger$ camera-motion proxy, not a native pose); path ratio and aligned $|r|_{\mathrm{dom}}$ per Section~\ref{sec:eval_metrics}. SGS-SLAM renders keyframes only ($*$); its trajectory is native (SplaTAM camera state). Depth-$L_1$ is per-model self-consistency (Section~\ref{sec:eval_depth}) and is not comparable across methods. Dashes: not exported by the method.}
+\caption{DID-SLAM against the benchmarked systems, one sub-table per snippet. Tracking is Sim(3) ATE$_{\mathrm{RMSE}}$ in mm ($\dagger$: camera-motion proxy, not a native pose); path ratio and aligned $|r|_{\mathrm{dom}}$ per Section~\ref{sec:eval_metrics}. SGS-SLAM renders keyframes only ($*$); its trajectory is native (SplaTAM camera state). Depth-$L_1$ is per-model self-consistency (Section~\ref{sec:eval_depth}) and is not comparable across methods. Dashes: not exported by the method.}
 \label{tab:results_sota}
 \small
 \resizebox{\textwidth}{!}{%
@@ -813,18 +813,18 @@ Method & ATE (mm) & path ratio & $|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\u
 \midrule
 \textbf{DID-SLAM (ours)} & \textbf{1.60} & 2.23 & 0.985 & 25.49 & \textbf{0.813} & 0.437 & 10.14 \\
 DDS-SLAM (base)~\cite{Shan2024} & 2.64 & 8.11 & 0.951 & \textbf{25.91} & 0.804 & 0.448 & 7.78 \\
-PERSEUS$^{\ddagger}$ & 1.97 & 3.31 & 0.97 & --- & --- & --- & --- \\
-SemGauss-SLAM$^{\ddagger}$~\cite{Zhu2025} & 5.98 & 3.25 & 0.76 & 20.57 & 0.771 & 0.344 & 22.5 \\
+PERSEUS & 2.20 & 3.31 & 0.975 & --- & --- & --- & --- \\
+SemGauss-SLAM~\cite{Zhu2025} & 6.50 & 3.25 & 0.76 & 20.57 & 0.771 & 0.344 & 22.5 \\
 SGS-SLAM$^{*}$~\cite{sgsslam} & 4.18 & 3.39 & 0.939 & 22.45 & 0.803 & \textbf{0.315} & 23.5 \\
 SNI-SLAM~\cite{Zhu2024} & \multicolumn{7}{c}{\emph{pending}} \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 3.06 & 18.86 & 0.950 & 12.17 & 0.399 & 0.709 & 3.54 \\
 \midrule
 \multicolumn{8}{l}{\textbf{C\_2/001}} \\
 \midrule
-\textbf{DID-SLAM (ours)} & 3.93 & 1.88 & 0.951 & 21.84 & \textbf{0.762} & \textbf{0.481} & 11.68 \\
+\textbf{DID-SLAM (ours)} & \textbf{3.93} & 1.88 & 0.951 & 21.84 & \textbf{0.762} & \textbf{0.481} & 11.68 \\
 DDS-SLAM (base)~\cite{Shan2024} & 6.78 & 8.66 & 0.879 & \textbf{22.57} & 0.728 & 0.552 & 8.72 \\
-PERSEUS$^{\ddagger}$ & \textbf{3.64} & 2.93 & 0.98 & --- & --- & --- & --- \\
-SemGauss-SLAM$^{\ddagger}$~\cite{Zhu2025} & 7.25 & 13.14 & 0.80 & 16.31 & 0.674 & 0.533 & 44.2 \\
+PERSEUS & 4.07 & 2.93 & 0.976 & --- & --- & --- & --- \\
+SemGauss-SLAM~\cite{Zhu2025} & 8.64 & 13.14 & 0.80 & 16.31 & 0.674 & 0.533 & 44.2 \\
 SGS-SLAM$^{*}$~\cite{sgsslam} & 7.64 & 8.15 & 0.864 & 17.52 & 0.701 & 0.504 & 41.6 \\
 SNI-SLAM~\cite{Zhu2024} & \multicolumn{7}{c}{\emph{pending}} \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 8.32 & 13.93 & 0.890 & 8.72 & 0.162 & 0.882 & 7.2 \\
@@ -833,8 +833,8 @@ Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 8.32 & 13.93 & 0.890 & 8.72 & 0.162 
 \midrule
 \textbf{DID-SLAM (ours)} & \textbf{7.61} & 3.05 & 0.820 & \textbf{24.39} & \textbf{0.828} & \textbf{0.424} & 10.67 \\
 DDS-SLAM (base)~\cite{Shan2024} & \multicolumn{7}{c}{\emph{pending (run incomplete at the time of writing)}} \\
-PERSEUS$^{\ddagger}$ & 10.69 & 0.96 & 0.48 & --- & --- & --- & --- \\
-SemGauss-SLAM$^{\ddagger}$~\cite{Zhu2025} & 8.14 & 23.60 & 0.90 & 17.78 & 0.783 & 0.503 & 24.6 \\
+PERSEUS & 11.64 & 0.96 & 0.479 & --- & --- & --- & --- \\
+SemGauss-SLAM~\cite{Zhu2025} & 9.12 & 23.60 & 0.90 & 17.78 & 0.783 & 0.503 & 24.6 \\
 SGS-SLAM$^{*}$~\cite{sgsslam} & 9.31 & 13.04 & 0.842 & 18.78 & 0.798 & 0.508 & 26.1 \\
 SNI-SLAM~\cite{Zhu2024} & \multicolumn{7}{c}{\emph{pending}} \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 9.76 & 23.50 & 0.816 & 8.54 & 0.242 & 0.868 & 5.75 \\
@@ -843,8 +843,8 @@ Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 9.76 & 23.50 & 0.816 & 8.54 & 0.242 
 \midrule
 \textbf{DID-SLAM (ours)} & \textbf{4.69} & 3.52 & 0.463 & 24.20 & \textbf{0.812} & 0.455 & 15.65 \\
 DDS-SLAM (base)~\cite{Shan2024} & 5.31 & 2.62 & 0.647 & \textbf{24.93} & 0.801 & 0.483 & 15.44 \\
-PERSEUS$^{\ddagger}$ & 4.84 & 0.51 & 0.18 & --- & --- & --- & --- \\
-SemGauss-SLAM$^{\ddagger}$~\cite{Zhu2025} & 5.12 & 1.70 & 0.34 & 17.31 & 0.726 & 0.509 & 50.0 \\
+PERSEUS & 5.87 & 0.51 & 0.177 & --- & --- & --- & --- \\
+SemGauss-SLAM~\cite{Zhu2025} & 6.25 & 1.70 & 0.34 & 17.31 & 0.726 & 0.509 & 50.0 \\
 SGS-SLAM$^{*}$~\cite{sgsslam} & 5.33 & 1.82 & 0.471 & 19.15 & 0.780 & \textbf{0.397} & 38.1 \\
 SNI-SLAM~\cite{Zhu2024} & \multicolumn{7}{c}{\emph{pending}} \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 5.79 & 5.60 & 0.587 & 10.90 & 0.266 & 0.807 & 7.06 \\
@@ -853,8 +853,8 @@ Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 5.79 & 5.60 & 0.587 & 10.90 & 0.266 
 \midrule
 \textbf{DID-SLAM (ours)} & \textbf{2.28} & 5.93 & 0.976 & 28.78 & \textbf{0.909} & \textbf{0.300} & 15.03 \\
 DDS-SLAM (base)~\cite{Shan2024} & 4.12 & 18.25 & 0.886 & \textbf{29.68} & 0.904 & 0.317 & 10.00 \\
-PERSEUS$^{\ddagger}$ & 4.87 & 5.03 & 0.52 & --- & --- & --- & --- \\
-SemGauss-SLAM$^{\ddagger}$~\cite{Zhu2025} & \multicolumn{7}{c}{\emph{did not finish --- out of memory, A100-80GB (Section~\ref{sec:benchmarking})}} \\
+PERSEUS & 5.97 & 5.03 & 0.521 & --- & --- & --- & --- \\
+SemGauss-SLAM~\cite{Zhu2025} & \multicolumn{7}{c}{\emph{did not finish --- out of memory, A100-80GB (Section~\ref{sec:benchmarking})}} \\
 SGS-SLAM$^{*}$~\cite{sgsslam} & 5.63 & 12.37 & 0.566 & 18.40 & 0.846 & 0.447 & 39.3 \\
 SNI-SLAM~\cite{Zhu2024} & \multicolumn{7}{c}{\emph{pending}} \\
 Semantic-SuPer$^{\dagger}$~\cite{Lin2023} & 4.64 & 33.52 & 0.800 & 8.46 & 0.133 & 1.019 & 7.85 \\
@@ -870,7 +870,7 @@ Every component of the final configuration was adopted or rejected on the design
 
 \begin{table}[!ht]
 \centering
-\caption{Component ladder on the design sequences, full battery (Sim(3) ATE$_{\mathrm{mean}}$ in mm; path ratio, aligned $|r|_{\mathrm{dom}}$, rendering and Depth-$L_1$ per Section~\ref{sec:eval_metrics}). Single seed throughout except the base on E\_3/005, which is the mean of three seeds. Each row adds one component to the row above; the final model additionally carries the corrected bundle-adjustment configuration (Section~\ref{sec:hyperparams}) and the DINOv3 districts (Section~\ref{sec:motion}).}
+\caption{Component ladder on the design sequences, full battery (Sim(3) ATE$_{\mathrm{RMSE}}$ in mm; path ratio, aligned $|r|_{\mathrm{dom}}$, rendering and Depth-$L_1$ per Section~\ref{sec:eval_metrics}). Single seed throughout except the base on E\_3/005, which is the mean of three seeds. Each row adds one component to the row above; the final model additionally carries the corrected bundle-adjustment configuration (Section~\ref{sec:hyperparams}) and the DINOv3 districts (Section~\ref{sec:motion}).}
 \label{tab:results_abl}
 \small
 \resizebox{\textwidth}{!}{%
@@ -880,22 +880,22 @@ Configuration & ATE (mm) & path ratio & $|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & 
 \midrule
 \multicolumn{8}{l}{\textbf{C\_1/001}} \\
 \midrule
-Base model & 1.80 & 5.50 & 0.984 & 25.58 & 0.817 & 0.434 & 9.50 \\
-+ uncertainty (Section~\ref{sec:uncertainty}) & 1.92 & 6.76 & 0.978 & 25.61 & 0.814 & 0.430 & 10.13 \\
-+ motion attribution (Section~\ref{sec:motion}) & 1.80 & 4.00 & 0.970 & 25.60 & 0.815 & 0.430 & 10.18 \\
-Final model & \textbf{1.43} & \textbf{2.23} & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
+Base model & 2.03 & 5.50 & 0.984 & 25.58 & 0.817 & 0.434 & 9.50 \\
++ uncertainty (Section~\ref{sec:uncertainty}) & 2.10 & 6.76 & 0.978 & 25.61 & 0.814 & 0.430 & 10.13 \\
++ motion attribution (Section~\ref{sec:motion}) & 1.95 & 4.00 & 0.970 & 25.60 & 0.815 & 0.430 & 10.18 \\
+Final model & \textbf{1.60} & \textbf{2.23} & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
 \midrule
 \multicolumn{8}{l}{\textbf{E\_3/005}} \\
 \midrule
-Base model & 4.45 & 1.95 & 0.401 & 24.43 & 0.814 & 0.456 & 15.63 \\
-+ uncertainty (Section~\ref{sec:uncertainty}) & 5.01 & 2.36 & 0.052 & 24.00 & 0.799 & 0.484 & 15.67 \\
-+ motion attribution (Section~\ref{sec:motion}) & \textbf{2.87} & 3.17 & 0.756 & 24.02 & 0.806 & 0.464 & 14.33 \\
-Final model & 3.63 & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
+Base model & 5.49 & 1.95 & 0.401 & 24.43 & 0.814 & 0.456 & 15.63 \\
++ uncertainty (Section~\ref{sec:uncertainty}) & 5.93 & 2.36 & 0.052 & 24.00 & 0.799 & 0.484 & 15.67 \\
++ motion attribution (Section~\ref{sec:motion}) & \textbf{3.66} & 3.17 & 0.756 & 24.02 & 0.806 & 0.464 & 14.33 \\
+Final model & 4.69 & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
 \bottomrule
 \end{tabular}}
 \end{table}
 
-The ladder's gains are separable and attributable: the uncertainty head is neutral alone (its E\_3/005 sits within the base's $\pm 0.77$\,mm seed spread) but enables the weighted solve, the motion attribution pays on the deforming sequence ($-36\%$ on E\_3/005), and the corrected bundle-adjustment configuration pays on the still one ($-26\%$ on C\_1/001), with the combination transferring to the held-out set (Table~\ref{tab:results_main}). The render battery is flat down the entire ladder (PSNR within $0.2$\,dB, SSIM within $0.005$ per sequence), so every tracking gain comes free of reconstruction cost; and the final model returns a little of the motion-attribution row's E\_3/005 gain ($2.87 \to 3.63$\,mm) in exchange for the still-regime correction --- the joint trade that wins across the five sequences. The variants evaluated and not retained - the soft per-ray trust consumers, a lowered dissent threshold, $\sigma^2$-weighted bundle adjustment, and the zero-motion prior - each failed for a measured, mechanistic reason rather than by tuning accident (Sections~\ref{sec:uncertainty} and \ref{sec:motion}); notably, a lowered dissent threshold produced the single best C\_1/001 of any configuration ($1.15$\,mm) and was still rejected, because the same setting was the worst on E\_3/005 - the final configuration is the one that wins jointly.
+The ladder's gains are separable and attributable: the uncertainty head is neutral alone (its E\_3/005 sits within the base's $\pm 0.60$\,mm seed spread) but enables the weighted solve, the motion attribution pays on the deforming sequence ($-33\%$ on E\_3/005), and the corrected bundle-adjustment configuration pays on the still one (the $-18\%$ step from the motion-attribution row to the final on C\_1/001), with the combination transferring to the held-out set (Table~\ref{tab:results_main}). The render battery is flat down the entire ladder (PSNR within $0.2$\,dB, SSIM within $0.005$ per sequence), so every tracking gain comes free of reconstruction cost; and the final model returns a little of the motion-attribution row's E\_3/005 gain ($3.66 \to 4.69$\,mm) in exchange for the still-regime correction --- the joint trade that wins across the five sequences. The variants evaluated and not retained - the soft per-ray trust consumers, a lowered dissent threshold, $\sigma^2$-weighted bundle adjustment, and the zero-motion prior - each failed for a measured, mechanistic reason rather than by tuning accident (Sections~\ref{sec:uncertainty} and \ref{sec:motion}); notably, a lowered dissent threshold produced the single best C\_1/001 of any configuration and was still rejected, because the same setting was the worst on E\_3/005 - the final configuration is the one that wins jointly.
 
 
 \section{Benchmarking against SoTA Semantic-SLAM pipelines}
@@ -1013,7 +1013,7 @@ attribution pays on the deforming sequence and the corrected bundle-adjustment
 configuration on the still one, and the final configuration is a joint
 selection rather than a collection of per-sequence winners --- the lowered
 dissent threshold produced the best single C\_1/001 of any configuration
-evaluated ($1.15$\,mm) and was still rejected, because the same setting was the
+evaluated and was still rejected, because the same setting was the
 worst on E\_3/005. The uncertainty head is the honest outlier: it is neutral
 alone on the design sequences, and its value rests on the held-out transfers
 rather than the design-set ladder. That neutrality is itself informative. If
@@ -1030,7 +1030,7 @@ failure the flag-gated protocol (Section~\ref{sec:setup}) was designed to
 prevent.
 
 The deforming sequence marks the practical limit of the approach. E\_3/005
-improves by $18\%$ over the base yet keeps the weakest shape correlation of the
+improves by $15\%$ over the base yet keeps the weakest shape correlation of the
 five ($0.46$), and most of its remaining error sits in a segment where the true
 camera motion falls below the flow noise floor. No threshold on a flow statistic
 can recover motion the flow cannot see: the gate can decide not to be fooled,
@@ -1065,7 +1065,7 @@ every configuration, sequence and benchmark system was not available within the
 project; covering the full method and the five-system benchmark at a single seed
 was prioritised over covering a subset at three. The consequence is stated
 rather than hidden: the baseline's measured spread on the deforming sequence
-($\pm 0.76$\,mm) is of the same order as several of the single-seed differences
+($\pm 0.60$\,mm) is of the same order as several of the single-seed differences
 reported there, so small deltas on E\_3/005 should be read as unresolved, while
 the held-out improvements --- large relative to that spread --- carry the weight
 of the claims. Beyond the seed protocol, the study inherits the limitations of
