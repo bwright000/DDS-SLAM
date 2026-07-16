@@ -3,6 +3,7 @@
    author = {Ki-Hwan Oh and Leonardo Borgioli and Alberto Mangano and Valentina Valle and Marco Di Pangrazio and Francesco Toti and Gioia Pozza and Luciano Ambrosini and Alvaro Ducas and Miloš Žefran and Liaohai Chen and Pier Cristoforo Giulianotti},
    month = {12},
    title = {Expanded Comprehensive Robotic Cholecystectomy Dataset (CRCD)},
+   journal = {arXiv preprint arXiv:2412.12238},
    url = {http://arxiv.org/abs/2412.12238},
    year = {2024}
 }
@@ -38,6 +39,7 @@
    author = {Jose Lamarca and Shaifali Parashar and Adrien Bartoli and J. M. M. Montiel},
    month = {8},
    title = {DefSLAM: Tracking and Mapping of Deforming Scenes from Monocular Sequences},
+   journal = {IEEE Transactions on Robotics},
    url = {http://arxiv.org/abs/1908.08918},
    year = {2020}
 }
@@ -46,14 +48,16 @@
    author = {Nicolas Carion and Laura Gustafson and Yuan-Ting Hu and Shoubhik Debnath and Ronghang Hu and Didac Suris and Chaitanya Ryali and Kalyan Vasudev Alwala and Haitham Khedr and Andrew Huang and Jie Lei and Tengyu Ma and Baishan Guo and Arpit Kalla and Markus Marks and Joseph Greer and Meng Wang and Peize Sun and Roman Rädle and Triantafyllos Afouras and Effrosyni Mavroudi and Katherine Xu and Tsung-Han Wu and Yu Zhou and Liliane Momeni and Rishi Hazra and Shuangrui Ding and Sagar Vaze and Francois Porcher and Feng Li and Siyuan Li and Aishwarya Kamath and Ho Kei Cheng and Piotr Dollár and Nikhila Ravi and Kate Saenko and Pengchuan Zhang and Christoph Feichtenhofer},
    month = {11},
    title = {SAM 3: Segment Anything with Concepts},
+   journal = {arXiv preprint arXiv:2511.16719},
    url = {http://arxiv.org/abs/2511.16719},
    year = {2025}
 }
-@article{Ravi2024,
+@inproceedings{Ravi2024,
    abstract = {We present Segment Anything Model 2 (SAM 2), a foundation model towards solving promptable visual segmentation in images and videos. We build a data engine, which improves model and data via user interaction, to collect the largest video segmentation dataset to date. Our model is a simple transformer architecture with streaming memory for real-time video processing. SAM 2 trained on our data provides strong performance across a wide range of tasks. In video segmentation, we observe better accuracy, using 3x fewer interactions than prior approaches. In image segmentation, our model is more accurate and 6x faster than the Segment Anything Model (SAM). We believe that our data, model, and insights will serve as a significant milestone for video segmentation and related perception tasks. We are releasing our main model, dataset, as well as code for model training and our demo.},
    author = {Nikhila Ravi and Valentin Gabeur and Yuan-Ting Hu and Ronghang Hu and Chaitanya Ryali and Tengyu Ma and Haitham Khedr and Roman Rädle and Chloe Rolland and Laura Gustafson and Eric Mintun and Junting Pan and Kalyan Vasudev Alwala and Nicolas Carion and Chao-Yuan Wu and Ross Girshick and Piotr Dollár and Christoph Feichtenhofer},
    month = {10},
    title = {SAM 2: Segment Anything in Images and Videos},
+   booktitle = {International Conference on Learning Representations (ICLR)},
    url = {http://arxiv.org/abs/2408.00714},
    year = {2024}
 }
@@ -62,38 +66,43 @@
    author = {Daniel Bolya and Po-Yao Huang and Peize Sun and Jang Hyun Cho and Andrea Madotto and Chen Wei and Tengyu Ma and Jiale Zhi and Jathushan Rajasegaran and Hanoona Rasheed and Junke Wang and Marco Monteiro and Hu Xu and Shiyu Dong and Nikhila Ravi and Daniel Li and Piotr Dollár and Christoph Feichtenhofer},
    month = {4},
    title = {Perception Encoder: The best visual embeddings are not at the output of the network},
+   journal = {arXiv preprint arXiv:2504.13181},
    url = {http://arxiv.org/abs/2504.13181},
    year = {2025}
 }
-@article{Carion2020,
+@inproceedings{Carion2020,
    abstract = {We present a new method that views object detection as a direct set prediction problem. Our approach streamlines the detection pipeline, effectively removing the need for many hand-designed components like a non-maximum suppression procedure or anchor generation that explicitly encode our prior knowledge about the task. The main ingredients of the new framework, called DEtection TRansformer or DETR, are a set-based global loss that forces unique predictions via bipartite matching, and a transformer encoder-decoder architecture. Given a fixed small set of learned object queries, DETR reasons about the relations of the objects and the global image context to directly output the final set of predictions in parallel. The new model is conceptually simple and does not require a specialized library, unlike many other modern detectors. DETR demonstrates accuracy and run-time performance on par with the well-established and highly-optimized Faster RCNN baseline on the challenging COCO object detection dataset. Moreover, DETR can be easily generalized to produce panoptic segmentation in a unified manner. We show that it significantly outperforms competitive baselines. Training code and pretrained models are available at https://github.com/facebookresearch/detr.},
    author = {Nicolas Carion and Francisco Massa and Gabriel Synnaeve and Nicolas Usunier and Alexander Kirillov and Sergey Zagoruyko},
    month = {5},
    title = {End-to-End Object Detection with Transformers},
+   booktitle = {European Conference on Computer Vision (ECCV)},
    url = {http://arxiv.org/abs/2005.12872},
    year = {2020}
 }
-@article{Kirillov2023,
+@inproceedings{Kirillov2023,
    abstract = {We introduce the Segment Anything (SA) project: a new task, model, and dataset for image segmentation. Using our efficient model in a data collection loop, we built the largest segmentation dataset to date (by far), with over 1 billion masks on 11M licensed and privacy respecting images. The model is designed and trained to be promptable, so it can transfer zero-shot to new image distributions and tasks. We evaluate its capabilities on numerous tasks and find that its zero-shot performance is impressive -- often competitive with or even superior to prior fully supervised results. We are releasing the Segment Anything Model (SAM) and corresponding dataset (SA-1B) of 1B masks and 11M images at https://segment-anything.com to foster research into foundation models for computer vision.},
    author = {Alexander Kirillov and Eric Mintun and Nikhila Ravi and Hanzi Mao and Chloe Rolland and Laura Gustafson and Tete Xiao and Spencer Whitehead and Alexander C. Berg and Wan-Yen Lo and Piotr Dollár and Ross Girshick},
    month = {4},
    title = {Segment Anything},
+   booktitle = {IEEE/CVF International Conference on Computer Vision (ICCV)},
    url = {http://arxiv.org/abs/2304.02643},
    year = {2023}
 }
-@article{Wang2022,
+@inproceedings{Wang2022,
    abstract = {Reconstruction of the soft tissues in robotic surgery from endoscopic stereo videos is important for many applications such as intra-operative navigation and image-guided robotic surgery automation. Previous works on this task mainly rely on SLAM-based approaches, which struggle to handle complex surgical scenes. Inspired by recent progress in neural rendering, we present a novel framework for deformable tissue reconstruction from binocular captures in robotic surgery under the single-viewpoint setting. Our framework adopts dynamic neural radiance fields to represent deformable surgical scenes in MLPs and optimize shapes and deformations in a learning-based manner. In addition to non-rigid deformations, tool occlusion and poor 3D clues from a single viewpoint are also particular challenges in soft tissue reconstruction. To overcome these difficulties, we present a series of strategies of tool mask-guided ray casting, stereo depth-cueing ray marching and stereo depth-supervised optimization. With experiments on DaVinci robotic surgery videos, our method significantly outperforms the current state-of-the-art reconstruction method for handling various complex non-rigid deformations. To our best knowledge, this is the first work leveraging neural rendering for surgical scene 3D reconstruction with remarkable potential demonstrated. Code is available at: https://github.com/med-air/EndoNeRF.},
    author = {Yuehao Wang and Yonghao Long and Siu Hin Fan and Qi Dou},
    month = {6},
    title = {Neural Rendering for Stereo 3D Reconstruction of Deformable Tissues in Robotic Surgery},
+   booktitle = {International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI)},
    url = {http://arxiv.org/abs/2206.15255},
    year = {2022}
 }
-@article{Wang2024,
+@inproceedings{Wang2024,
    abstract = {Precise camera tracking, high-fidelity 3D tissue reconstruction, and real-time online visualization are critical for intrabody medical imaging devices such as endoscopes and capsule robots. However, existing SLAM (Simultaneous Localization and Mapping) methods often struggle to achieve both complete high-quality surgical field reconstruction and efficient computation, restricting their intraoperative applications among endoscopic surgeries. In this paper, we introduce EndoGSLAM, an efficient SLAM approach for endoscopic surgeries, which integrates streamlined Gaussian representation and differentiable rasterization to facilitate over 100 fps rendering speed during online camera tracking and tissue reconstructing. Extensive experiments show that EndoGSLAM achieves a better trade-off between intraoperative availability and reconstruction quality than traditional or neural SLAM approaches, showing tremendous potential for endoscopic surgeries. The project page is at https://EndoGSLAM.loping151.com},
    author = {Kailing Wang and Chen Yang and Yuehao Wang and Sikuang Li and Yan Wang and Qi Dou and Xiaokang Yang and Wei Shen},
    month = {3},
    title = {EndoGSLAM: Real-Time Dense Reconstruction and Tracking in Endoscopic Surgeries using Gaussian Splatting},
+   booktitle = {International Conference on Medical Image Computing and Computer-Assisted Intervention (MICCAI)},
    url = {http://arxiv.org/abs/2403.15124},
    year = {2024}
 }
@@ -102,14 +111,16 @@
    author = {Michel Hayoz and Christopher Hahne and Mathias Gallardo and Daniel Candinas and Thomas Kurmann and Maximilian Allan and Raphael Sznitman},
    month = {4},
    title = {Learning How To Robustly Estimate Camera Pose in Endoscopic Videos},
+   journal = {International Journal of Computer Assisted Radiology and Surgery},
    url = {http://arxiv.org/abs/2304.08023},
    year = {2023}
 }
-@article{Sucar2021,
+@inproceedings{Sucar2021,
    abstract = {We show for the first time that a multilayer perceptron (MLP) can serve as the only scene representation in a real-time SLAM system for a handheld RGB-D camera. Our network is trained in live operation without prior data, building a dense, scene-specific implicit 3D model of occupancy and colour which is also immediately used for tracking. Achieving real-time SLAM via continual training of a neural network against a live image stream requires significant innovation. Our iMAP algorithm uses a keyframe structure and multi-processing computation flow, with dynamic information-guided pixel sampling for speed, with tracking at 10 Hz and global map updating at 2 Hz. The advantages of an implicit MLP over standard dense SLAM techniques include efficient geometry representation with automatic detail control and smooth, plausible filling-in of unobserved regions such as the back surfaces of objects.},
    author = {Edgar Sucar and Shikun Liu and Joseph Ortiz and Andrew J. Davison},
    month = {9},
    title = {iMAP: Implicit Mapping and Positioning in Real-Time},
+   booktitle = {IEEE/CVF International Conference on Computer Vision (ICCV)},
    url = {http://arxiv.org/abs/2103.12352},
    year = {2021}
 }
@@ -142,6 +153,7 @@
    author = {Ruicheng Wang and Sicheng Xu and Yue Dong and Yu Deng and Jianfeng Xiang and Zelong Lv and Guangzhong Sun and Xin Tong and Jiaolong Yang},
    month = {7},
    title = {MoGe-2: Accurate Monocular Geometry with Metric Scale and Sharp Details},
+   journal = {arXiv preprint arXiv:2507.02546},
    url = {http://arxiv.org/abs/2507.02546},
    year = {2025}
 }
@@ -287,6 +299,7 @@
    doi = {10.1038/s41597-025-05163-w},
    month = {4},
    title = {CholecInstanceSeg: A Tool Instance Segmentation Dataset for Laparoscopic Surgery},
+   journal = {Scientific Data},
    url = {http://arxiv.org/abs/2406.16039 http://dx.doi.org/10.1038/s41597-025-05163-w},
    year = {2025}
 }
@@ -294,6 +307,7 @@
    author = {W. -Y. Hong and C. -L. Kao and Y. -H. Kuo and J. -R. Wang and W. -L. Chang and C. -S. Shih},
    month = {12},
    title = {CholecSeg8k: A Semantic Segmentation Dataset for Laparoscopic Cholecystectomy Based on Cholec80},
+   journal = {arXiv preprint arXiv:2012.12453},
    url = {http://arxiv.org/abs/2012.12453},
    year = {2020}
 }
@@ -302,6 +316,7 @@
    doi = {10.1038/s41597-025-04642-4},
    month = {10},
    title = {The Endoscapes Dataset for Surgical Scene Segmentation, Object Detection, and Critical View of Safety Assessment: Official Splits and Benchmark},
+   journal = {Scientific Data},
    url = {http://arxiv.org/abs/2312.12429 http://dx.doi.org/10.1038/s41597-025-04642-4},
    year = {2024}
 }
@@ -322,13 +337,15 @@
    author = {Oriane Siméoni and Huy V. Vo and Maximilian Seitzer and Federico Baldassarre and Maxime Oquab and Cijo Jose and Vasil Khalidov and Marc Szafraniec and Seungeun Yi and Michaël Ramamonjisoa and Francisco Massa and Daniel Haziza and Luca Wehrstedt and Jianyuan Wang and Timothée Darcet and Théo Moutakanni and Leonel Sentana and Claire Roberts and Andrea Vedaldi and Jamie Tolan and John Brandt and Camille Couprie and Julien Mairal and Hervé Jégou and Patrick Labatut and Piotr Bojanowski},
    month = {8},
    title = {DINOv3},
+   journal = {arXiv preprint arXiv:2508.10104},
    url = {http://arxiv.org/abs/2508.10104},
    year = {2025}
 }
-@article{Zhu2024,
+@inproceedings{Zhu2024,
    author = {Siting Zhu and Guangming Wang and Hermann Blum and Jiuming Liu and Liang Song and Marc Pollefeys and Hesheng Wang},
    month = {3},
    title = {SNI-SLAM: Semantic Neural Implicit SLAM},
+   booktitle = {IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
    url = {http://arxiv.org/abs/2311.11016},
    year = {2024}
 }
@@ -336,14 +353,16 @@
    author = {Siting Zhu and Renjie Qin and Guangming Wang and Jiuming Liu and Hesheng Wang},
    month = {6},
    title = {SemGauss-SLAM: Dense Semantic Gaussian Splatting SLAM},
+   journal = {arXiv preprint arXiv:2403.07494},
    url = {http://arxiv.org/abs/2403.07494},
    year = {2025}
 }
-@article{Teed2022,
+@inproceedings{Teed2022,
    abstract = {We introduce DROID-SLAM, a new deep learning based SLAM system. DROID-SLAM consists of recurrent iterative updates of camera pose and pixelwise depth through a Dense Bundle Adjustment layer. DROID-SLAM is accurate, achieving large improvements over prior work, and robust, suffering from substantially fewer catastrophic failures. Despite training on monocular video, it can leverage stereo or RGB-D video to achieve improved performance at test time. The URL to our open source code is https://github.com/princeton-vl/DROID-SLAM.},
    author = {Zachary Teed and Jia Deng},
    month = {2},
    title = {DROID-SLAM: Deep Visual SLAM for Monocular, Stereo, and RGB-D Cameras},
+   booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
    url = {http://arxiv.org/abs/2108.10869},
    year = {2022}
 }
