@@ -201,6 +201,17 @@ OV = {
     'c_planes_res': {'coarse': 0.003, 'fine': 0.0005},
     's_planes_res': {'coarse': 0.003, 'fine': 0.0005},
   },
+  # 'scaled2' = the pre-declared fallback (A/B 2026-07-16): 'scaled' won C1 outright
+  # (ATE -36%, pathR 11.9->2.7, +2.7dB) but lr_T 1e-5 UNDER-reached on deforming E3
+  # (pathR 0.66<1, SSIM/LPIPS degraded). Keep the two unambiguous fixes, restore
+  # tracking lr to the 1e-4 surgical precedent (DDS/Super, DID's own tracker).
+  'scaled2': {
+    'tracking': {'const_speed_assumption': False},
+    'mapping': {'joint_opt_cam_lr': 1.0e-5},
+    'planes_res':   {'coarse': 0.003, 'fine': 0.001, 'bound_dividable': 0.003},
+    'c_planes_res': {'coarse': 0.003, 'fine': 0.0005},
+    's_planes_res': {'coarse': 0.003, 'fine': 0.0005},
+  },
 }[v]
 cfg = yaml.safe_load(open(p)) or {}
 def merge(dst, src):
