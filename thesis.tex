@@ -29,6 +29,10 @@ Robotic surgery is moving towards higher levels of autonomy, which will require 
 This thesis addresses both gaps. First, it reorganises the Comprehensive Robotic Cholecystectomy Dataset into a set of self-contained sequences that load under the TUM and Replica conventions, adding dense per-frame semantics from a human-in-the-loop SAM~3 pipeline, stereo-anchored MoGe-2 depth, and cleaned camera trajectories --- establishing, to our knowledge, the only densely-labelled cholecystectomy benchmark with camera-pose ground truth suitable for SLAM evaluation. Second, it presents DID-SLAM, an extension of the deformable neural-SDF system DDS-SLAM with two mechanisms: a learned aleatoric uncertainty that down-weights measurements the static map cannot explain, and a label-free motion attribution that separates camera ego-motion from independent scene motion and freezes the pose when the camera is still. Calibrated on two design sequences and evaluated unseen on three held-out ones, DID-SLAM lowers absolute trajectory error on all five ($-27\%$ on average, $-49\%$ on the largest-travel held-out sequence) at unchanged rendering quality, and records the best trajectory of six benchmarked systems on every sequence, the closest contest decided by $0.15$\,mm against a dedicated tracking-only method. The results indicate that on deforming, monocular-depth surgical scenes, a neural-SDF substrate with explicit motion handling tracks more reliably than either render-loss or splatting alternatives.
 \end{abstract}
 
+\newpage
+\tableofcontents
+\newpage
+
 \section{Introduction}
 Robotic surgery has become increasingly prevalent, with systems such as the da Vinci surgical robot now used in hospitals across the world. However, such systems are currently fully tele-operated: the surgeon must maintain continuous spatial awareness of the operating environment through a narrow endoscopic view, with no element being autonomous. As the field transitions towards higher levels of robotic autonomy, machines will require the understanding that the surgeon currently provides: where the camera is, what anatomical structures are present, and how they move under physiological motion and instrument interaction.
 
@@ -210,9 +214,9 @@ HeiSurF/HeiChole   & sparse          & \ding{55} & \ding{55} & Tool+tissue; 21 c
 \end{tabular}
 \end{table}
 
-Of these, CholecInstanceSeg is tool-instance only on its $\sim$30{,}000-frame CholecT50-full bulk; its anatomy labels are inherited from the CholecSeg8k base, so for tool-plus-tissue segmentation it effectively collapses to CholecSeg8k. Endoscapes2023 is phase-restricted and excludes the gallbladder-from-liver-bed separation (a major deforming event in the procedure), releasing only 493 public segmentation masks. HeiSurF carries the richest taxonomy (21 full-scene classes) but samples sparsely at two-minute intervals. CholecSeg8k and CRCD are therefore the two datasets that combine dense tool-and-tissue segmentation with full-procedure coverage; CholecSeg8k, however, is limited to 80-frame clips, too short for full SLAM evaluations (When compared to the 200-2000 frame sequences we provide).
+Of these, CholecInstanceSeg is tool-instance only on its $\sim$30{,}000-frame CholecT50-full bulk; its anatomy labels are inherited from the CholecSeg8k base, so for tool-plus-tissue segmentation it effectively collapses to CholecSeg8k. Endoscapes2023 is phase-restricted and excludes the gallbladder-from-liver-bed separation (a major deforming event in the procedure), releasing only 493 public segmentation masks. HeiSurF carries the richest taxonomy (21 full-scene classes) but samples sparsely at two-minute intervals. CholecSeg8k and CRCD are therefore the two datasets that combine dense tool-and-tissue segmentation with full-procedure coverage; CholecSeg8k, however, is limited to 80-frame clips, too short for full SLAM evaluations (when compared to the 200--2000 frame sequences we provide).
 
- CholecSeg8k provides manual tissue masks on real in-vivo human cholecystectomy, its limitation is that it is monocular and carries no camera-pose ground truth, so it cannot supervise or evaluate a tracker - Additionally to this, the short sequence length makes the dataset redundent for SLAM. CRCD supplies rectified stereo pairs enabling metric depth recovery, per-frame ECM camera pose and dVRK kinematics giving trajectory ground truth. Its costs are that the tissue masks are SAM3 propagations from sparse human labels which are then fine tuned by a human annotator. Additionally the ex-vivo porcine setting removes respiratory motion present in the in-vivo human datasets. For a deformable SLAM system that requires camera-pose ground truth to evaluate tracking, CRCD is the only one of the five that provides it, making it the only densely semantically labelled cholecystectomy dataset suitable for SLAM evaluation.
+ CholecSeg8k provides manual tissue masks on real in-vivo human cholecystectomy, its limitation is that it is monocular and carries no camera-pose ground truth, so it cannot supervise or evaluate a tracker --- additionally, the short sequence length makes the dataset unsuitable for SLAM. CRCD supplies rectified stereo pairs enabling metric depth recovery, per-frame ECM camera pose and dVRK kinematics giving trajectory ground truth. Its costs are that the tissue masks are SAM3 propagations from sparse human labels which are then fine tuned by a human annotator. Additionally the ex-vivo porcine setting removes respiratory motion present in the in-vivo human datasets. For a deformable SLAM system that requires camera-pose ground truth to evaluate tracking, CRCD is the only one of the five that provides it, making it the only densely semantically labelled cholecystectomy dataset suitable for SLAM evaluation.
 \subsection{Semantic Annotations}
 
 The expanded CRCD \cite{Oh2024} provides COCO-format annotations for liver segmentation and instrument keypoint detection. Three recordings: C\_1, E\_3, and F\_3, include human-annotated ground truth segmentation masks at every 120th frame; these serve as the reference for the one-shot segmentation experiments. These sparse annotations are propagated to the remaining 119 frames of each 120-frame \texttt{split} using the temporal tracking capabilities of a Track Anything segmentation model~\cite{Yang2023}. The expanded release additionally includes surgeon experience profiles (number and complexity of prior laparoscopic procedures, hours of robotic training).
@@ -281,7 +285,7 @@ Committed anchor masks seed SAM~3's video predictor, which is propagated both fo
 
 The propagated masks are rendered as a mask-overlay video which is scrubbed end-to-end by the annotator. 'Failed' frames are corrected in one of three ways, in increasing order of effort: (i) direct hand-fix of the offending frames in the annotator; (ii) insertion of additional keyframes followed by re-propagation of only the affected window (bounding the propagation range to the failure region, then stitching the re-propagated frames back into the accepted sequence); or (iii) full re-anchoring of the sequence. This loop iterates until the annotator accepts the full sequence.
 
-Accepted masks are resolved to a single class per pixel under an occlusion-priority (Tool $>$ Gallbladder $>$ Liver, reflecting physical foreground order; per-frame overrides are supported for sequences where semantic classes overlap), rasterised to per-frame semantic label maps, and passed through a four-gate check (dataset-consistency audit, TUM-loader test, intrinsics sanity check, and byte-stable regeneration). A sequence is only published into the dataset once all four gates pass \emph{and} the human in the loop (HITL) has signed off the final overlay render. These masks and their respective quality is compared to the provided CRCD annotations in the figure below - With frames being randomly selected across the provided annotated sequences.
+Accepted masks are resolved to a single class per pixel under an occlusion-priority (Tool $>$ Gallbladder $>$ Liver, reflecting physical foreground order; per-frame overrides are supported for sequences where semantic classes overlap), rasterised to per-frame semantic label maps, and passed through a four-gate check (dataset-consistency audit, TUM-loader test, intrinsics sanity check, and byte-stable regeneration). A sequence is only published into the dataset once all four gates pass \emph{and} the human in the loop (HITL) has signed off the final overlay render. These masks and their respective quality is compared to the provided CRCD annotations in the figure below --- with frames being randomly selected across the provided annotated sequences.
 \FloatBarrier
 \begin{figure}[!ht]
     \centering
@@ -570,14 +574,14 @@ When \eqref{eq:cprime} decides that the camera is still, the pose is copied from
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_motion_agreement.png}
-    \caption{Top (C\_1/001, camera still): every district vote is near zero - the quiet minority holds and the pose is frozen. Middle (C\_2/001, camera moving): the votes are large and consistent with a single rigid story - the frame is tracked. Bottom (E\_3/005, tissue deformation): the votes are large but the majority of districts dissent from every rigid story in the epipolar sense - the frame is frozen. Districts are the deployed k-means clustering of the ViT patch tokens; panel statistics are recomputed offline with a dense-flow proxy for illustration, and the live per-frame values are logged by the gate itself.}
+    \caption{Top (C\_1/001, camera still): every district vote is near zero --- the quiet minority holds and the pose is frozen. Middle (C\_2/001, camera moving): the votes are large and consistent with a single rigid story --- the frame is tracked. Bottom (E\_3/005, tissue deformation): the votes are large but the majority of districts dissent from every rigid story in the epipolar sense --- the frame is frozen. Districts are the deployed k-means clustering of the ViT patch tokens; panel statistics are recomputed offline with a dense-flow proxy for illustration, and the live per-frame values are logged by the gate itself.}
     \label{fig:motion_agreement}
 \end{figure}
 \FloatBarrier
 
 The thresholds in \eqref{eq:cprime} are calibrated offline rather than tuned in the loop. We log the per-frame statistics for $(q_{10}, \mathrm{dis3})$ during a run; sweeping these logs against the ground-truth camera motion yields the precision and recall of every candidate operating point $(\tau_q, \tau_d)$ I.e., how successfully we freeze the camera. One discretisation detail matters in practice: with $K = 12$ districts, $\mathrm{dis3}$ is quantised to twelfths, so a strict inequality at $\tau_d = 0.5$  excludes frames on which exactly half the districts disagree - I.e., the majority must agree.
 
-\paragraph{Feature Generation.} The districts are built from a frozen feature generator. This decision was made through 2 tests: For the first, a probe-margin test scored each backbone by the mean cosine similarity of a probe patch on the mover to the rest of the moving region, minus its similarity to everything else. DINOv2-S/14 with registers~\cite{Oquab2023,Darcet2024} ranked the highest at $+0.33$, the base DINOv3-B/16~\cite{Simoni2025} $+0.29$, and a DINOv3 backbone fine-tuned for surgical segmentation only $+0.07$ when tested at its final layer. The fine-tuned collapse is expected - a segmentation objective pulls all features of a class together, which removes the intra-tissue variation the clustering relies on. The first result is therefore that the featuriser should not be fine-tuned; a raw backbone is creating a better set of features than one fine tuned, images of the features and their cosine similarities are shown in Figure~\ref{fig:dino_comparison}.
+\paragraph{Feature Generation.} The districts are built from a frozen feature generator. This decision was made through 2 tests: For the first, a probe-margin test scored each backbone by the mean cosine similarity of a probe patch on the mover to the rest of the moving region, minus its similarity to everything else. DINOv2-S/14 with registers~\cite{Oquab2023,Darcet2024} ranked the highest at $+0.33$, the base DINOv3-B/16~\cite{Simoni2025} $+0.29$, and a DINOv3 backbone fine-tuned for surgical segmentation only $+0.07$ when tested at its final layer. The fine-tuned collapse is expected --- a segmentation objective pulls all features of a class together, which removes the intra-tissue variation the clustering relies on. The first result is therefore that the featuriser should not be fine-tuned; a raw backbone is creating a better set of features than one fine-tuned; images of the features and their cosine similarities are shown in Figure~\ref{fig:dino_comparison}.
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_dino_comparison.png}
@@ -588,7 +592,7 @@ However, running both raw backbones end-to-end on the evaluation sequences, the 
 
 \paragraph{Per-ray trust variants (ablated).} The same votes support a softer consumer: the fit residuals of \eqref{eq:vote-trust}, or a depth-normalised deviation from the district consensus, can be painted into a dense per-ray motion trust and applied in the pose solve multiplicatively with the uncertainty weight of \eqref{eq:unc-weight} on tracked frames. These variants are evaluated in the ablations and not retained in the locked configuration, for measured reasons. Behavioural audits against kinematic ground truth showed the depth-pooled variant responds to camera rotation rather than to scene motion: its normalisation is exact for camera-translation parallax, which scales as $1/Z$, but mis-scales rotational flow, which is depth-independent. The sharper de-rotated variant discriminates scene motion nearly perfectly on the design sequences yet degrades held-out sequences, its per-frame muting noise compounding over long trajectories. And stacking any trust behind the freeze gate starves the solve: the gate has already removed the confidently-still frames, so the trust mutes precisely the frames that still need tracking. The freeze decision --- which removes ambiguous frames outright rather than re-weighting within them --- is the consumer that survives measurement.
 
-\paragraph{Zero-motion prior (ablated).} The freeze is a hard, per-frame decision, so a softer companion was evaluated for the drift on frames that are tracked rather than frozen. On near-static sequences the pose solve still over-travels on frames the gate does not freeze - either frames that are still but sit just below the threshold, or individual pose axes that the narrow endoscopic geometry leaves weakly observable. A zero-motion prior penalises per-frame pose change directly, adding
+\paragraph{Zero-motion prior (ablated).} The freeze is a hard, per-frame decision, so a softer companion was evaluated for the drift on frames that are tracked rather than frozen. On near-static sequences the pose solve still over-travels on frames the gate does not freeze --- either frames that are still but sit just below the threshold, or individual pose axes that the narrow endoscopic geometry leaves weakly observable. A zero-motion prior penalises per-frame pose change directly, adding
 \begin{equation}
     \mathcal{L}_{\text{zm}} = \lambda_r \lVert \Delta\mathbf{r} \rVert^2 + \lambda_t \lVert \Delta\mathbf{t} \rVert^2
     \label{eq:zeromotion}
@@ -749,7 +753,7 @@ Photometric loss & L2 & Charbonnier & robust to the specular outliers endemic to
 \subsection{Evaluation of Tracking and Reconstruction}
 \label{sec:results_main}
 
-The final DID-SLAM configuration was locked using the two design sequences (C\_1/001 and E\_3/005) to configure parameters. The remaining three sequences (C\_2/001, C\_3/001, G\_3/001) were then run once, unseen, as a held-out generalisation test against the unmodified DDS-SLAM base under the identical staging and evaluation pipeline - Due to the nature of the freezing mechanism - its important to use a single set of hyperparameters; rather than a unique set for each sequence, to ensure that the model suitably performs to unseen data. Table~\ref{tab:results_main} reports the full battery.
+The final DID-SLAM configuration was locked using the two design sequences (C\_1/001 and E\_3/005) to configure parameters. The remaining three sequences (C\_2/001, C\_3/001, G\_3/001) were then run once, unseen, as a held-out generalisation test against the unmodified DDS-SLAM base under the identical staging and evaluation pipeline --- due to the nature of the freezing mechanism, it is important to use a single set of hyperparameters rather than a unique set for each sequence, to ensure the model performs suitably on unseen data. Table~\ref{tab:results_main} reports the full battery.
 
 \begin{table}[!ht]
 \centering
@@ -774,7 +778,7 @@ mean (5) & & --- & 5.54 & \textbf{4.02} & $-27\%$ & 3.32 & 0.839 & 24.94 & 0.825
 \end{tabular}}
 \end{table}
 \FloatBarrier
-DID-SLAM improves tracking on all five sequences, with the largest gain on a sequence it never saw during development ($-49\%$ on C\_2/001, alongside $-8\%$ and $-46\%$ on the other two held-out sequences; the longest of these, G\_3/001 at 1987 frames, produces the best of the held-out three at $2.28$\,mm). This behaviour was expected - the held-out set is $54$--$82\%$ camera-still, which is the regime the freeze, its bundle-adjustment re-pin and the corrected pose step were built to handle. The shape of the trajectory improves alongside its error: the aligned dominant-axis correlation on the held-out sequences reaches $0.95$--$0.98$ (C\_2, G\_3) against $0.86$--$0.93$ for the base, and the path ratio on C\_2/001 falls from $6.3$ to $1.9$. As Figure~\ref{fig:did_traj_c2} shows, the base estimate oscillates around the true path while the DID-SLAM estimate follows it.
+DID-SLAM improves tracking on all five sequences, with the largest gain on a sequence it never saw during development ($-49\%$ on C\_2/001, alongside $-8\%$ and $-46\%$ on the other two held-out sequences; the longest of these, G\_3/001 at 1987 frames, produces the best of the held-out three at $2.28$\,mm). This behaviour was expected --- the held-out set is $54$--$82\%$ camera-still, which is the regime the freeze, its bundle-adjustment re-pin and the corrected pose step were built to handle. The shape of the trajectory improves alongside its error: the aligned dominant-axis correlation on the held-out sequences reaches $0.95$--$0.98$ (C\_2, G\_3) against $0.86$--$0.93$ for the base, and the path ratio on C\_2/001 falls from $6.3$ to $1.9$. As Figure~\ref{fig:did_traj_c2} shows, the base estimate oscillates around the true path while the DID-SLAM estimate follows it.
 
 These gains carry no observable reconstruction cost. Across the five sequences the rendering battery stays level with the base (mean PSNR $24.9$, LPIPS $0.42$), consistent with the design choice to keep the map training on frozen frames. The base does score better on Depth-$L_1$, and the gap tracks its over-travel: an unconstrained pose acts as extra degrees of freedom that absorb the frame-to-frame inconsistency of the monocular depth, improving input-versus-output self-consistency while corrupting the trajectory --- on G\_3/001, where the base over-travels most ($18.3\times$ vs $5.9\times$), the Depth-$L_1$ gap is widest, while on E\_3/005, where the path ratios are comparable, the two are equal. The deforming sequence remains the hardest: E\_3/005 improves by $15\%$ but keeps the weakest shape correlation ($0.46$) and the widest single-seed spread of the five. Most of its remaining error sits in a segment where the true camera motion falls below the optical-flow noise floor; no threshold on a flow statistic can recover motion the flow cannot see, and this sets the practical limit of the gate. Both points are returned to in Section~\ref{sec:discussion}.
 
@@ -785,6 +789,40 @@ These gains carry no observable reconstruction cost. Across the five sequences t
     \label{fig:did_traj_c2}
 \end{figure}
 \FloatBarrier
+
+\subsection{Ablations}
+\label{sec:results_ablations}
+
+Every component of the final configuration was adopted or rejected on the design sequences; Table~\ref{tab:results_abl} summarises the ladder, one change at a time.
+
+\begin{table}[!ht]
+\centering
+\caption{Component ladder on the design sequences, full battery (Sim(3) ATE$_{\mathrm{RMSE}}$ in mm; path ratio, aligned $|r|_{\mathrm{dom}}$, rendering and Depth-$L_1$ per Section~\ref{sec:eval_metrics}). Single seed throughout except the base on E\_3/005, which is the mean of three seeds. Each row adds one component to the row above; the final model additionally carries the corrected bundle-adjustment configuration (Section~\ref{sec:hyperparams}) and the DINOv3 districts (Section~\ref{sec:motion}).}
+\label{tab:results_abl}
+\small
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l rrr rrrr}
+\toprule
+Configuration & ATE (mm) & path ratio & $|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
+\midrule
+\multicolumn{8}{l}{\textbf{C\_1/001}} \\
+\midrule
+Base model & 2.03 & 5.50 & 0.984 & 25.58 & 0.817 & 0.434 & 9.50 \\
++ uncertainty (Section~\ref{sec:uncertainty}) & 2.10 & 6.76 & 0.978 & 25.61 & 0.814 & 0.430 & 10.13 \\
++ motion attribution (Section~\ref{sec:motion}) & 1.95 & 4.00 & 0.970 & 25.60 & 0.815 & 0.430 & 10.18 \\
+Final model & \textbf{1.60} & \textbf{2.23} & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
+\midrule
+\multicolumn{8}{l}{\textbf{E\_3/005}} \\
+\midrule
+Base model & 5.49 & 1.95 & 0.401 & 24.43 & 0.814 & 0.456 & 15.63 \\
++ uncertainty (Section~\ref{sec:uncertainty}) & 5.93 & 2.36 & 0.052 & 24.00 & 0.799 & 0.484 & 15.67 \\
++ motion attribution (Section~\ref{sec:motion}) & \textbf{3.66} & 3.17 & 0.756 & 24.02 & 0.806 & 0.464 & 14.33 \\
+Final model & 4.69 & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+The ladder's gains are separable and attributable: the uncertainty head is neutral alone (its E\_3/005 sits within the base's $\pm 0.60$\,mm seed spread) but enables the weighted solve, the motion attribution pays on the deforming sequence ($-33\%$ on E\_3/005), and the corrected bundle-adjustment configuration pays on the still one (the $-18\%$ step from the motion-attribution row to the final on C\_1/001), with the combination transferring to the held-out set (Table~\ref{tab:results_main}). The render battery is flat down the entire ladder (PSNR within $0.2$\,dB, SSIM within $0.005$ per sequence), so every tracking gain comes free of reconstruction cost; and the final model returns a little of the motion-attribution row's E\_3/005 gain ($3.66 \to 4.69$\,mm) in exchange for the still-regime correction --- the joint trade that wins across the five sequences. The variants evaluated and not retained --- the soft per-ray trust consumers, a lowered dissent threshold, $\sigma^2$-weighted bundle adjustment, and the zero-motion prior --- each failed for a measured, mechanistic reason rather than by tuning accident (Sections~\ref{sec:uncertainty} and \ref{sec:motion}); notably, a lowered dissent threshold produced the single best C\_1/001 of any configuration and was still rejected, because the same setting was the worst on E\_3/005 --- the final configuration is the one that wins jointly.
 
 \section{Benchmarking against SoTA Semantic-SLAM pipelines}
 \label{sec:benchmarking}
@@ -890,40 +928,6 @@ Figures~\ref{fig:traj3d_compare} and \ref{fig:render_compare} compare the benchm
     \label{fig:render_compare}
 \end{figure}
 \FloatBarrier
-\subsection{Ablations}
-\label{sec:results_ablations}
-
-Every component of the final configuration was adopted or rejected on the design sequences; Table~\ref{tab:results_abl} summarises the ladder, one change at a time.
-
-\begin{table}[!ht]
-\centering
-\caption{Component ladder on the design sequences, full battery (Sim(3) ATE$_{\mathrm{RMSE}}$ in mm; path ratio, aligned $|r|_{\mathrm{dom}}$, rendering and Depth-$L_1$ per Section~\ref{sec:eval_metrics}). Single seed throughout except the base on E\_3/005, which is the mean of three seeds. Each row adds one component to the row above; the final model additionally carries the corrected bundle-adjustment configuration (Section~\ref{sec:hyperparams}) and the DINOv3 districts (Section~\ref{sec:motion}).}
-\label{tab:results_abl}
-\small
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{l rrr rrrr}
-\toprule
-Configuration & ATE (mm) & path ratio & $|r|_{\mathrm{dom}}$ & PSNR$\uparrow$ & SSIM$\uparrow$ & LPIPS$\downarrow$ & D-$L_1$ \\
-\midrule
-\multicolumn{8}{l}{\textbf{C\_1/001}} \\
-\midrule
-Base model & 2.03 & 5.50 & 0.984 & 25.58 & 0.817 & 0.434 & 9.50 \\
-+ uncertainty (Section~\ref{sec:uncertainty}) & 2.10 & 6.76 & 0.978 & 25.61 & 0.814 & 0.430 & 10.13 \\
-+ motion attribution (Section~\ref{sec:motion}) & 1.95 & 4.00 & 0.970 & 25.60 & 0.815 & 0.430 & 10.18 \\
-Final model & \textbf{1.60} & \textbf{2.23} & 0.985 & 25.49 & 0.813 & 0.437 & 10.14 \\
-\midrule
-\multicolumn{8}{l}{\textbf{E\_3/005}} \\
-\midrule
-Base model & 5.49 & 1.95 & 0.401 & 24.43 & 0.814 & 0.456 & 15.63 \\
-+ uncertainty (Section~\ref{sec:uncertainty}) & 5.93 & 2.36 & 0.052 & 24.00 & 0.799 & 0.484 & 15.67 \\
-+ motion attribution (Section~\ref{sec:motion}) & \textbf{3.66} & 3.17 & 0.756 & 24.02 & 0.806 & 0.464 & 14.33 \\
-Final model & 4.69 & 3.52 & 0.463 & 24.20 & 0.812 & 0.455 & 15.65 \\
-\bottomrule
-\end{tabular}}
-\end{table}
-
-The ladder's gains are separable and attributable: the uncertainty head is neutral alone (its E\_3/005 sits within the base's $\pm 0.60$\,mm seed spread) but enables the weighted solve, the motion attribution pays on the deforming sequence ($-33\%$ on E\_3/005), and the corrected bundle-adjustment configuration pays on the still one (the $-18\%$ step from the motion-attribution row to the final on C\_1/001), with the combination transferring to the held-out set (Table~\ref{tab:results_main}). The render battery is flat down the entire ladder (PSNR within $0.2$\,dB, SSIM within $0.005$ per sequence), so every tracking gain comes free of reconstruction cost; and the final model returns a little of the motion-attribution row's E\_3/005 gain ($3.66 \to 4.69$\,mm) in exchange for the still-regime correction --- the joint trade that wins across the five sequences. The variants evaluated and not retained - the soft per-ray trust consumers, a lowered dissent threshold, $\sigma^2$-weighted bundle adjustment, and the zero-motion prior - each failed for a measured, mechanistic reason rather than by tuning accident (Sections~\ref{sec:uncertainty} and \ref{sec:motion}); notably, a lowered dissent threshold produced the single best C\_1/001 of any configuration and was still rejected, because the same setting was the worst on E\_3/005 - the final configuration is the one that wins jointly.
-
 \section{Discussion}
 \label{sec:discussion}
 
@@ -945,12 +949,15 @@ Three directions follow from where the system stops. First, the flow noise floor
 
 \section{Conclusion}
 \label{sec:conclusion}
-This thesis aimed to narrow two gaps for neural SLAM in surgical environments: the absence of a dataset on which a tracker can be both supervised and honestly evaluated in a deforming scene, and a system that is able to successfully distinguish between camera motion and scene deformation. The reorganised CRCD provides twenty self-contained sequences; dense per-frame semantics from a human-in-the-loop SAM~3 pipeline, stereo-anchored metric depth, and kinematic camera-pose ground truth - packaged so that existing TUM- and Replica-convention systems load them unmodified; it is, to our knowledge, the only densely-labelled cholecystectomy benchmark against which camera tracking can be evaluated at all. On top of an exactly-reproduced DDS-SLAM base, DID-SLAM adds two flag-gated contributions: a learned aleatoric uncertainty that down-weights the measurements a static field cannot explain, and a label-free motion attribution that separates camera ego-motion from independent scene motion and freezes the pose when the camera is confidently still.
+This thesis aimed to narrow two gaps for neural SLAM in surgical environments: the absence of a dataset on which a tracker can be both supervised and honestly evaluated in a deforming scene, and a system that is able to successfully distinguish between camera motion and scene deformation. The reorganised CRCD provides twenty self-contained sequences; dense per-frame semantics from a human-in-the-loop SAM~3 pipeline, stereo-anchored metric depth, and kinematic camera-pose ground truth --- packaged so that existing TUM- and Replica-convention systems load them unmodified; it is, to our knowledge, the only densely-labelled cholecystectomy benchmark against which camera tracking can be evaluated at all. On top of an exactly-reproduced DDS-SLAM base, DID-SLAM adds two flag-gated contributions: a learned aleatoric uncertainty that down-weights the measurements a static field cannot explain, and a label-free motion attribution that separates camera ego-motion from independent scene motion and freezes the pose when the camera is confidently still.
 
 The combination lowers trajectory error on all five evaluation sequences ($-27\%$ on average, $-49\%$ on the largest-travel held-out sequence) at unchanged rendering quality, and records the best trajectory of the six benchmarked systems on every sequence while remaining strong on the rendering benchmarks. Beneath the numbers sits the finding this thesis would keep if it could keep only one: on surgical sequences the true camera motion spends long stretches below the optical-flow noise floor, and every system implicitly decides what to do there --- the render-loss trackers manufacture motion, the flow specialist stops updating, and both are answering the same question by accident. Making that decision explicit, reversible, and attributable to evidence is what separates DID-SLAM from the systems it was measured against, and the shape diagnostics introduced alongside the benchmark are what make the difference visible at all.
 
 The limits of the approach point at its successors. A gate built on optical flow cannot see motion the flow cannot carry, and the dVRK kinematics that supply our ground truth exist intra-operatively in every robotic procedure --- a kinematic prior on the endoscope would hand the gate evidence precisely where the optical sensor goes blind. The deformation warp the system inherits is supervised only through the render loss and contributes little; a map that explains deformation, rather than asking the pose solve to survive it, is the natural next platform. And the motion-attribution signal is consumed only as a gate, while preliminary experiments steering the mapping budget with the same signal already improve trajectory shape on the deforming sequence --- one signal, with more consumers left to serve.
 
+
+\section*{Acknowledgements}
+\emph{[To be written --- supervisor, annotation and compute support.]}
 
 \bibliographystyle{ieeetr}
 \bibliography{references}
