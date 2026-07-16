@@ -279,7 +279,7 @@ A result of all 6 annotation methods on a chosen frame is shown in Figure~\ref{f
 \label{sec:segmentation}
 Due to the large number of frames present in the CRCD, manual hand-annotation of all chosen sequences would be infeasible. Instead, a keyframe-anchored, human-in-the-loop (HITL) pipeline was built around SAM~3's video propagation (Figure~\ref{fig:SAM3Mod}), running on a FastAPI/Konva.js annotator.
 
-Selected frames throughout each sequence are assigned as keyframes and hand-annotated in the browser annotator (brush, SAM-click, SAM-box and bucket-fill tools, with per-class erasers). Keyframes were typically placed every 60--120 frames depending on sequence difficulty, with additional keyframes provided where significant deformation or camera motion occurred, or when new artifacts entered the scene. For example, CRCD sequence C\_1/001 was provided with keyframes at frames 0, 119, 239 and 359.
+Selected frames throughout each sequence are assigned as keyframes and hand-annotated in the browser annotator (brush, SAM-click, SAM-box and bucket-fill tools, with per-class erasers). Keyframes were typically placed every 60--120 frames depending on sequence difficulty, with additional keyframes provided where significant deformation or camera motion occurred, or when new artefacts entered the scene. For example, CRCD sequence C\_1/001 was provided with keyframes at frames 0, 119, 239 and 359.
 
 Committed anchor masks seed SAM~3's video predictor, which is propagated both forwards and backwards from every anchor --- a slight modification of the as-built SAM~3 pipeline, which propagates forward-only from a single prompt frame. Where the forward and backward sweeps disagree on a frame, the mask retained is the one with the higher SAM~3 confidence score. A drop in confidence, or a drastic and sudden change in the pixel count belonging to a taxonomy class (suggestive of a mask dropout, e.g.\ a tool no longer being registered), flags the frame for review. Because SAM~3's decoder reconstructs (and smooths) masks even at prompt frames, the user-painted anchor masks are re-imposed verbatim at their keyframes after propagation, guaranteeing the human annotation is never silently overwritten. On local hardware, propagation can be deferred entirely --- anchors are painted in a lightweight mode (Without the model loaded) and propagated later on a rented A100 by replaying the same session file.
 
@@ -317,7 +317,7 @@ Each motion segment identified by the analysis above is packaged into a self-con
 \texttt{groundtruth.txt} & ECM-tip trajectory in TUM format (\texttt{timestamp tx ty tz qx qy qz qw}). \\
 \texttt{intrinsics.yaml} & Rectified $K$ matrix, stereo baseline, rectification parameters. \\
 \texttt{info\_semantic.json} & Replica-style class taxonomy; dense 3-class (\texttt{id == coco\_id}, \texttt{pixel\_value == id + 1}). \\
-\texttt{semantic\_instance/} & Per-frame semantic rasters, single-channel \texttt{uint16} PNG; pixel value $=$ class id $+\,1$, with 0 for background (I.e., unassigned). \\
+\texttt{semantic\_instance/} & Per-frame semantic rasters, single-channel \texttt{uint16} PNG; pixel value $=$ class id $+\,1$, with 0 for background (i.e., unassigned). \\
 \texttt{snippet\_annotations.json} & COCO polygon annotations (Liver, Gallbladder, Tool). \\
 \texttt{snippet\_overlay.mp4} & Rendered semantic overlay video. \\
 \hline
@@ -353,7 +353,7 @@ As part of the dataset we provide metrically-anchored depth maps generated with 
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/moge_depth_examples.png}
-    \caption{Stereo-anchored MoGe-2~\cite{Wang2025} depth. For representative frames across the dataset: the input left frame (top) and the corresponding metrically-anchored depth (bottom), colour-coded by depth. Stereo matching~\cite{Hirschmuller2008} helps anchor the depth maps to the same relative scale of the surgical scene (I.e., a $SF \approx 1$).}
+    \caption{Stereo-anchored MoGe-2~\cite{Wang2025} depth. For representative frames across the dataset: the input left frame (top) and the corresponding metrically-anchored depth (bottom), colour-coded by depth. Stereo matching~\cite{Hirschmuller2008} helps anchor the depth maps to the same relative scale of the surgical scene (i.e., a $SF \approx 1$).}
     \label{fig:moge_depth}
 \end{figure}
 \FloatBarrier
@@ -579,7 +579,7 @@ When \eqref{eq:cprime} decides that the camera is still, the pose is copied from
 \end{figure}
 \FloatBarrier
 
-The thresholds in \eqref{eq:cprime} are calibrated offline rather than tuned in the loop. We log the per-frame statistics for $(q_{10}, \mathrm{dis3})$ during a run; sweeping these logs against the ground-truth camera motion yields the precision and recall of every candidate operating point $(\tau_q, \tau_d)$ I.e., how successfully we freeze the camera. One discretisation detail matters in practice: with $K = 12$ districts, $\mathrm{dis3}$ is quantised to twelfths, so a strict inequality at $\tau_d = 0.5$  excludes frames on which exactly half the districts disagree - I.e., the majority must agree.
+The thresholds in \eqref{eq:cprime} are calibrated offline rather than tuned in the loop. We log the per-frame statistics for $(q_{10}, \mathrm{dis3})$ during a run; sweeping these logs against the ground-truth camera motion yields the precision and recall of every candidate operating point $(\tau_q, \tau_d)$, i.e., how successfully we freeze the camera. One discretisation detail matters in practice: with $K = 12$ districts, $\mathrm{dis3}$ is quantised to twelfths, so a strict inequality at $\tau_d = 0.5$  excludes frames on which exactly half the districts disagree --- i.e., the majority must agree.
 
 \paragraph{Feature Generation.} The districts are built from a frozen feature generator. This decision was made through 2 tests: For the first, a probe-margin test scored each backbone by the mean cosine similarity of a probe patch on the mover to the rest of the moving region, minus its similarity to everything else. DINOv2-S/14 with registers~\cite{Oquab2023,Darcet2024} ranked the highest at $+0.33$, the base DINOv3-B/16~\cite{Simoni2025} $+0.29$, and a DINOv3 backbone fine-tuned for surgical segmentation only $+0.07$ when tested at its final layer. The fine-tuned collapse is expected --- a segmentation objective pulls all features of a class together, which removes the intra-tissue variation the clustering relies on. The first result is therefore that the featuriser should not be fine-tuned; a raw backbone is creating a better set of features than one fine-tuned; images of the features and their cosine similarities are shown in Figure~\ref{fig:dino_comparison}.
 \begin{figure}[!ht]
@@ -705,7 +705,7 @@ C\_1/001 & 360  & 60\% & 18.6 & short, easy to track; large deformations \\
 C\_2/001 & 730  & 54\% & 56.3 & largest camera travel \\
 C\_3/001 & 1527 & 74\% & 78.8 & long, predominantly still \\
 E\_3/005 & 265  & 49\% & 43.5 & large and fast tissue/tool motion \\
-G\_3/001 & 1987 & 82\% & 31.6 & closeup footage - long sequence \\
+G\_3/001 & 1987 & 82\% & 31.6 & close-up footage --- long sequence \\
 \bottomrule
 \end{tabular}%
 }
@@ -716,11 +716,11 @@ G\_3/001 & 1987 & 82\% & 31.6 & closeup footage - long sequence \\
 
 \subsubsection{Data preparation}
 
-Sequences are consumed through a staging pipeline executed once per sequence and cached. Frames are rectified with the published ECM stereo calibration (Section~\ref{sec:data_packs}); per-frame depth is generated with MoGe-2 on the rectified left frames and anchored to metric scale by stereo matching on the rectified pairs at 120-frame intervals, with a consistency gate rejecting sequences whose anchors disagree (I.e., where the scaling changes significantly between intervals.); scene bounds are derived from the resulting metric depth; and the published semantic rasters are rectified alongside the imagery, providing the four-class map (background, liver, gallbladder, instrument) consumed by the semantic and instrument-masking components.
+Sequences are consumed through a staging pipeline executed once per sequence and cached. Frames are rectified with the published ECM stereo calibration (Section~\ref{sec:data_packs}); per-frame depth is generated with MoGe-2 on the rectified left frames and anchored to metric scale by stereo matching on the rectified pairs at 120-frame intervals, with a consistency gate rejecting sequences whose anchors disagree (i.e., where the scaling changes significantly between intervals.); scene bounds are derived from the resulting metric depth; and the published semantic rasters are rectified alongside the imagery, providing the four-class map (background, liver, gallbladder, instrument) consumed by the semantic and instrument-masking components.
 
 \subsubsection{Implementation}
 
-All experiments run a single code base forked from the public DDS-SLAM release~\cite{Shan2024}, with every modification gated behind a configuration flag that defaults to \emph{off}. A bit-identical regression gate (identical random-number state after model construction, identical parameter counts, identical \texttt{state\_dict} keys against the upstream commit) guarantees that the unmodified configuration reproduces the released implementation exactly, so the baseline serves as a provably untouched control and every measured difference is attributable to exactly one enabled component. Experiments are executed on Google Colab GPUs (Tesla T4, 15\,GB; A100, 40\,GB for the largest configurations) under PyTorch~2.x / CUDA~12.x, with the tiny-cuda-nn hash-encoding backend rebuilt for the resident GPU architecture. TF32 tensor-core arithmetic is disabled throughout: the SDF and pose optimisation are precision-sensitive, and TF32 introduced run-to-run nondeterminism on A100-class hardware. Every run emits a fixed artifact set (rendered frames, the estimated trajectory, per-frame diagnostics, and a composite diagnostic video), and all evaluation is performed by a common tool chain (Section~\ref{sec:eval_metrics}) applied identically to every arm.
+All experiments run a single code base forked from the public DDS-SLAM release~\cite{Shan2024}, with every modification gated behind a configuration flag that defaults to \emph{off}. A bit-identical regression gate (identical random-number state after model construction, identical parameter counts, identical \texttt{state\_dict} keys against the upstream commit) guarantees that the unmodified configuration reproduces the released implementation exactly, so the baseline serves as a provably untouched control and every measured difference is attributable to exactly one enabled component. Experiments are executed on Google Colab GPUs (Tesla T4, 15\,GB; A100, 40\,GB for the largest configurations) under PyTorch~2.x / CUDA~12.x, with the tiny-cuda-nn hash-encoding backend rebuilt for the resident GPU architecture. TF32 tensor-core arithmetic is disabled throughout: the SDF and pose optimisation are precision-sensitive, and TF32 introduced run-to-run nondeterminism on A100-class hardware. Every run emits a fixed artefact set (rendered frames, the estimated trajectory, per-frame diagnostics, and a composite diagnostic video), and all evaluation is performed by a common tool chain (Section~\ref{sec:eval_metrics}) applied identically to every arm.
 
 \subsubsection{Hyperparameters}
 \label{sec:hyperparams}
