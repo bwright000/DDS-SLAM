@@ -22,7 +22,7 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 INK = '#202124'
 BLUE = '#4a72b0'     # instrument
-WARM = '#c2571a'     # tissue deformation
+GREEN = '#1a9850'    # tissue deformation (distinct from the warm tissue + blue/purple)
 PURP = '#8452a8'     # camera
 plt.rcParams.update({'font.family': 'Arial', 'text.color': INK})
 FIG = r"c:\Users\benli\OneDrive\Documents\GitHub\DDS-SLAM\DDS-SLAM\figures"
@@ -51,7 +51,7 @@ fig, ax = plt.subplots(figsize=(8.4, 4.9), dpi=200)
 ax.imshow(rgb); ax.set_xlim(0, W); ax.set_ylim(H, 0); ax.axis('off')
 
 # subtle tints so the structures read
-for m, c in [(tool_left | ((sem == 3) & (np.arange(W)[None, :] >= 640)), BLUE), (gb, WARM)]:
+for m, c in [(tool_left | ((sem == 3) & (np.arange(W)[None, :] >= 640)), BLUE), (gb, GREEN)]:
     ov = np.zeros((H, W, 4)); rgba = matplotlib.colors.to_rgba(c)
     ov[m] = (rgba[0], rgba[1], rgba[2], 0.22)
     ax.imshow(ov)
@@ -70,11 +70,12 @@ ax.add_patch(FancyArrowPatch((tcx - 70, tcy + 60), (tcx + 90, tcy - 40), connect
                              arrowstyle='-|>', mutation_scale=20, lw=3, color=BLUE, zorder=9))
 label('instrument\nmotion', 200, 120, tcx, tcy, BLUE)
 
-# 2 tissue deformation — diverging stretch arrows on the gallbladder
-for ddx, ddy in [(-95, -70), (95, 80)]:
-    ax.add_patch(FancyArrowPatch((gcx, gcy), (gcx + ddx, gcy + ddy), arrowstyle='-|>',
-                                 mutation_scale=18, lw=3, color=WARM, zorder=9))
-label('tissue\ndeformation', W - 200, H - 90, gcx + 55, gcy + 45, WARM)
+# 2 tissue deformation — stretch arrows on the LOWER gallbladder body, clear of the instrument
+gdx, gdy = gcx + 45, gcy + 135
+for ex, ey in [(gdx - 120, gdy + 100), (gdx + 150, gdy + 20)]:
+    ax.add_patch(FancyArrowPatch((gdx, gdy), (ex, ey), arrowstyle='-|>',
+                                 mutation_scale=18, lw=3, color=GREEN, zorder=9))
+label('tissue\ndeformation', W - 200, H - 90, gdx + 40, gdy + 60, GREEN)
 
 # 3 camera motion — global; dashed inner frame + corner arrows + label
 ax.add_patch(FancyBboxPatch((26, 26), W - 52, H - 52, boxstyle='round,pad=0,rounding_size=8',
