@@ -451,18 +451,7 @@ C2/001 is chosen as an example sequence in Figure~\ref{fig:example_sequence}, wh
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=1\linewidth]{figures/snippet_c2_001.png}
-    \caption[Example published sequence (C\_2/001)]{Example published
-    sequence \texttt{C\_2/001} (730 frames, 12.15\,s). Each of the top three
-    rows is a laterally-cascaded deck of frames sampled uniformly across the
-    sequence, with the most recent frame at the front. \textbf{Input Frame:}
-    left-camera RGB. \textbf{Semantic GT:} the same frames with the dense
-    semantic ground truth overlaid (red: liver; green: gallbladder; cyan:
-    instruments). \textbf{Depth Map:} the corresponding per-frame MoGe-2
-    depth, stereo-anchored to metric scale and colourised by depth (cool:
-    near; warm: far). \textbf{Bottom left:} the ground-truth ECM camera
-    trajectory over the sequence (56.3\,mm path length, 53.0$^\circ$ total
-    rotation), coloured by normalised time. \textbf{Bottom right:} a summary
-    of the sequence's motion and semantic statistics.}
+    \caption[Example published sequence (C\_2/001)]{Example published sequence \texttt{C\_2/001} (730 frames, 12.15\,s), the top three rows sampling it uniformly (most recent frame at the front). \textbf{Input Frame:} left-camera RGB. \textbf{Semantic GT:} the dense semantic overlay (red liver, green gallbladder, cyan instruments). \textbf{Depth Map:} the per-frame MoGe-2 depth, stereo-anchored to metric scale. \textbf{Bottom:} the ground-truth ECM trajectory (56.3\,mm, 53.0$^\circ$) coloured by time, and the sequence's motion and semantic statistics.}
     \label{fig:example_sequence}
 \end{figure}
 \FloatBarrier   
@@ -613,12 +602,7 @@ The second contribution decides, for every frame, whether the camera is moving a
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_dino_districts.png}
-    \caption{From features to districts. Left: the input frame. Centre: PCA
-    projection of the DINOv3-B/16 patch tokens --- the frame as the featuriser
-    sees it, with the instruments feature-distinct from the tissue they touch.
-    Right: the $K = 12$ k-means districts the deployed gate computes from
-    exactly these tokens; districts are semantic rather than spatial, so an
-    instrument votes as one bloc regardless of where it lies in the frame.}
+    \caption{From features to districts. Left: the input frame. Centre: PCA projection of the DINOv3-B/16 patch tokens, the instruments feature-distinct from the tissue they touch. Right: the $K = 12$ k-means districts the deployed gate computes from those tokens (Section~\ref{sec:motion}).}
     \label{fig:dino_districts}
 \end{figure}
 \FloatBarrier
@@ -635,7 +619,7 @@ where $p_0$ is the image principal point and $r_{\text{norm}}$ a normalising rad
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=1\linewidth]{figures/depth_signature.png}
-    \caption{The depth signature that makes the egomotion fit \eqref{eq:vote-fit} identifiable. A camera turn (rotation) shifts near and far districts equally; a lateral slide moves near districts more, as $1/Z$; forward motion expands the field radially. Fitting the three simultaneously separates the motion types and cancels the unknown global depth scale.}
+    \caption{The three motions the egomotion fit \eqref{eq:vote-fit} separates by their depth signature: rotation (uniform shift), lateral slide ($1/Z$), and forward zoom (radial). Fitting all three cancels the unknown global depth scale.}
     \label{fig:depth_signature}
 \end{figure}
 
@@ -663,7 +647,7 @@ When \eqref{eq:cprime} decides that the camera is still, the pose is copied from
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_motion_agreement.png}
-    \caption{Top (C\_1/001, camera still): every district vote is near zero --- the quiet minority holds and the pose is frozen. Middle (C\_2/001, camera moving): the votes are large and consistent with a single rigid story --- the frame is tracked. Bottom (E\_3/005, tissue deformation): the votes are large but the majority of districts dissent from every rigid story in the epipolar sense --- the frame is frozen. Districts are the deployed k-means clustering of the ViT patch tokens; panel statistics are recomputed offline with a dense-flow proxy for illustration, and the live per-frame values are logged by the gate itself.}
+    \caption{The gate on three regimes (Section~\ref{sec:motion}): \textbf{C\_1/001} still, votes near zero, pose frozen; \textbf{C\_2/001} moving, votes consistent with one rigid story, tracked; \textbf{E\_3/005} deforming, votes large but the majority epipolar-inconsistent, frozen. Panel statistics use an offline dense-flow proxy; the live values are logged by the gate.}
     \label{fig:motion_agreement}
 \end{figure}
 \FloatBarrier
@@ -674,7 +658,7 @@ The thresholds in \eqref{eq:cprime} are calibrated offline rather than tuned in 
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_dino_comparison.png}
-    \caption{What each backbone sees. Rows: DINOv2-S/14, base DINOv3-B/16 (the featuriser of the final model), and the surgical-segmentation fine-tune of DINOv3 at its final layer. Columns: the input frame, with the yellow circle marking the probe patch on the instrument; the PCA projection of the patch tokens on the working-instrument frame; the cosine similarity of every patch to the probe; and the PCA on a camera-moving frame. The two raw backbones keep the instrument feature-distinct from the tissue it touches; the fine-tuned final layer has collapsed, with every patch similar to every other, matching its $+0.07$ probe margin.}
+    \caption{What each backbone sees. Rows: DINOv2-S/14, base DINOv3-B/16 (the final model's featuriser), and the surgical-segmentation fine-tune of DINOv3 at its final layer. Columns: the input frame (yellow circle: the probe patch on the instrument); the PCA of the patch tokens; the cosine similarity of every patch to the probe; and the PCA on a camera-moving frame. The raw backbones keep the instrument feature-distinct from the tissue; the fine-tune has collapsed (Section~\ref{sec:motion}).}
     \label{fig:dino_comparison}
 \end{figure}
 However, running both raw backbones end-to-end on the evaluation sequences, the freeze decision is near-identical regardless of backbone: $q_{10}$ correlates at $0.99$ between DINOv2-S/14 and base DINOv3-B/16, $\mathrm{dis3}$ is effectively the same, and $94$--$95\%$ of the freeze decisions agree. The $5$--$6\%$ of decisions that do differ are a result of the base DINOv3 model performing slightly above DINOv2, with higher freeze precision and recall on both design sequences, and a small tracking improvement on the deforming sequence.
@@ -692,7 +676,7 @@ to the tracking loss, where $\Delta\mathbf{r}$ and $\Delta\mathbf{t}$ are the ro
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_vote_pipeline.png}
-    \caption{The label-free motion-attribution pipeline. A frame pair yields self-supervised ViT semantic districts, dense optical flow~\cite{Teed2020}, and up-to-scale depth; each district casts one median vote $(f_k, Z_k, p_k)$. A robust depth-signature fit \eqref{eq:vote-fit} separates camera motion from independent movers, which fall out as outliers through the fit residual \eqref{eq:vote-trust}. Two vote statistics \eqref{eq:vote-stats} give the still/moving decision \eqref{eq:cprime} that gates the pose solve; frozen keyframes are re-pinned after every bundle-adjustment cycle so the decision persists in the trajectory.}
+    \caption{The label-free motion-attribution pipeline (Section~\ref{sec:motion}): a frame pair yields ViT districts, RAFT flow~\cite{Teed2020} and up-to-scale depth; each district's median vote $(f_k, Z_k, p_k)$ feeds the depth-signature fit \eqref{eq:vote-fit}, whose statistics \eqref{eq:vote-stats} drive the freeze decision \eqref{eq:cprime}. Frozen keyframes are re-pinned after each bundle-adjustment cycle.}
     \label{fig:vote_pipeline}
 \end{figure}
 \FloatBarrier
@@ -1012,8 +996,7 @@ Figures~\ref{fig:traj3d_compare} and \ref{fig:render_compare} compare the benchm
 \begin{figure}[!ht]
     \centering
     \includegraphics[width=\linewidth]{figures/fig_render_compare.png}
-    \caption{Three C\_2/001 frames rendered by every system apart from PERSEUS which carries no rendering capabilities, against the input frame. Frames are chosen where DID-SLAM's per-frame PSNR exceeds the base's while every system produces a valid render. DID/DDS-SLAM render the sharpest with the base model providing a slight edge in PSNR; SNI-SLAM blurs where its depth-pinned sampling finds no surface; the splatting systems smear under camera travel; and Semantic-SuPer's rasterised surfels grow sparse as the sequence progresses.
-    PERSEUS is tracking-only and renders nothing.}
+    \caption{Three C\_2/001 frames rendered by every system against the input frame (PERSEUS is tracking-only and renders nothing). Frames are chosen where DID-SLAM's per-frame PSNR exceeds the base's while every system produces a valid render. DID and the base render the sharpest; the other systems degrade as discussed in Section~\ref{sec:discussion}.}
     \label{fig:render_compare}
 \end{figure}
 \FloatBarrier
