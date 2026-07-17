@@ -16,6 +16,8 @@
 \usepackage{placeins}
 \usepackage{pgfplots}
 \usepackage{pifont}
+\usepackage{longtable}
+\usepackage[hidelinks]{hyperref}
 \title{DINO-Infused Deformable SLAM for Robotic Surgery}
 \author{Benjamin Wright}
 \date{July 2026}
@@ -31,6 +33,90 @@ This thesis addresses both gaps. First, it reorganises the Comprehensive Robotic
 
 \newpage
 \tableofcontents
+\newpage
+
+\section*{Notation}
+\addcontentsline{toc}{section}{Notation}
+Symbols are grouped by the section that introduces them. A few letters are reused
+across sections in their own conventional sense; where that happens both meanings
+are listed.
+
+\renewcommand{\arraystretch}{1.25}
+\begin{longtable}{@{}p{0.24\textwidth} p{0.70\textwidth}@{}}
+\toprule
+\textbf{Symbol} & \textbf{Meaning} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Symbol} & \textbf{Meaning} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+
+\multicolumn{2}{@{}l}{\textit{Neural field and volume rendering (Sections~\ref{sec:coslam})}}\\
+$x \in \mathbb{R}^3$ & 3-D query point \\
+$d$ & viewing direction (NeRF) \\
+$r(z) = o + z\,d$ & camera ray with centre $o$ and depth $z$ along the ray \\
+$F_\theta$ & NeRF neural field \\
+$\sigma$ & volume density (NeRF only; distinct from the uncertainty variance $\sigma^2$) \\
+$c$ & view-independent colour / radiance (distinct from the depth pre-scale $c$ in Depth-$L_1$) \\
+$s(x)$ & truncated signed distance from $x$ to the nearest surface \\
+$\tau$ & SDF truncation width \\
+$h$ & geometry feature returned by the geometry decoder \\
+$\gamma_{\text{hash}},\ \gamma_{\text{ob}},\ \gamma$ & multiresolution-hash, one-blob, and joint (concatenated) encodings \\
+$g_\theta,\ f_\theta$ & geometry decoder, colour decoder \\
+$w_i,\ T_i,\ \delta_i$ & rendering weight, accumulated transmittance, inter-sample spacing at ray sample $i$ \\
+$W$ & along-ray normaliser of the SDF rendering weights \\
+$\mathrm{S}$ & logistic sigmoid \\
+$\hat{C}(r),\ \hat{D}(r)$ & rendered colour and depth of ray $r$ \\
+$D,\ z$ & measured depth, and along-ray sample depth (SDF losses) \\
+$T,\ F$ & near-surface and free-space sample sets in $\mathcal{L}_{\text{sdf}},\mathcal{L}_{\text{fs}}$ (set-valued; distinct from $T_i$ and $F_\theta$ above) \\
+$\lambda_{\text{rgb}},\lambda_d,\lambda_{\text{sdf}},\lambda_{\text{fs}}$ & Co-SLAM loss weights \\
+$T_i^{\text{init}}$ & constant-velocity pose initialisation of frame $i$ \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Deformation warp (Section~\ref{sec:ddsslam})}}\\
+$D_\phi$ & time-conditioned deformation network \\
+$\Delta x,\ x_{\text{canon}}$ & displacement to canonical space, and the canonical point $x + \Delta x$ \\
+$\gamma_{\text{freq}},\ M$ & frequency (positional) encoding, and its number of bands \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Uncertainty-aware down-weighting (Section~\ref{sec:uncertainty})}}\\
+$\sigma^2(r)$ & learned per-ray aleatoric variance \\
+$\mathcal{L}_{\text{NLL}}$ & heteroscedastic negative log-likelihood \\
+$w(r)$ & per-ray tracking trust weight $1/\sigma^2(r)$ \\
+$w_{\min},w_{\max}$ & clamp bounds on $w(r)$ \\
+$\bar{w}$ & mean weight, used for mean-normalisation \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Motion attribution (Section~\ref{sec:motion})}}\\
+$K,\ k$ & number of semantic districts, and district index \\
+$\delta$ & reference-frame stride for optical flow \\
+$f_k,\ Z_k,\ p_k$ & district $k$'s median flow, median depth, and centroid \\
+$Z_{\text{med}}$ & median district depth over the frame \\
+$\zeta_k = Z_{\text{med}}/Z_k$ & dimensionless depth ratio (cancels the unknown monocular scale) \\
+$r_k$ & normalised radial position of district $k$ \\
+$p_0,\ r_{\text{norm}}$ & image principal point, and a normalising radius \\
+$u,\ v,\ d$ & egomotion coefficients: rotation (depth-blind), lateral slide, radial zoom \\
+$\hat{f}_k$ & flow predicted for district $k$ by the egomotion fit \eqref{eq:vote-fit} \\
+$\rho_k$ & fit residual $\lVert f_k - \hat{f}_k \rVert$ \\
+$w_k$ & district trust weight \\
+$\mathrm{med},\ \mathrm{scale}$ & robust centre and spread of the residuals $\{\rho_k\}$ (median and scaled median-absolute-deviation) used in the reweighting \\
+$q_{10},\ \tau_q$ & tenth-percentile district flow magnitude (minority test) and its freeze threshold \\
+$\mathrm{dis3},\ \tau_d$ & fraction of districts epipolar-inconsistent (majority test) and its freeze threshold \\
+$F$ & fundamental matrix fit to the dense flow (distinct from the free-space set $F$ above) \\
+\midrule
+\multicolumn{2}{@{}l}{\textit{Evaluation metrics (Section~\ref{sec:eval_metrics})}}\\
+$\mathbf{x}_i,\ \mathbf{y}_i$ & estimated and ground-truth camera centres, paired by frame \\
+$s,\ R,\ \mathbf{t}$ & Sim(3) scale, rotation, translation (Umeyama alignment) \\
+$e_i,\ \mathrm{ATE}_{\mathrm{RMSE}}$ & per-frame alignment error, and its root-mean-square \\
+$\rho_{\mathrm{path}},\ L(\cdot)$ & scale-corrected path-length ratio, and trajectory arc length \\
+$|r|$ & absolute Pearson correlation along the dominant axis (distinct from the ray $r$) \\
+$\mu,\ \sigma_{12},\ C_1,\ C_2$ & local mean, cross-covariance, and stabilising constants (SSIM) \\
+$\phi_l,\ w_l$ & pretrained deep features and layer weights (LPIPS) \\
+$\Omega$ & set of image pixels \\
+$\mathcal{V},\ c$ & valid-pixel set and per-model depth pre-scale (Depth-$L_1$) \\
+$\mathrm{IoU}_c,\ \mathrm{mIoU}$ & per-class and mean intersection-over-union \\
+\end{longtable}
+\renewcommand{\arraystretch}{1.0}
 \newpage
 
 \section{Introduction}
