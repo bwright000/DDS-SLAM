@@ -48,7 +48,11 @@ cap = cv2.VideoCapture(PANELS)
 mid = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) // 2
 cap.set(cv2.CAP_PROP_POS_FRAMES, mid); ok, fr = cap.read(); cap.release(); assert ok
 depth_in = fr[35:360, 965:1438]; rendered = fr[35:360, 485:958]
-depth_out = fr[395:718, 5:478]; traj = fr[752:1076, 8:474]
+depth_out = fr[395:718, 5:478]
+POSE = r'c:\Users\benli\OneDrive\Documents\GitHub\DDS-SLAM\DDS-SLAM\figures\did_inputs\camera_pose.png'
+if not os.path.exists(POSE):
+    os.system('python "%s"' % os.path.join(os.path.dirname(__file__), 'gen_camera_pose.py'))
+pose = plt.imread(POSE)   # clean trajectory line, transparent background
 
 # ---- clean RGB + colourised SAM 3 semantics for the SAME mid frame ----
 rgbs = sorted(glob.glob(SNIP + '/rgb/*.png')); sems = sorted(glob.glob(SNIP + '/semantic_instance/*.png'))
@@ -118,7 +122,8 @@ box(35, 9, 30, 9,   CONF, CONE, 'Motion-attribution gate', 'freezes the pose whe
 ax.text(84, 48.5, 'Output', ha='center', fontsize=11, fontweight='bold')
 thumb(rendered,  73, 85.5, 37, 46, 'Rendering')
 thumb(depth_out, 73, 85.5, 25, 34, 'Reconstruction')
-thumb(traj,      87, 99.5, 30, 46, 'Camera pose')
+ax.imshow(pose, extent=[86.5, 99.5, 28, 46], aspect='auto', zorder=3)   # clean line, no border
+ax.text(93, 26.6, 'Camera pose', ha='center', va='top', fontsize=7.5, color=MUT, zorder=5)
 
 arrow(27, 32.5, 27); arrow(67.5, 72.5, 27)
 
