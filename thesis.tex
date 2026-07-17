@@ -135,8 +135,16 @@ This thesis makes three contributions:
 \begin{enumerate}
 \item A one-shot, human-in-the-loop segmentation strategy for unseen surgical domains built on the frozen foundation model SAM~3~\cite{Carion2025}: sparse human-annotated anchor keyframes seed SAM~3's video propagation to generate the dense per-frame semantic annotations a semantic SLAM pipeline requires, without fine-tuning.
 \item A reorganisation of the CRCD~\cite{Oh2024} into self-contained \texttt{Sequences} consumable by both TUM and Replica data-loaders (Section~\ref{sec:data_packs}), establishing a benchmark for semantic SLAM in surgical environments.
-\item \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), an uncertainty-aware extension of DDS-SLAM~\cite{Shan2024} on a neural-SDF substrate, contributing: (i) aleatoric-uncertainty down-weighting, ported from WildGS-SLAM~\cite{Zheng2024} to a surgical neural-SDF system via a small uncertainty head (UncertaintyNet) that drives both tracking and mapping; (ii) a label-free split of camera ego-motion from independent scene motion, combining frozen self-supervised vision-transformer features~\cite{Oquab2023,Simoni2025} with a depth-signature egomotion fit and a geometric epipolar agreement, with no trained segmenter --- consumed as a pose freeze that is re-pinned through bundle adjustment so the decision persists in the trajectory. Design choices were locked on two design sequences and evaluated unseen on three held-out ones; the combination improves tracking on all five ($-31\%$ ATE against the unmodified base, $-42\%$ on the largest-travel held-out sequence) while improving SSIM and LPIPS on every sequence, at a cost of $0.6$\,dB of PSNR attributable to the Charbonnier photometric loss.
+\item \textbf{DID-SLAM} (DINO-Infused DDS-SLAM), an uncertainty-aware extension of DDS-SLAM~\cite{Shan2024} on a neural-SDF substrate (Figure~\ref{fig:did_arch}), contributing: (i) aleatoric-uncertainty down-weighting, ported from WildGS-SLAM~\cite{Zheng2024} to a surgical neural-SDF system via a small uncertainty head (UncertaintyNet) that drives both tracking and mapping; (ii) a label-free split of camera ego-motion from independent scene motion, combining frozen self-supervised vision-transformer features~\cite{Oquab2023,Simoni2025} with a depth-signature egomotion fit and a geometric epipolar agreement, with no trained segmenter --- consumed as a pose freeze that is re-pinned through bundle adjustment so the decision persists in the trajectory. Design choices were locked on two design sequences and evaluated unseen on three held-out ones; the combination improves tracking on all five ($-31\%$ ATE against the unmodified base, $-42\%$ on the largest-travel held-out sequence) while improving SSIM and LPIPS on every sequence, at a cost of $0.6$\,dB of PSNR attributable to the Charbonnier photometric loss.
 \end{enumerate}
+
+\begin{figure}[!ht]
+    \centering
+    \includegraphics[width=\linewidth]{figures/did_architecture.png}
+    \caption{DID-SLAM: the DDS-SLAM neural-SDF base (grey) extended with two flag-gated contributions (blue) --- a learned uncertainty head and a label-free motion-attribution gate --- with the base left bit-identical when the flags are off.}
+    \label{fig:did_arch}
+\end{figure}
+\FloatBarrier
 
 
 \section{Related Works}
