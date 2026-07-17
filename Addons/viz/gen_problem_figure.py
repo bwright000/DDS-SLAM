@@ -91,11 +91,6 @@ ax.text(W / 2, 66, 'camera motion?  (the whole view shifts)', fontsize=10, fontw
         color='white', ha='center', va='center', zorder=10,
         bbox=dict(boxstyle='round,pad=0.35', fc=PURP, ec='white', lw=1.2))
 
-# problem statement strip
-ax.text(W / 2, H - 26, 'Three sources of image motion. A static-map tracker blames the camera for all of it.',
-        fontsize=10.5, color='white', ha='center', va='center', zorder=10,
-        bbox=dict(boxstyle='round,pad=0.4', fc=(0, 0, 0, 0.62), ec='none'))
-
 fig.tight_layout()
 os.makedirs(FIG, exist_ok=True)
 out = os.path.join(FIG, 'problem_figure.png')
