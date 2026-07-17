@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """figures/fig_render_compare.png -- three C_2/001 frames rendered by every render-capable
-system, 3 rows (frames) x 7 columns (GT + 6 systems). PERSEUS is tracking-only and excluded.
+system, laid out vertically: 7 rows (GT + 6 systems) x 3 columns (frames). PERSEUS is
+tracking-only and excluded.
 
 Frame selection: at every SGS keyframe index (the sparsest renderer), compute each model's
 PSNR against the GT frame; score the frame by the MINIMUM PSNR across models (frames every
@@ -94,27 +95,33 @@ def main():
     picks = sorted(picks)
     print('picked:', picks, '| (did, base, min):', [tuple(round(x, 2) for x in stats[i]) for i in picks])
 
-    COLS = ['ground truth', 'DID-SLAM (ours)', 'DDS-SLAM (base)', 'SNI-SLAM',
+    # rows = systems (GT first), columns = the three picked frames
+    ROWS = ['ground truth', 'DID-SLAM (ours)', 'DDS-SLAM (base)', 'SNI-SLAM',
             'SGS-SLAM', 'SemGauss-SLAM', 'Semantic-SuPer']
 
     from PIL import Image, ImageDraw, ImageFont
     F = lambda sz, b=False: ImageFont.truetype(
         r'C:\Windows\Fonts\arial' + ('bd' if b else '') + '.ttf', sz)
-    GAP, PADT, PADL = 6, 30, 86
-    W = PADL + 7 * (TW + GAP) + GAP
-    H = PADT + 3 * (TH + GAP) + GAP
+    GAP, PADT, PADL = 6, 30, 118
+    W = PADL + 3 * (TW + GAP) + GAP
+    H = PADT + 7 * (TH + GAP) + GAP
     img = Image.new('RGB', (W, H), 'white')
     d = ImageDraw.Draw(img)
-    for c, h in enumerate(COLS):
-        d.text((PADL + c * (TW + GAP) + TW // 2, PADT // 2 + 2), h,
+
+    # one column per frame; fetch each frame's stack once
+    stacks = []
+    for idx in picks:
+        stacks.append([cv2.imread(f"{SRC['semgauss']}/{idx}_gt.png")]
+                      + list(model_tiles(idx).values()))
+    for c, idx in enumerate(picks):
+        d.text((PADL + c * (TW + GAP) + TW // 2, PADT // 2 + 2), f'frame {idx}',
                font=F(13, True), fill=(32, 33, 36), anchor='mm')
-    for r, idx in enumerate(picks):
+    for r, name in enumerate(ROWS):
         y = PADT + r * (TH + GAP)
-        d.text((PADL - 10, y + TH // 2), f'frame\n{idx}', font=F(13),
-               fill=(60, 60, 60), anchor='rm', align='right')
-        row = [cv2.imread(f"{SRC['semgauss']}/{idx}_gt.png")] + list(model_tiles(idx).values())
-        for c, tile in enumerate(row):
-            tile = cv2.resize(tile, (TW, TH))
+        d.text((PADL - 10, y + TH // 2), name, font=F(13, r == 1),
+               fill=(32, 33, 36) if r == 1 else (60, 60, 60), anchor='rm')
+        for c in range(len(picks)):
+            tile = cv2.resize(stacks[c][r], (TW, TH))
             img.paste(Image.fromarray(cv2.cvtColor(tile, cv2.COLOR_BGR2RGB)),
                       (PADL + c * (TW + GAP), y))
     img.save(args.out)

@@ -2,8 +2,11 @@
 """Trajectory figures, Sim(3)-aligned, dominant plane.
 1) figures/C1_001_traj_est_vs_gt.png, C2_001_traj_est_vs_gt.png -- DDS-SLAM base (bench drop)
    vs GT: the over-travel signature (fig:bench_traj).
-2) figures/bdds_traj_c2.png -- the headline: GT vs base vs BDDS-full on C_2/001, the -51%
-   held-out sequence, over-travel visibly removed (ratio 6.3 -> 1.9)."""
+2) figures/bdds_traj_c2.png -- the headline: GT vs base vs DID-SLAM on C_2/001, the
+   largest-travel held-out sequence, over-travel visibly removed. The base is the
+   BENCHMARK-staged run (the thesis's canonical base, Tables results_main/results_sota),
+   NOT the controlled ablation base. Panel labels are computed from the trajectories, so
+   they cannot drift from the tables."""
 import os
 import numpy as np
 import matplotlib
@@ -34,6 +37,20 @@ def sim3(est_xyz, gt_xyz):
 
 def load_est(p): return np.loadtxt(p)[:, [3, 7, 11]]
 def load_gt(p): return np.loadtxt(p, comments='#')[:, 1:4]
+
+def ate_rmse(aligned, gt):
+    """Sim(3) ATE RMSE in mm (aligned/gt are metres, 1:1 paired)."""
+    n = min(len(aligned), len(gt))
+    e = np.linalg.norm(gt[:n] - aligned[:n], axis=1)
+    return float(np.sqrt((e ** 2).mean()) * 1000.0)
+
+
+def path_ratio(aligned, gt):
+    """est/GT path-length ratio after Sim(3) alignment (scale already applied)."""
+    L = lambda z: float(np.linalg.norm(np.diff(z, axis=0), axis=1).sum())
+    n = min(len(aligned), len(gt))
+    return L(aligned[:n]) / L(gt[:n])
+
 
 def dom_axes(gt):
     v = gt - gt.mean(0)
@@ -66,15 +83,18 @@ for snip, ratio in [('C1', 8.11), ('C2', 8.66)]:
     print(f"wrote {snip}_001_traj_est_vs_gt.png")
     plt.close(fig)
 
-# ---- 2) headline: C2 GT vs base vs BDDS ----
+# ---- 2) headline: C2 GT vs benchmark base vs DID-SLAM ----
 gt = load_gt(GTP['C2'])
-base = load_est(os.path.join(REBASE, "C2_001_abl_base_s0", "est_c2w_data.txt"))
-bdds = load_est(os.path.join(FINAL, "C2_001_calm_v3gate_s0", "est_c2w_data.txt"))
+base = load_est(os.path.join(BENCH, "C2_001_base_s0", "est_c2w_data.txt"))
+did = load_est(os.path.join(FINAL, "C2_001_calm_v3gate_s0", "est_c2w_data.txt"))
 ba, ga = sim3(base, gt)
-oa, _ = sim3(bdds, gt)
+oa, _ = sim3(did, gt)
+lab = lambda name, a: f'{name} (ATE {ate_rmse(a, ga):.2f} mm, path ratio {path_ratio(a, ga):.1f})'
+print('C2 base  ->', lab('base', ba))
+print('C2 DID   ->', lab('DID-SLAM', oa))
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(9.6, 4.4), dpi=200, sharex=True, sharey=True)
-panel(ax1, ga, [('DDS-SLAM base (ATE 6.99 mm, path ratio 6.3)', ba, WARM)], 'base')
-panel(ax2, ga, [('BDDS-SLAM (ATE 3.41 mm, path ratio 1.9)', oa, BLUE)], 'BDDS-SLAM (held-out)')
+panel(ax1, ga, [(lab('DDS-SLAM base', ba), ba, WARM)], 'base')
+panel(ax2, ga, [(lab('DID-SLAM', oa), oa, BLUE)], 'DID-SLAM (held-out)')
 fig.suptitle('C_2/001 - the largest-travel held-out sequence, Sim(3)-aligned', fontsize=11, color=INK)
 fig.tight_layout()
 fig.savefig(os.path.join(FIG, "bdds_traj_c2.png"), bbox_inches='tight', facecolor='white')
