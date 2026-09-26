@@ -17,6 +17,7 @@ Supersedes the MoGe-era Arm-4 rows (see §5 — several prior rows are invalid i
 | D5 | Snippets / seeds | Bench-5. n=1 first, then n=3 ({0,1,2}). SuPer: n=1 + determinism check (deterministic method). |
 | D6 | GPU | **T4 = smoke/validation tier** (not reported). **A100-80GB = every reported cell**, all six methods on the same box, TF32 forced off, runtime + peak VRAM logged. |
 | D7 | SuPer | Native 1280×720, n=1, ATE column footnoted as a **T_g harness proxy** (method has no camera pose). |
+| D8 | Render protocol | **LIVE for the main table** (every method renders frame t right after mapping/fusing frame t, at the estimated pose t). SNI + SemGauss ALSO report **end-of-run (held-state)** renders from the final map as a side-by-side comparison column. |
 
 ## 2. Unit factors (D2)
 
@@ -96,6 +97,16 @@ Lanes (VRAM-packed, CPU threads capped `nproc/lanes`):
 - DDS base C1/C2/E3/G3 (pre-rebase sawtooth trajectory).
 - SGS render metrics (eval_every=5 subsample) and all MoGe-era 3DGS rows (9–46× scale).
 
+## 5b. Live-render hooks (D8) — reuse each method's OWN renderer, no new capability
+| Method | Native live? | Hook |
+|---|---|---|
+| DDS | yes (render_freq 1, inline after mapping) | none |
+| SuPer | yes (render after fusing frame t) | none |
+| SGS | partial: `scripts/slam.py:1004` post-mapping `report_progress(mapping=True)` renders frame t + PSNR, every `report_global_progress_every` | set interval 1 (both wandb/non-wandb branches) + save rgb/depth `live/NNNNNN.png`; keep native end-of-run eval as-is |
+| SemGauss | partial: `sem_gauss.py:806` same hook | same as SGS; end-of-run eval (`eval_every=1`) = held-state column |
+| SNI | partial: `Mapper.py:337` Frame_Visualizer renders at the START of mapping frame t | add post-loop call to SNI's `renderer.render_img` at cur_c2w → `live/NNNNNN.png`; held-state column = fixed `render_all_frames_sni.py` |
+| PERSEUS | no renderer | N/A |
+Eval: `eval_rendering.py` on `live/` = main table; on held-state dir = SNI/SemGauss comparison column.
+
 ## 6. Open (non-blocking for Night 0)
-- Render protocol: DDS = recency (inline), SNI/SemGauss = held-state (final map). Pick one for the table before Night 1.
 - Thesis text contradictions: `thesis.tex:766` (const-vel "disabled in all"), `:734` (BA lr "applied to all").
