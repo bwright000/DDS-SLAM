@@ -226,7 +226,12 @@ def main():
     ap.add_argument('--depth_scale', type=float, default=10000.0)
     ap.add_argument('--n_classes', type=int, default=4)
     ap.add_argument('--emit_yaml', default=None)
+    ap.add_argument('--allow_double_rectify', action='store_true',  # [crcd-double-rectify-guard]
+        help='legacy reproduction ONLY: CRCD frames are already rectified (see refusal message)')
     a = ap.parse_args()
+    if not a.allow_double_rectify:  # [crcd-double-rectify-guard] 2026-09-27
+        import sys as _sys
+        _sys.exit("REFUSED: CRCD-Published rgb/ + rgbright/ are ALREADY rectified + undistorted. Re-applying the calibration maps adds ~120-135 px of horizontal shift and 3-7 px of row error (it silently corrupted every 'rectified' CRCD run until 2026-09-27; evidence: SLAMSuite crcd_bench PLAN D1c, check_rectification.py). Stage with SLAMSuite/crcd_bench/common/stage_crcd.py instead. Pass --allow_double_rectify ONLY to reproduce legacy results.")
 
     # SemGauss ReplicaDataset globs a DIFFERENT tree than SGS (rgb/rgb_*.png, depth/depth_*.png,
     # semantic_remap/*.png — CONFIRMED SemGauss datasets/gradslam_datasets/replica.py:44-52).

@@ -69,7 +69,12 @@ def main():
     ap.add_argument('--expect_n', type=int, default=0, help='expected frame count (== rectified rgb/depth); asserted if >0')
     ap.add_argument('--n_classes', type=int, default=4)
     ap.add_argument('--dim', type=int, default=16)
+    ap.add_argument('--allow_double_rectify', action='store_true',  # [crcd-double-rectify-guard]
+        help='legacy reproduction ONLY: CRCD frames are already rectified (see refusal message)')
     a = ap.parse_args()
+    if not a.allow_double_rectify:  # [crcd-double-rectify-guard] 2026-09-27
+        import sys as _sys
+        _sys.exit("REFUSED: CRCD-Published rgb/ + rgbright/ are ALREADY rectified + undistorted. Re-applying the calibration maps adds ~120-135 px of horizontal shift and 3-7 px of row error (it silently corrupted every 'rectified' CRCD run until 2026-09-27; evidence: SLAMSuite crcd_bench PLAN D1c, check_rectification.py). Stage with SLAMSuite/crcd_bench/common/stage_crcd.py instead. Pass --allow_double_rectify ONLY to reproduce legacy results.")
 
     for p in (a.base_dinov3, a.head_pth, a.raw_rgb_dir, a.calib_npz):
         if not os.path.exists(p):
