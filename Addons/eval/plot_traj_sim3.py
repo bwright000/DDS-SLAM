@@ -29,12 +29,12 @@ def load_xyz(path):
         if not ln or ln.startswith('#'):
             continue
         v = [float(x) for x in ln.split()]
-        if len(v) == 16:
+        # EXACT widths (10-01 fix): a 3x4 row (12 values) used to match the old `len(v) >= 8` TUM branch first and
+        # plotted rotation entries (v[1], v[2]) as x/y -> garbage plots for every 3x4 estimate (SGS/SemGauss/SNI/DDS rel).
+        if len(v) in (16, 12):                       # 4x4 / 3x4 row-major c2w -> t at [3, 7, 11]
             xyz.append([v[3], v[7], v[11]])
-        elif len(v) >= 8:
+        elif len(v) == 8:                            # TUM: ts tx ty tz qx qy qz qw
             xyz.append(v[1:4])
-        elif len(v) == 12:
-            xyz.append([v[3], v[7], v[11]])
         else:
             raise ValueError(f"{path}: unsupported row of {len(v)} values")
     a = np.asarray(xyz, dtype=np.float64)
