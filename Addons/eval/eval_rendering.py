@@ -73,9 +73,11 @@ def main():
                         help='Save per-frame metrics to CSV for use with visualize_run.py')
     parser.add_argument('--summary_csv', type=str, default='',
                         help='Append summary row to CSV for cross-method comparison (Table I format)')
+    # Free-form label (10-02 fix): a closed `choices` list rejected every sequence not listed (StereoMIS P2_3/6/7/8 on
+    # the A100 bench run) BEFORE any metric was computed. The label only selects an optional paper reference.
     parser.add_argument('--sequence', type=str, default='Lab1 (trail3)',
-                        choices=list(PAPER_REFERENCES.keys()),
-                        help='Sequence name for paper reference values')
+                        help='Sequence label; selects a paper reference value when one exists '
+                             f'({", ".join(PAPER_REFERENCES)}), otherwise none is printed')
     parser.add_argument('--gt_offset', type=int, default=0,
                         help='Add this to parsed rendered-filename indices before '
                              'looking up GT. Use 4465 for StereoMIS [-4000:] runs.')
@@ -218,7 +220,7 @@ def main():
         print(f"\nPer-frame metrics saved to {args.output_csv}")
 
     # Paper reference (DDS-SLAM Table I/II) — None if no baseline exists
-    ref = PAPER_REFERENCES[args.sequence]
+    ref = PAPER_REFERENCES.get(args.sequence, {'PSNR': None, 'SSIM': None, 'LPIPS': None})
     if ref['PSNR'] is not None:
         print(f"\nPaper reference (DDS-SLAM, {args.sequence}):")
         print(f"  PSNR:  {ref['PSNR']}")
